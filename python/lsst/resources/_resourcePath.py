@@ -1077,7 +1077,7 @@ class ResourcePath:
         overwrite: bool = False,
         transaction: Optional[TransactionProtocol] = None,
     ) -> None:
-        """Transfer the current resource to a new location.
+        """Transfer another resource to this location.
 
         Parameters
         ----------
