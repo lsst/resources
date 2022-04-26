@@ -10,9 +10,12 @@
 # license that can be found in the LICENSE file.
 
 from __future__ import annotations
+import contextlib
+import io
 
 import logging
 import re
+import sys
 import tempfile
 import threading
 
@@ -27,9 +30,11 @@ from lsst.utils.timer import time_this
 from urllib3.exceptions import HTTPError, RequestError
 
 from ._resourcePath import ResourcePath
+from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
 from .s3utils import bucketExists, getS3Client, s3CheckFileExists
 
 if TYPE_CHECKING:
+    from ._resourceHandles._baseResourceHandle import BaseResourceHandle
     try:
         import boto3
     except ImportError:
@@ -452,3 +457,35 @@ class S3ResourcePath(ResourcePath):
         for dir in dirnames:
             new_uri = self.join(dir)
             yield from new_uri.walk(file_filter)
+
+    @contextlib.contextmanager
+    def open(
+        self,
+        mode: str = "r",
+        *,
+        encoding: Optional[str] = None,
+        prefer_file_temporary: bool = False,
+        lineseperator="\n"
+    ) -> Iterator[IO]:
+        if self.dirLike:
+            raise IsADirectoryError(f"Directory-like URI {self} cannot be opened.")
+        if prefer_file_temporary:
+            with super().open(mode, encoding=encoding, prefer_file_temporary=prefer_file_temporary) as handle:
+                yield handle
+        else:
+            if "x" in mode and self.exists():
+                raise FileExistsError(f"File at {self} already exists.")
+            with S3ResourceHandle(mode,
+                                  log,
+                                  self.client,
+                                  self.netloc,
+                                  self.relativeToPathRoot,
+                                  lineseperator) as handle:
+                if 'b' in mode:
+                    yield handle  # type: ignore
+                else:
+                    if encoding is None:
+                        encoding = sys.getdefaultencoding()
+                    with io.TextIOWrapper(handle, encoding=encoding,  # type: ignore
+                                          write_through=True) as sub:
+                        yield sub
