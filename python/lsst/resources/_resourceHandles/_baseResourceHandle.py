@@ -15,10 +15,10 @@ __all__ = ("BaseResourceHandle", "CloseStatus")
 from abc import ABC, abstractmethod, abstractproperty
 from io import SEEK_SET
 from logging import Logger
-from typing import Iterable, TypeVar
+from typing import Iterable, TypeVar, Union, Optional
 from enum import Enum, auto
 
-T = TypeVar('T')
+T = TypeVar('T', bound="BaseResourceHandle")
 
 
 class CloseStatus(Enum):
@@ -50,11 +50,10 @@ class BaseResourceHandle(ABC):
     _lineseperator: bytes
     _log: Logger
 
-    def __init__(self, mode, log, lineseperator=b'\n'):
+    def __init__(self, mode, log, *, newline: Union[str, bytes] = '\n'):
         self._mode = mode
         self._log = log
-        self._lineseperator = lineseperator
-        self._closed = CloseStatus.OPEN
+        self._newline = newline
 
     @property
     def mode(self) -> str:
@@ -85,15 +84,15 @@ class BaseResourceHandle(ABC):
         ...
 
     @abstractmethod
-    def readline(self, size=-1) -> bytes:
+    def readline(self, size: int = -1) -> bytes:
         ...
 
     @abstractmethod
-    def readlines(self, hint=-1) -> Iterable[bytes]:
+    def readlines(self, hint: int = -1) -> Iterable[bytes]:
         ...
 
     @abstractmethod
-    def seek(self, offset, whence=SEEK_SET) -> None:
+    def seek(self, offset: int, whence: int = SEEK_SET) -> None:
         ...
 
     @abstractmethod
@@ -105,7 +104,7 @@ class BaseResourceHandle(ABC):
         ...
 
     @abstractmethod
-    def truncate(self, size=None) -> None:
+    def truncate(self, size: Optional[int] = None) -> None:
         ...
 
     @abstractmethod
@@ -125,14 +124,15 @@ class BaseResourceHandle(ABC):
         ...
 
     @abstractmethod
-    def readinto(self, b) -> None:
+    def readinto(self, b) -> int:
         ...
 
     @abstractmethod
-    def write(self, b) -> None:
+    def write(self, b: Union[bytes, str]) -> None:
         ...
 
     def __enter__(self: T) -> T:
+        self._closed = CloseStatus.OPEN
         return self
 
     def __exit__(self, exc_type, exc_bal, exc_tb) -> None:
