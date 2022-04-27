@@ -46,7 +46,6 @@ class BaseResourceHandle(ABC):
     corresponding methods in the `io` module.
     """
     _closed: CloseStatus
-    _location: int
     _mode: str
     _lineseperator: bytes
     _log: Logger
@@ -55,7 +54,6 @@ class BaseResourceHandle(ABC):
         self._mode = mode
         self._log = log
         self._lineseperator = lineseperator
-        self._location = 0
         self._closed = CloseStatus.OPEN
 
     @property
