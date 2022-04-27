@@ -34,7 +34,6 @@ from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
 from .s3utils import bucketExists, getS3Client, s3CheckFileExists
 
 if TYPE_CHECKING:
-    from ._resourceHandles._baseResourceHandle import BaseResourceHandle
     try:
         import boto3
     except ImportError:
@@ -459,33 +458,22 @@ class S3ResourcePath(ResourcePath):
             yield from new_uri.walk(file_filter)
 
     @contextlib.contextmanager
-    def open(
+    def _openImpl(
         self,
         mode: str = "r",
         *,
         encoding: Optional[str] = None,
-        prefer_file_temporary: bool = False,
-        lineseperator="\n"
     ) -> Iterator[IO]:
-        if self.dirLike:
-            raise IsADirectoryError(f"Directory-like URI {self} cannot be opened.")
-        if prefer_file_temporary:
-            with super().open(mode, encoding=encoding, prefer_file_temporary=prefer_file_temporary) as handle:
-                yield handle
-        else:
-            if "x" in mode and self.exists():
-                raise FileExistsError(f"File at {self} already exists.")
-            with S3ResourceHandle(mode,
-                                  log,
-                                  self.client,
-                                  self.netloc,
-                                  self.relativeToPathRoot,
-                                  lineseperator) as handle:
-                if 'b' in mode:
-                    yield handle  # type: ignore
-                else:
-                    if encoding is None:
-                        encoding = sys.getdefaultencoding()
-                    with io.TextIOWrapper(handle, encoding=encoding,  # type: ignore
-                                          write_through=True) as sub:
-                        yield sub
+        with S3ResourceHandle(mode,
+                              log,
+                              self.client,
+                              self.netloc,
+                              self.relativeToPathRoot) as handle:
+            if 'b' in mode:
+                yield handle  # type: ignore
+            else:
+                if encoding is None:
+                    encoding = sys.getdefaultencoding()
+                with io.TextIOWrapper(handle, encoding=encoding,  # type: ignore
+                                      write_through=True) as sub:
+                    yield sub

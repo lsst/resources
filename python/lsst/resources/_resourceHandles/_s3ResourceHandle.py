@@ -60,8 +60,8 @@ class S3ResourceHandle(BaseResourceHandle):
     corresponding methods in the `io` module.
     """
 
-    def __init__(self, mode, log, client, bucket, key, lineseperator=b'\n'):
-        super().__init__(mode, log, lineseperator=lineseperator)
+    def __init__(self, mode, log, client, bucket, key, newline=b'\n'):
+        super().__init__(mode, log, newline=newline)
         self._client = client
         self._bucket = bucket
         self._key = key
@@ -235,10 +235,11 @@ class S3ResourceHandle(BaseResourceHandle):
         self.seek(0)
         return self.read()
 
-    def readinto(self, b) -> None:
+    def readinto(self, b) -> int:
         b[:] = self.readall()
+        return self.tell()
 
-    def write(self, b) -> Optional[int]:
+    def write(self, b: bytes) -> Optional[int]:
         if self.writable():
             result = self._buffer.write(b)
             self._position = self._buffer.tell()
