@@ -1299,23 +1299,45 @@ class ResourcePath:
                 if "r" not in mode or "+" in mode:
                     self.transfer_from(local_uri, transfer="copy", overwrite=("x" not in mode))
         else:
-            if "r" in mode or "a" in mode:
-                in_bytes = self.read()
-            else:
-                in_bytes = b""
-            if "b" in mode:
-                bytes_buffer = io.BytesIO(in_bytes)
-                if "a" in mode:
-                    bytes_buffer.seek(0, io.SEEK_END)
-                yield bytes_buffer
-                out_bytes = bytes_buffer.getvalue()
-            else:
-                if encoding is None:
-                    encoding = locale.getpreferredencoding(False)
-                str_buffer = io.StringIO(in_bytes.decode(encoding))
-                if "a" in mode:
-                    str_buffer.seek(0, io.SEEK_END)
-                yield str_buffer
-                out_bytes = str_buffer.getvalue().encode(encoding)
-            if "r" not in mode or "+" in mode:
-                self.write(out_bytes, overwrite=("x" not in mode))
+            with self._openImpl(mode, encoding=encoding) as handle:
+                yield handle
+
+    @contextlib.contextmanager
+    def _openImpl(self, mode: str, *, encoding: Optional[str]) -> Iterator[IO]:
+        """Implementation of the file handle like interface.
+
+        This private method may be overridden by specific `ResourcePath`
+        implementations to provide a customized handle like interface.
+
+        Parameters
+        ----------
+        mode : `str`
+            The mode the handle should be opened with
+        encoding : `str`, optional
+            The byte encoding of any binary text
+
+        Yields
+        ------
+        handle : `BaseResourceHandle`
+            A handle that conforms to the `BaseResourcehandle interface
+        """
+        if "r" in mode or "a" in mode:
+            in_bytes = self.read()
+        else:
+            in_bytes = b""
+        if "b" in mode:
+            bytes_buffer = io.BytesIO(in_bytes)
+            if "a" in mode:
+                bytes_buffer.seek(0, io.SEEK_END)
+            yield bytes_buffer
+            out_bytes = bytes_buffer.getvalue()
+        else:
+            if encoding is None:
+                encoding = locale.getpreferredencoding(False)
+            str_buffer = io.StringIO(in_bytes.decode(encoding))
+            if "a" in mode:
+                str_buffer.seek(0, io.SEEK_END)
+            yield str_buffer
+            out_bytes = str_buffer.getvalue().encode(encoding)
+        if "r" not in mode or "+" in mode:
+            self.write(out_bytes, overwrite=("x" not in mode))
