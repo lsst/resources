@@ -60,10 +60,6 @@ class BaseResourceHandle(ABC):
     def mode(self) -> str:
         return self._mode
 
-    @property
-    def name(self) -> str:
-        return ""
-
     @abstractmethod
     def close(self):
         ...
