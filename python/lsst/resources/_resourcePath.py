@@ -29,7 +29,6 @@ from random import Random
 __all__ = ("ResourcePath", "ResourcePathExpression")
 
 from typing import (
-    IO,
     TYPE_CHECKING,
     Any,
     Dict,
@@ -43,6 +42,8 @@ from typing import (
     Union,
     overload,
 )
+
+from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -1237,7 +1238,7 @@ class ResourcePath:
         *,
         encoding: Optional[str] = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[IO]:
+    ) -> Iterator[ResourceHandleProtocol]:
         """Return a context manager that wraps an object that behaves like an
         open file at the location of the URI.
 
@@ -1303,7 +1304,8 @@ class ResourcePath:
                 yield handle
 
     @contextlib.contextmanager
-    def _openImpl(self, mode: str, *, encoding: Optional[str]) -> Iterator[IO]:
+    def _openImpl(self, mode: str = 'r', *,
+                  encoding: Optional[str] = None) -> Iterator[ResourceHandleProtocol]:
         """Implementation of the file handle like interface.
 
         This private method may be overridden by specific `ResourcePath`

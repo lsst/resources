@@ -14,7 +14,8 @@ from __future__ import annotations
 __all__ = ("S3ResourceHandle",)
 
 from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO
-from typing import Iterable, Optional
+from typing import Iterable, Optional, TYPE_CHECKING, Mapping
+from logging import Logger
 import warnings
 
 from lsst.utils.timer import time_this
@@ -22,7 +23,11 @@ from lsst.utils.timer import time_this
 from . _baseResourceHandle import BaseResourceHandle, CloseStatus
 
 
-class S3ResourceHandle(BaseResourceHandle):
+if TYPE_CHECKING:
+    import boto3
+
+
+class S3ResourceHandle(BaseResourceHandle[bytes]):
     """S3 specialization of `BaseResourceHandle`
 
     Parameters
@@ -60,7 +65,8 @@ class S3ResourceHandle(BaseResourceHandle):
     corresponding methods in the `io` module.
     """
 
-    def __init__(self, mode, log, client, bucket, key, newline=b'\n'):
+    def __init__(self, mode: str, log: Logger, client: "boto3.client", bucket: str, key: str,
+                 newline: bytes = b'\n'):
         super().__init__(mode, log, newline=newline)
         self._client = client
         self._bucket = bucket
@@ -68,14 +74,14 @@ class S3ResourceHandle(BaseResourceHandle):
         self._buffer = BytesIO()
         self._position = 0
         self._writable = False
-        self._last_flush_position = None
+        self._last_flush_position: Optional[int] = None
         self._warned = False
         self._readable = bool({'r', '+'} & set(self._mode))
         if {'w', 'a', 'x', '+'} & set(self._mode):
             self._writable = True
             self._multiPartUpload = client.create_multipart_upload(Bucket=bucket, Key=key)
             self._partNo = 1
-            self._parts = []
+            self._parts: list[Mapping] = []
             if {'a', '+'} & set(self._mode):
                 # cheat a bit to get the existing data using object interfaces,
                 # because we know this is safe
@@ -101,7 +107,7 @@ class S3ResourceHandle(BaseResourceHandle):
     def tell(self) -> int:
         return self._position
 
-    def close(self):
+    def close(self) -> None:
         if self.writable():
             # decide if this is a multipart upload
             if self._parts:
@@ -164,13 +170,14 @@ class S3ResourceHandle(BaseResourceHandle):
     def readable(self) -> bool:
         return self._readable
 
-    def readline(self, size=-1) -> bytes:
+    def readline(self, size: int = -1) -> bytes:
         raise OSError("S3 Does not support line by line reads")
 
-    def readlines(self, hint=-1) -> Iterable[bytes]:
-        return self.readall().split(self._lineseperator)
+    def readlines(self, hint: int = -1) -> Iterable[bytes]:
+        self.seek(0)
+        return self.read().split(self._newline)
 
-    def seek(self, offset, whence=SEEK_SET) -> None:
+    def seek(self, offset: int, whence: int = SEEK_SET) -> int:
         if self.writable():
             if self._last_flush_position is not None:
                 if whence == SEEK_SET:
@@ -192,27 +199,29 @@ class S3ResourceHandle(BaseResourceHandle):
             elif whence == SEEK_END:
                 offset = abs(offset)
                 self._position -= offset
+        return self._position
 
     def seekable(self) -> bool:
         return True
 
-    def truncate(self, size=None) -> None:
+    def truncate(self, size: Optional[int] = None) -> int:
         if self.writable():
             self._buffer.truncate(size)
+            return self._position
         else:
             raise OSError("ResourceHandle is not writable")
 
     def writable(self) -> bool:
         return self._writable
 
-    def writelines(self, lines) -> None:
+    def writelines(self, lines: Iterable[bytes]) -> None:
         if self.writable():
             self._buffer.writelines(lines)
             self._position = self._buffer.tell()
         else:
             raise OSError("ResourceHandle is not writable")
 
-    def read(self, size=-1) -> bytes:
+    def read(self, size: int = -1) -> bytes:
         if not self.readable():
             raise OSError("ResourceHandle is not readable")
         # If the object is rw, then read from the internal io buffer
@@ -231,15 +240,7 @@ class S3ResourceHandle(BaseResourceHandle):
         self._position = len(contents)
         return contents
 
-    def readall(self) -> bytes:
-        self.seek(0)
-        return self.read()
-
-    def readinto(self, b) -> int:
-        b[:] = self.readall()
-        return self.tell()
-
-    def write(self, b: bytes) -> Optional[int]:
+    def write(self, b: bytes) -> int:
         if self.writable():
             result = self._buffer.write(b)
             self._position = self._buffer.tell()

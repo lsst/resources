@@ -14,12 +14,15 @@ __all__ = ("FileResourceHandle", )
 
 from io import SEEK_SET
 from logging import Logger
-from typing import Iterable, Optional, IO
+from typing import AnyStr, Iterable, Optional, IO, TypeVar
 
 from ._baseResourceHandle import BaseResourceHandle
 
 
-class FileResourceHandle(BaseResourceHandle):
+U = TypeVar('U', str, bytes)
+
+
+class FileResourceHandle(BaseResourceHandle[U]):
     """File based specialization of `BaseResourceHandle`
 
     Parameters
@@ -51,7 +54,7 @@ class FileResourceHandle(BaseResourceHandle):
     def mode(self) -> str:
         return self._mode
 
-    def close(self):
+    def close(self) -> None:
         self._fileHandle.close()
 
     @property
@@ -71,15 +74,15 @@ class FileResourceHandle(BaseResourceHandle):
     def readable(self) -> bool:
         return self._fileHandle.readable()
 
-    def readline(self, size=-1) -> bytes:
+    def readline(self, size: int = -1) -> AnyStr:
         return self._fileHandle.readline(size)
         ...
 
-    def readlines(self, hint=-1) -> Iterable[bytes]:
+    def readlines(self, hint: int = -1) -> Iterable[AnyStr]:
         return self._fileHandle.readlines(hint)
 
-    def seek(self, offset, whence=SEEK_SET) -> None:
-        self._fileHandle.seek(offset, whence)
+    def seek(self, offset: int, whence: int = SEEK_SET) -> int:
+        return self._fileHandle.seek(offset, whence)
 
     def seekable(self) -> bool:
         return self._fileHandle.seekable()
@@ -87,25 +90,17 @@ class FileResourceHandle(BaseResourceHandle):
     def tell(self) -> int:
         return self._fileHandle.tell()
 
-    def truncate(self, size=None) -> None:
-        self._fileHandle.truncate()
+    def truncate(self, size: Optional[int] = None) -> int:
+        return self._fileHandle.truncate()
 
     def writable(self) -> bool:
         return self._fileHandle.writable()
 
-    def writelines(self, lines) -> None:
+    def writelines(self, lines: Iterable[AnyStr]) -> None:
         self._fileHandle.writelines(lines)
 
-    def read(self, size=-1) -> bytes:
+    def read(self, size: int = -1) -> AnyStr:
         return self._fileHandle.read(size)
 
-    def readall(self) -> bytes:
-        self._fileHandle.seek(0)
-        return self._fileHandle.read()
-
-    def readinto(self, b) -> int:
-        b[:] = self.readall()
-        return self._fileHandle.tell()
-
-    def write(self, b) -> None:
-        self._fileHandle.write(b)
+    def write(self, b: U) -> int:
+        return self._fileHandle.write(b)

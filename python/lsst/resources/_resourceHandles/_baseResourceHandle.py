@@ -9,16 +9,20 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 from __future__ import annotations
+from types import TracebackType
 
 __all__ = ("BaseResourceHandle", "CloseStatus")
 
 from abc import ABC, abstractmethod, abstractproperty
 from io import SEEK_SET
 from logging import Logger
-from typing import Iterable, TypeVar, Union, Optional
+from typing import Callable, Iterable, TypeVar, Union, Optional, Protocol, Type, AnyStr, Generic
 from enum import Enum, auto
 
+
+S = TypeVar('S', bound="ResourceHandleProtocol")
 T = TypeVar('T', bound="BaseResourceHandle")
+U = TypeVar('U', str, bytes)
 
 
 class CloseStatus(Enum):
@@ -27,7 +31,88 @@ class CloseStatus(Enum):
     CLOSED = auto()
 
 
-class BaseResourceHandle(ABC):
+class ResourceHandleProtocol(Protocol, Generic[U]):
+    """
+    """
+    @property
+    def mode(self) -> str:
+        ...
+
+    @abstractmethod
+    def close(self) -> None:
+        ...
+
+    @abstractproperty
+    def closed(self) -> bool:
+        ...
+
+    @abstractmethod
+    def fileno(self) -> int:
+        ...
+
+    @abstractmethod
+    def flush(self) -> None:
+        ...
+
+    @abstractproperty
+    def isatty(self) -> Union[bool, Callable[[], bool]]:
+        ...
+
+    @abstractmethod
+    def readable(self) -> bool:
+        ...
+
+    @abstractmethod
+    def readline(self, size: int = -1) -> U:
+        ...
+
+    @abstractmethod
+    def readlines(self, hint: int = -1) -> Iterable[U]:
+        ...
+
+    @abstractmethod
+    def seek(self, offset: int, whence: int = SEEK_SET) -> int:
+        ...
+
+    @abstractmethod
+    def seekable(self) -> bool:
+        ...
+
+    @abstractmethod
+    def tell(self) -> int:
+        ...
+
+    @abstractmethod
+    def truncate(self, size: Optional[int] = None) -> int:
+        ...
+
+    @abstractmethod
+    def writable(self) -> bool:
+        ...
+
+    @abstractmethod
+    def writelines(self, lines: Iterable[U]) -> None:
+        ...
+
+    @abstractmethod
+    def read(self, size: int = -1) -> U:
+        ...
+
+    @abstractmethod
+    def write(self, b: U) -> int:
+        ...
+
+    def __enter__(self: S) -> S:
+        ...
+
+    def __exit__(self,
+                 exc_type: Optional[Type[BaseException]],
+                 exc_bal: Optional[BaseException],
+                 exc_tb: Optional[TracebackType]) -> Optional[bool]:
+        ...
+
+
+class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
     """Base class interface for the handle like interface of `ResourcePath`
     subclasses.
 
@@ -47,93 +132,31 @@ class BaseResourceHandle(ABC):
     """
     _closed: CloseStatus
     _mode: str
-    _lineseperator: bytes
     _log: Logger
+    _newline: U
 
-    def __init__(self, mode, log, *, newline: Union[str, bytes] = '\n'):
+    def __init__(self, mode: str, log: Logger, *, newline: Optional[AnyStr] = None) -> None:
+        if newline is None:
+            if 'b' in mode:
+                self._newline = b'\n'  # type: ignore
+            else:
+                self._newline = '\n'  # type: ignore
+        else:
+            self._newline = newline  # type: ignore
         self._mode = mode
         self._log = log
-        self._newline = newline
 
     @property
     def mode(self) -> str:
         return self._mode
 
-    @abstractmethod
-    def close(self):
-        ...
-
-    @abstractproperty
-    def closed(self) -> bool:
-        ...
-
-    @abstractmethod
-    def fileno(self) -> int:
-        ...
-
-    @abstractmethod
-    def flush(self) -> None:
-        ...
-
-    @abstractproperty
-    def isatty(self) -> bool:
-        ...
-
-    @abstractmethod
-    def readable(self) -> bool:
-        ...
-
-    @abstractmethod
-    def readline(self, size: int = -1) -> bytes:
-        ...
-
-    @abstractmethod
-    def readlines(self, hint: int = -1) -> Iterable[bytes]:
-        ...
-
-    @abstractmethod
-    def seek(self, offset: int, whence: int = SEEK_SET) -> None:
-        ...
-
-    @abstractmethod
-    def seekable(self) -> bool:
-        ...
-
-    @abstractmethod
-    def tell(self) -> int:
-        ...
-
-    @abstractmethod
-    def truncate(self, size: Optional[int] = None) -> None:
-        ...
-
-    @abstractmethod
-    def writable(self) -> bool:
-        ...
-
-    @abstractmethod
-    def writelines(self, lines) -> None:
-        ...
-
-    @abstractmethod
-    def read(self, size=-1) -> bytes:
-        ...
-
-    @abstractmethod
-    def readall(self) -> bytes:
-        ...
-
-    @abstractmethod
-    def readinto(self, b) -> int:
-        ...
-
-    @abstractmethod
-    def write(self, b: Union[bytes, str]) -> None:
-        ...
-
     def __enter__(self: T) -> T:
         self._closed = CloseStatus.OPEN
         return self
 
-    def __exit__(self, exc_type, exc_bal, exc_tb) -> None:
+    def __exit__(self,
+                 exc_type: Optional[Type[BaseException]],
+                 exc_bal: Optional[BaseException],
+                 exc_tb: Optional[TracebackType]) -> Optional[bool]:
         self.close()
+        return None
