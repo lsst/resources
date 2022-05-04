@@ -10,16 +10,15 @@
 # license that can be found in the LICENSE file.
 from __future__ import annotations
 
-__all__ = ("FileResourceHandle", )
+__all__ = ("FileResourceHandle",)
 
 from io import SEEK_SET
 from logging import Logger
-from typing import AnyStr, Iterable, Optional, IO, TypeVar
+from typing import IO, AnyStr, Iterable, Optional, TypeVar
 
 from ._baseResourceHandle import BaseResourceHandle
 
-
-U = TypeVar('U', str, bytes)
+U = TypeVar("U", str, bytes)
 
 
 class FileResourceHandle(BaseResourceHandle[U]):
@@ -39,12 +38,14 @@ class FileResourceHandle(BaseResourceHandle[U]):
     Documentation on the methods of this class line should refer to the
     corresponding methods in the `io` module.
     """
-    def __init__(self, mode: str, log: Logger, *, filename: str, encoding: Optional[str],
-                 newline: str = '\n'):
+
+    def __init__(
+        self, mode: str, log: Logger, *, filename: str, encoding: Optional[str], newline: str = "\n"
+    ):
         super().__init__(mode, log, newline=newline)
         self._filename = filename
         # opening a file in binary mode does not support a file argument
-        if 'b' in mode:
+        if "b" in mode:
             newline_arg = None
         else:
             newline_arg = newline

@@ -9,20 +9,20 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 from __future__ import annotations
+
 from types import TracebackType
 
 __all__ = ("BaseResourceHandle", "CloseStatus")
 
 from abc import ABC, abstractmethod, abstractproperty
+from enum import Enum, auto
 from io import SEEK_SET
 from logging import Logger
-from typing import Callable, Iterable, TypeVar, Union, Optional, Protocol, Type, AnyStr, Generic
-from enum import Enum, auto
+from typing import AnyStr, Callable, Generic, Iterable, Optional, Protocol, Type, TypeVar, Union
 
-
-S = TypeVar('S', bound="ResourceHandleProtocol")
-T = TypeVar('T', bound="BaseResourceHandle")
-U = TypeVar('U', str, bytes)
+S = TypeVar("S", bound="ResourceHandleProtocol")
+T = TypeVar("T", bound="BaseResourceHandle")
+U = TypeVar("U", str, bytes)
 
 
 class CloseStatus(Enum):
@@ -32,8 +32,8 @@ class CloseStatus(Enum):
 
 
 class ResourceHandleProtocol(Protocol, Generic[U]):
-    """
-    """
+    """ """
+
     @property
     def mode(self) -> str:
         ...
@@ -105,10 +105,12 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     def __enter__(self: S) -> S:
         ...
 
-    def __exit__(self,
-                 exc_type: Optional[Type[BaseException]],
-                 exc_bal: Optional[BaseException],
-                 exc_tb: Optional[TracebackType]) -> Optional[bool]:
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_bal: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
         ...
 
 
@@ -130,6 +132,7 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
     Documentation on the methods of this class line should refer to the
     corresponding methods in the `io` module.
     """
+
     _closed: CloseStatus
     _mode: str
     _log: Logger
@@ -137,10 +140,10 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
 
     def __init__(self, mode: str, log: Logger, *, newline: Optional[AnyStr] = None) -> None:
         if newline is None:
-            if 'b' in mode:
-                self._newline = b'\n'  # type: ignore
+            if "b" in mode:
+                self._newline = b"\n"  # type: ignore
             else:
-                self._newline = '\n'  # type: ignore
+                self._newline = "\n"  # type: ignore
         else:
             self._newline = newline  # type: ignore
         self._mode = mode
@@ -154,9 +157,11 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
         self._closed = CloseStatus.OPEN
         return self
 
-    def __exit__(self,
-                 exc_type: Optional[Type[BaseException]],
-                 exc_bal: Optional[BaseException],
-                 exc_tb: Optional[TracebackType]) -> Optional[bool]:
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_bal: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
         self.close()
         return None

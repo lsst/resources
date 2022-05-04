@@ -25,9 +25,9 @@ __all__ = ("FileResourcePath",)
 
 from typing import IO, TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
 
+from ._resourceHandles._fileResourceHandle import FileResourceHandle
 from ._resourcePath import ResourcePath
 from .utils import NoTransaction, os2posix, posix2os
-from ._resourceHandles._fileResourceHandle import FileResourceHandle
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol

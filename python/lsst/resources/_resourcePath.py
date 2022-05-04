@@ -1304,8 +1304,9 @@ class ResourcePath:
                 yield handle
 
     @contextlib.contextmanager
-    def _openImpl(self, mode: str = 'r', *,
-                  encoding: Optional[str] = None) -> Iterator[ResourceHandleProtocol]:
+    def _openImpl(
+        self, mode: str = "r", *, encoding: Optional[str] = None
+    ) -> Iterator[ResourceHandleProtocol]:
         """Implementation of the file handle like interface.
 
         This private method may be overridden by specific `ResourcePath`

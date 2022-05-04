@@ -17,8 +17,8 @@ import pkg_resources
 
 __all__ = ("PackageResourcePath",)
 
-from ._resourcePath import ResourcePath
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
+from ._resourcePath import ResourcePath
 
 log = logging.getLogger(__name__)
 

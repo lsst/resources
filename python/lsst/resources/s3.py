@@ -10,9 +10,9 @@
 # license that can be found in the LICENSE file.
 
 from __future__ import annotations
+
 import contextlib
 import io
-
 import logging
 import re
 import sys
@@ -29,9 +29,9 @@ from botocore.exceptions import ClientError
 from lsst.utils.timer import time_this
 from urllib3.exceptions import HTTPError, RequestError
 
-from ._resourcePath import ResourcePath
-from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
+from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
+from ._resourcePath import ResourcePath
 from .s3utils import bucketExists, getS3Client, s3CheckFileExists
 
 if TYPE_CHECKING:
@@ -465,16 +465,11 @@ class S3ResourcePath(ResourcePath):
         *,
         encoding: Optional[str] = None,
     ) -> Iterator[ResourceHandleProtocol]:
-        with S3ResourceHandle(mode,
-                              log,
-                              self.client,
-                              self.netloc,
-                              self.relativeToPathRoot) as handle:
-            if 'b' in mode:
+        with S3ResourceHandle(mode, log, self.client, self.netloc, self.relativeToPathRoot) as handle:
+            if "b" in mode:
                 yield handle
             else:
                 if encoding is None:
                     encoding = sys.getdefaultencoding()
-                with io.TextIOWrapper(handle, encoding=encoding,  # type: ignore
-                                      write_through=True) as sub:
+                with io.TextIOWrapper(handle, encoding=encoding, write_through=True) as sub:  # type: ignore
                     yield sub
