@@ -1307,7 +1307,7 @@ class ResourcePath:
     def _openImpl(
         self, mode: str = "r", *, encoding: Optional[str] = None
     ) -> Iterator[ResourceHandleProtocol]:
-        """Implementation of the file handle like interface.
+        """Implement opening of a resource handle.
 
         This private method may be overridden by specific `ResourcePath`
         implementations to provide a customized handle like interface.

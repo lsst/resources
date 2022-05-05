@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from types import TracebackType
 
-__all__ = ("BaseResourceHandle", "CloseStatus")
+__all__ = ("BaseResourceHandle", "CloseStatus", "ResourceHandleProtocol")
 
 from abc import ABC, abstractmethod, abstractproperty
 from enum import Enum, auto
@@ -26,13 +26,20 @@ U = TypeVar("U", str, bytes)
 
 
 class CloseStatus(Enum):
+    """Enumerated closed/open status of a file handle, implementation detail
+    that may be used by BaseResourceHandle children.
+    """
+
     OPEN = auto()
     CLOSING = auto()
     CLOSED = auto()
 
 
 class ResourceHandleProtocol(Protocol, Generic[U]):
-    """ """
+    """Define the interface protocol that is compatable with children of
+    `BaseResourceHandle`. Any class that satisfies this protocol can be used
+    in any context where a `BaseResourceHandle` is expected.
+    """
 
     @property
     def mode(self) -> str:
