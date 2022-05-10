@@ -78,8 +78,8 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
         ...
 
     @abstractmethod
-    def seek(self, offset: int, whence: int = SEEK_SET) -> int:
-        ...
+    def seek(self, offset: int, whence: int = SEEK_SET, /) -> int:
+        pass
 
     @abstractmethod
     def seekable(self) -> bool:
@@ -98,7 +98,7 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
         ...
 
     @abstractmethod
-    def writelines(self, lines: Iterable[U]) -> None:
+    def writelines(self, lines: Iterable[U], /) -> None:
         ...
 
     @abstractmethod
@@ -106,7 +106,7 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
         ...
 
     @abstractmethod
-    def write(self, b: U) -> int:
+    def write(self, b: U, /) -> int:
         ...
 
     def __enter__(self: S) -> S:
@@ -115,8 +115,9 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     def __exit__(
         self,
         exc_type: Optional[Type[BaseException]],
-        exc_bal: Optional[BaseException],
+        exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
+        /,
     ) -> Optional[bool]:
         ...
 
