@@ -97,6 +97,41 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 remote.transfer_from(tmp, transfer="auto", overwrite=True)
             self.assertRegex("".join(cm.output), rf"{tmp.basename()}.*100\%")
 
+    def test_handle(self):
+        remote = self.root_uri.join("test_handle.dat")
+        with remote.open("wb") as handle:
+            self.assertTrue(handle.writable())
+            # write 6 megabytes to make sure partial write work
+            handle.write(6 * 1024 * 1024 * b"a")
+            self.assertEqual(handle.tell(), 6 * 1024 * 1024)
+            handle.flush()
+            self.assertGreaterEqual(len(handle._multiPartUpload), 1)
+
+            # verify file can't be seeked back
+            with self.assertRaises(OSError):
+                handle.seek(0)
+
+            # write more bytes
+            handle.write(1024 * b"c")
+
+            # seek back and overwrite
+            handle.seek(6 * 1024 * 1024)
+            handle.write(1024 * b"b")
+
+        with remote.open("rb") as handle:
+            self.assertTrue(handle.readable())
+            # read the first 6 megabytes
+            result = handle.read(6 * 1024 * 1024)
+            self.assertEqual(result, 6 * 1024 * 1024 * b"a")
+            self.assertEqual(handle.tell(), 6 * 1024 * 1024)
+            # verify additional read gets the next part
+            result = handle.read(1024)
+            self.assertEqual(result, 1024 * b"b")
+            # see back to the beginning to verify seeking
+            handle.seek(0)
+            result = handle.read(1024)
+            self.assertEqual(result, 1024 * b"a")
+
 
 if __name__ == "__main__":
     unittest.main()

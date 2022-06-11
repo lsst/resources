@@ -11,12 +11,13 @@
 
 import contextlib
 import logging
-from typing import IO, Iterator, Optional
+from typing import Iterator, Optional
 
 import pkg_resources
 
 __all__ = ("PackageResourcePath",)
 
+from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourcePath
 
 log = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class PackageResourcePath(ResourcePath):
         *,
         encoding: Optional[str] = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[IO]:
+    ) -> Iterator[ResourceHandleProtocol]:
         # Docstring inherited.
         if "r" not in mode or "+" in mode:
             raise RuntimeError(f"Package resource URI {self} is read-only.")
