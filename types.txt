@@ -1,4 +1,4 @@
 types-requests
 types-setuptools
 types-urllib3
-git+https://github.com/lsst/utils@main#egg=lsst_utils
+lsst-utils
