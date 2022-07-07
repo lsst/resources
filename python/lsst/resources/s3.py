@@ -29,11 +29,12 @@ from urllib3.exceptions import HTTPError, RequestError
 from ._resourcePath import ResourcePath
 from .s3utils import bucketExists, getS3Client, s3CheckFileExists
 
+try:
+    import boto3
+except ImportError:
+    boto3 = None
+
 if TYPE_CHECKING:
-    try:
-        import boto3
-    except ImportError:
-        pass
     from .utils import TransactionProtocol
 
 # https://pypi.org/project/backoff/
@@ -286,13 +287,18 @@ class S3ResourcePath(ResourcePath):
             raise
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
-    def _copy_from(self, src: ResourcePath) -> None:
+    def _copy_from(self, src: ResourcePath, progress: Optional[ProgressPercentage]) -> None:
         copy_source = {
             "Bucket": src.netloc,
             "Key": src.relativeToPathRoot,
         }
+        assert boto3 is not None, "boto3 must be available to get here"
+        # Note that boto3.resource.meta.copy is cleverer than the low
+        # level copy_object.
+        s3 = boto3.resource("s3")
         try:
-            self.client.copy_object(CopySource=copy_source, Bucket=self.netloc, Key=self.relativeToPathRoot)
+            print("Trying to s3 to s3")
+            s3.meta.client.copy(copy_source, self.netloc, self.relativeToPathRoot, Callback=progress)
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
             raise FileNotFoundError("No such resource to transfer: {self}") from err
         except ClientError as err:
@@ -355,11 +361,14 @@ class S3ResourcePath(ResourcePath):
         timer_args = (src, self)
 
         if isinstance(src, type(self)):
-            # Looks like an S3 remote uri so we can use direct copy
-            # note that boto3.resource.meta.copy is cleverer than the low
-            # level copy_object
+            # Looks like an S3 remote uri so we can use direct copy.
+            progress = (
+                ProgressPercentage(src, msg="S3 to S3 copy:")
+                if log.isEnabledFor(ProgressPercentage.log_level)
+                else None
+            )
             with time_this(log, msg=timer_msg, args=timer_args):
-                self._copy_from(src)
+                self._copy_from(src, progress)
 
         else:
             # Use local file and upload it
