@@ -231,18 +231,10 @@ class GSResourcePath(ResourcePath):
         if isinstance(src, type(self)):
             # Looks like a GS remote uri so we can use direct copy
             with time_this(log, msg=timer_msg, args=timer_args):
-                rewrite_token = None
-                while True:
-                    try:
-                        rewrite_token, bytes_copied, total_bytes = self.blob.rewrite(
-                            src.blob, token=rewrite_token, retry=_RETRY_POLICY
-                        )
-                    except NotFound as e:
-                        raise FileNotFoundError("No such resource to transfer: {self}") from e
-                    log.debug("Copied %d bytes out of %d (%s to %s)", bytes_copied, total_bytes, src, self)
-                    if rewrite_token is None:
-                        # Copy has completed
-                        break
+                # Can not use blob.rewrite() for larger files.
+                self._blob = src.bucket.copy_blob(
+                    src.blob, self.bucket, new_name=self.relativeToPathRoot, retry=_RETRY_POLICY
+                )
         else:
             # Use local file and upload it
             with src.as_local() as local_uri:
