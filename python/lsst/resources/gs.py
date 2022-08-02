@@ -231,10 +231,10 @@ class GSResourcePath(ResourcePath):
         if isinstance(src, type(self)):
             # Looks like a GS remote uri so we can use direct copy
             with time_this(log, msg=timer_msg, args=timer_args):
-                # Can not use blob.rewrite() for larger files.
-                self._blob = src.bucket.copy_blob(
-                    src.blob, self.bucket, new_name=self.relativeToPathRoot, retry=_RETRY_POLICY
-                )
+                # For large files we use multipart upload in the S3 interface
+                # therefore we must use compose to copy to the destination.
+                sources = [src.bucket.get_blob(src.relativeToPathRoot)]
+                self.blob.compose(sources, retry=_RETRY_POLICY)
         else:
             # Use local file and upload it
             with src.as_local() as local_uri:
