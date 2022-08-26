@@ -4,6 +4,7 @@ Resources v24.0.0 2022-08-26
 New Features
 ------------
 
+- This package is now available on `PyPI as lsst-resources <https://pypi.org/project/lsst-resources/>`_.
 - The ``lsst.daf.butler.ButlerURI`` code has been extracted from the ``daf_butler`` package and made into a standalone package. It is now known as `lsst.resources.ResourcePath` and distributed in the ``lsst-resources`` package.
 - Add support for Google Cloud Storage access using the ``gs`` URI scheme. (`DM-27355 <https://jira.lsstcorp.org/browse/DM-27355>`_)
 - Builds using ``setuptools`` now calculate versions from the Git repository, including the use of alpha releases for those associated with weekly tags. (`DM-32408 <https://jira.lsstcorp.org/browse/DM-32408>`_)
