@@ -1,1 +1,0 @@
-Add support for Google Cloud Storage access using the ``gs`` URI scheme.

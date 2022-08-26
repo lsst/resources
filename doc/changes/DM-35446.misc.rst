@@ -1,1 +1,0 @@
-When walking the local file system symlinks to directories are now followed.
