@@ -1,1 +1,0 @@
-Add an `open` method that returns a file-like buffer wrapped by a context manager.

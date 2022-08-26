@@ -22,6 +22,8 @@ Design and Development
 
 ``lsst.resources`` is developed at https://github.com/lsst/resources.
 
+It is available from PyPI as ``lsst-resources``: https://pypi.org/project/lsst-resources/
+
 .. _lsst.resources-pyapi:
 
 Python API reference
