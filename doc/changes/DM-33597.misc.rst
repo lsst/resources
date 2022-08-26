@@ -1,2 +1,0 @@
-Attempt to catch 429 Retry client error in S3 interface.
-This code is not caught by botocore itself since it is not part of the AWS standard but Google can generate it.
