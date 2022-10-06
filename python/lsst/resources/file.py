@@ -284,13 +284,39 @@ class FileResourcePath(ResourcePath):
                     pass
 
             if transfer == "move":
-                with transaction.undoWith(
-                    f"move from {local_src}", shutil.move, newFullPath, local_src, copy_function=shutil.copy
-                ):
-                    shutil.move(local_src, newFullPath, copy_function=shutil.copy)
+                # If a rename works we try that since that is guaranteed to
+                # be atomic. If that fails we copy and rename. We do this
+                # in case other processes are trying to move to the same
+                # file and we want the "winner" to not be corrupted.
+                try:
+                    with transaction.undoWith(f"move from {local_src}", os.rename, newFullPath, local_src):
+                        os.rename(local_src, newFullPath)
+                except OSError:
+                    with self.temporary_uri(prefix=self.parent(), suffix=self.getExtension()) as temp_copy:
+                        shutil.copy(local_src, temp_copy.ospath)
+                        with transaction.undoWith(
+                            f"move from {local_src}",
+                            shutil.move,
+                            newFullPath,
+                            local_src,
+                            copy_function=shutil.copy,
+                        ):
+                            os.rename(temp_copy.ospath, newFullPath)
+                    os.remove(local_src)
             elif transfer == "copy":
-                with transaction.undoWith(f"copy from {local_src}", os.remove, newFullPath):
-                    shutil.copy(local_src, newFullPath)
+                # We want atomic copies so first copy to a temp location in
+                # the same output directory. This at least guarantees that
+                # if multiple processes are writing to the same file
+                # simultaneously the file we end up with will not be corrupt.
+                with self.temporary_uri(prefix=self.parent(), suffix=self.getExtension()) as temp_copy:
+                    shutil.copy(local_src, temp_copy.ospath)
+                    with transaction.undoWith(f"copy from {local_src}", os.remove, newFullPath):
+                        # os.rename works even if the file exists.
+                        # It's possible that another process has copied a file
+                        # in whilst this one was copying. If overwrite
+                        # protection is needed then another stat() call should
+                        # happen here.
+                        os.rename(temp_copy.ospath, newFullPath)
             elif transfer == "link":
                 # Try hard link and if that fails use a symlink
                 with transaction.undoWith(f"link to {local_src}", os.remove, newFullPath):
