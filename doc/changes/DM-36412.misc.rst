@@ -1,0 +1,3 @@
+For file copies with ``transfer_from()`` an attempt is now made to make the copies atomic by using `os.rename` with a temporary intermediate.
+Moves now explicitly prefer `os.rename` and will fall back to an atomic copy before deletion if needed.
+This is useful if multiple processes are trying to copy to the same destination file.
