@@ -369,7 +369,7 @@ class HttpResourcePath(ResourcePath):
     def exists(self) -> bool:
         """Check that a remote HTTP resource exists."""
         log.debug("Checking if resource exists: %s", self.geturl())
-        resp = self.session.head(self.geturl(), timeout=TIMEOUT)
+        resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True)
         return resp.status_code == 200
 
     def size(self) -> int:
@@ -377,7 +377,7 @@ class HttpResourcePath(ResourcePath):
         if self.dirLike:
             return 0
 
-        resp = self.session.head(self.geturl(), timeout=TIMEOUT)
+        resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True)
         if resp.status_code != 200:
             raise FileNotFoundError(f"Resource {self} does not exist")
         return int(resp.headers["Content-Length"])
