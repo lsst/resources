@@ -571,7 +571,7 @@ class HttpResourcePath(ResourcePath):
 
         # Send data to its final destination.
         resp = self.put_session.put(final_url, data=data, timeout=TIMEOUT)
-        if resp.status_code not in [201, 202, 204]:
+        if resp.status_code not in [200, 201, 202, 204]:
             raise ValueError(f"Can not write file {self}, status code: {resp.status_code}")
 
 
