@@ -30,14 +30,14 @@ from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
 from ._resourcePath import ResourcePath
 from .s3utils import (
+    _TooManyRequestsException,
+    all_retryable_errors,
+    backoff,
     bucketExists,
     getS3Client,
-    s3CheckFileExists,
-    backoff,
-    retryable_io_errors,
-    all_retryable_errors,
     max_retry_time,
-    _TooManyRequestsException
+    retryable_io_errors,
+    s3CheckFileExists,
 )
 
 if TYPE_CHECKING:

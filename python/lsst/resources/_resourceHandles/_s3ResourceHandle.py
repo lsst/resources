@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Iterable, Mapping, Optional
 
 from lsst.utils.timer import time_this
 
+from ..s3utils import all_retryable_errors, backoff, max_retry_time
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
-from ..s3utils import backoff, all_retryable_errors, max_retry_time
 
 if TYPE_CHECKING:
     import boto3

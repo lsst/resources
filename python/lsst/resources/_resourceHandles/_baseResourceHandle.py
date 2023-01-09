@@ -124,9 +124,7 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
         ...
 
 
-# ignoring type because this base class is intended to extend the protocol
-# and not implement all the properties of the protocol
-class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):  # type: ignore
+class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
     """Base class interface for the handle like interface of `ResourcePath`
     subclasses.
 
