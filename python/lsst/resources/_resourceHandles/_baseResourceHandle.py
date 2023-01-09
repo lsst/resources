@@ -36,12 +36,14 @@ class CloseStatus(Enum):
 
 
 class ResourceHandleProtocol(Protocol, Generic[U]):
-    """Define the interface protocol that is compatable with children of
-    `BaseResourceHandle`. Any class that satisfies this protocol can be used
-    in any context where a `BaseResourceHandle` is expected.
+    """Defines the interface protocol that is compatible with children of
+    `BaseResourceHandle`.
+
+    Any class that satisfies this protocol can be used in any context where a
+    `BaseResourceHandle` is expected.
     """
 
-    @property
+    @abstractproperty
     def mode(self) -> str:
         ...
 
@@ -122,7 +124,9 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
         ...
 
 
-class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
+# ignoring type because this base class is intended to extend the protocol
+# and not implement all the properties of the protocol
+class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):  # type: ignore
     """Base class interface for the handle like interface of `ResourcePath`
     subclasses.
 
@@ -132,8 +136,9 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
         Handle modes as described in the python `io` module
     log : `~logging.Logger`
         Logger to used when writing messages
-    lineseperator : `str`
+    newline : `str`
         When doing multiline operations, break the stream on given character
+        Defaults to newline.
 
     Notes
     -----

@@ -30,8 +30,15 @@ class FileResourceHandle(BaseResourceHandle[U]):
         Handle modes as described in the python `io` module
     log : `~logging.Logger`
         Logger to used when writing messages
-    lineseperator : `str`
-        When doing multiline operations, break the stream on given character
+    filename : `str`
+        Name of the file on the filesystem to use.
+    encoding : `str` or None
+        Optionally supply the encoding of the file.
+    newline : `str`
+        When doing multiline operations, break the stream on given character.
+        Defaults to newline. If a file is opened in binary mode, this argument
+        is not used, as binary files will only split lines on the binary
+        newline representation.
 
     Notes
     -----
@@ -44,7 +51,7 @@ class FileResourceHandle(BaseResourceHandle[U]):
     ):
         super().__init__(mode, log, newline=newline)
         self._filename = filename
-        # opening a file in binary mode does not support a file argument
+        # opening a file in binary mode does not support a newline argument
         if "b" in mode:
             newline_arg = None
         else:
@@ -92,7 +99,7 @@ class FileResourceHandle(BaseResourceHandle[U]):
         return self._fileHandle.tell()
 
     def truncate(self, size: Optional[int] = None) -> int:
-        return self._fileHandle.truncate()
+        return self._fileHandle.truncate(size)
 
     def writable(self) -> bool:
         return self._fileHandle.writable()

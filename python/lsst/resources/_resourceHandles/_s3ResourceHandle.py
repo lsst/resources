@@ -1,4 +1,4 @@
-# ihis file is part of lsst-resources.
+# This file is part of lsst-resources.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Iterable, Mapping, Optional
 from lsst.utils.timer import time_this
 
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
+from ..s3utils import backoff, all_retryable_errors, max_retry_time
 
 if TYPE_CHECKING:
     import boto3
@@ -42,8 +43,9 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         The name of the s3 bucket of this resource.
     key : `str`
         The identifier of the resource within the specified bucket.
-    lineseperator : `str`
+    newline : `str`
         When doing multiline operations, break the stream on given character.
+        Defaults to newline.
 
     Note
     ----
@@ -62,6 +64,10 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
 
     Documentation on the methods of this class line should refer to the
     corresponding methods in the `io` module.
+
+    S3 handles only support operations in binary mode. To get other modes of
+    reading and writing, wrap this handle inside an `io.TextIOWrapper` context
+    manager. An example of this can be found in `S3ResourcePath`.
     """
 
     def __init__(
@@ -82,31 +88,41 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             self._multiPartUpload = client.create_multipart_upload(Bucket=bucket, Key=key)
             self._partNo = 1
             self._parts: list[Mapping] = []
+            # Below is a workaround for append mode. It basically must read in
+            # everything that exists in the file so that it is in the buffer to
+            # append to, and subsequently written back out appropriately with
+            # any newly added data.
             if {"a", "+"} & set(self._mode):
-                # cheat a bit to get the existing data using object interfaces,
-                # because we know this is safe
-                # save the requested mode and readability
+                # Cheat a bit to get the existing data from the handle using
+                # object interfaces, because we know this is safe.
+                # Save the requested mode and readability.
                 mode_save = self._mode
                 read_save = self._readable
-                # Update these to ensure they are strictly readable
+                # Update each of these internal variables to ensure the handle
+                # is strictly readable.
                 self._readable = True
                 self._mode += "r"
                 self._mode = self._mode.replace("+", "")
+                # As mentioned, this reads the existing contents and writes it
+                # out into the internal buffer, no writes actually happen until
+                # the handle is flushed.
                 self.write(self.read())
-                # Restore the requested states
+                # Restore the requested states.
                 self._mode = mode_save
                 self._readable = read_save
-                # set the state of the stream if the specified mode is read
-                # and write
+                # Set the state of the stream if the specified mode is read
+                # and write.
                 if "+" in self._mode:
                     self.seek(0)
-                    # if a file is w+ it is read write, but should be truncated
+                    # If a file is w+ it is read write, but should be truncated
+                    # for future writes.
                     if "w" in self._mode:
                         self.truncate()
 
     def tell(self) -> int:
         return self._position
 
+    @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def close(self) -> None:
         if self.writable():
             # decide if this is a multipart upload
@@ -134,6 +150,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
     def fileno(self) -> int:
         raise OSError("S3 object does not have a file number")
 
+    @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def flush(self) -> None:
         # If the object is closed, not writeable, or rw flush should be skipped
         # rw mode skips flush because the whole bytestream must be kept in
@@ -143,8 +160,9 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         # Disallow writes to seek to a position prior to the previous flush
         # this allows multipart uploads to upload content as the stream is
         # written to.
+        s3_min_bits = 5 * 1024 * 1024  # S3 flush threshold is 5 Mib.
         if (
-            (self.tell() - (self._last_flush_position or 0)) < 5242880
+            (self.tell() - (self._last_flush_position or 0)) < s3_min_bits
             and not self._closed == CloseStatus.CLOSING
             and not self._warned
         ):
@@ -220,7 +238,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             self._buffer.truncate(size)
             return self._position
         else:
-            raise OSError("ResourceHandle is not writable")
+            raise OSError("S3 ResourceHandle is not writable")
 
     def writable(self) -> bool:
         return self._writable
@@ -230,11 +248,12 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             self._buffer.writelines(lines)
             self._position = self._buffer.tell()
         else:
-            raise OSError("ResourceHandle is not writable")
+            raise OSError("S3 ResourceHandle is not writable")
 
+    @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def read(self, size: int = -1) -> bytes:
         if not self.readable():
-            raise OSError("ResourceHandle is not readable")
+            raise OSError("S3 ResourceHandle is not readable")
         # If the object is rw, then read from the internal io buffer
         if "+" in self._mode:
             self._buffer.seek(self._position)
@@ -257,4 +276,4 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             self._position = self._buffer.tell()
             return result
         else:
-            raise OSError("ResourceHandle is not writable")
+            raise OSError("S3 ResourceHandle is not writable")

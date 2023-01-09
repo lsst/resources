@@ -1323,6 +1323,13 @@ class ResourcePath:
         ------
         handle : `BaseResourceHandle`
             A handle that conforms to the `BaseResourcehandle interface
+
+        Notes
+        -----
+        The base implementation of a file handle reads in a files entire
+        contents into a buffer for manipulation, and then writes it back out
+        upon close. Subclasses of this class may offer more fine grained
+        control.
         """
         if "r" in mode or "a" in mode:
             in_bytes = self.read()
