@@ -21,7 +21,7 @@ import threading
 
 __all__ = ("S3ResourcePath",)
 
-from typing import IO, TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
+from typing import IO, TYPE_CHECKING, Iterator, List, Optional, Tuple, Union, cast
 
 from botocore.exceptions import ClientError
 from lsst.utils.timer import time_this
@@ -419,5 +419,7 @@ class S3ResourcePath(ResourcePath):
             else:
                 if encoding is None:
                     encoding = sys.getdefaultencoding()
-                with io.TextIOWrapper(handle, encoding=encoding, write_through=True) as sub:  # type: ignore
+                # cast because the protocol is compatible, but does not have
+                # BytesIO in the inheritance tree
+                with io.TextIOWrapper(cast(io.BytesIO, handle), encoding=encoding, write_through=True) as sub:
                     yield sub

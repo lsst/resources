@@ -14,7 +14,7 @@ from __future__ import annotations
 __all__ = ("S3ResourceHandle",)
 
 import warnings
-from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO
+from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO, UnsupportedOperation
 from logging import Logger
 from typing import TYPE_CHECKING, Iterable, Mapping, Optional
 
@@ -148,7 +148,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         return self._closed == CloseStatus.CLOSED
 
     def fileno(self) -> int:
-        raise OSError("S3 object does not have a file number")
+        raise UnsupportedOperation("S3 object does not have a file number")
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def flush(self) -> None:
