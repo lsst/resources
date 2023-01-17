@@ -10,10 +10,13 @@
 # license that can be found in the LICENSE file.
 
 import importlib
+import io
 import os.path
 import stat
 import tempfile
 import unittest
+
+from typing import cast
 
 import lsst.resources
 import requests
@@ -22,6 +25,7 @@ from lsst.resources import ResourcePath
 from lsst.resources.http import BearerTokenAuth, SessionStore, _is_protected, _is_webdav_endpoint
 from lsst.resources.tests import GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
+from lsst.resources._resourceHandles._httpResourceHandle import HttpReadResourceHandle
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -49,6 +53,9 @@ class HttpReadWriteTestCase(unittest.TestCase):
         existingFileName = "existingFile"
         notExistingFileName = "notExistingFile"
 
+        fileForHandleWithRange = "handleWithRange"
+        fileForHandleWithOutRange = "handleWithOutRange"
+
         self.baseURL = ResourcePath(f"https://{serverRoot}", forceDirectory=True)
         self.existingFileResourcePath = ResourcePath(
             f"https://{serverRoot}/{existingFolderName}/{existingFileName}"
@@ -61,6 +68,45 @@ class HttpReadWriteTestCase(unittest.TestCase):
         )
         self.notExistingFolderResourcePath = ResourcePath(
             f"https://{serverRoot}/{notExistingFileName}", forceDirectory=True
+        )
+        self.handleWithRangeResourcePath = ResourcePath(
+            f"https://{serverRoot}/{existingFolderName}/{fileForHandleWithRange}"
+        )
+        self.handleWithOutRangeResourcePath = ResourcePath(
+            f"https://{serverRoot}/{existingFolderName}/{fileForHandleWithOutRange}"
+        )
+
+        # Used by the handle tests
+        responses.add(
+            responses.HEAD,
+            self.handleWithRangeResourcePath.geturl(),
+            status=200,
+            headers={"Content-Length": "1024", "Accept-Ranges": "true"},
+        )
+        self.handleWithRangeBody = "These are some \n bytes to read"
+        responses.add(
+            responses.GET,
+            self.handleWithRangeResourcePath.geturl(),
+            status=206,
+            body=self.handleWithRangeBody.encode(),
+        )
+        responses.add(
+            responses.PUT,
+            self.handleWithRangeResourcePath.geturl(),
+            status=201,
+        )
+
+        responses.add(
+            responses.HEAD,
+            self.handleWithOutRangeResourcePath.geturl(),
+            status=200,
+            headers={"Content-Length": "1024"},
+        )
+        responses.add(
+            responses.GET,
+            self.handleWithOutRangeResourcePath.geturl(),
+            status=200,
+            body="These are some bytes to read".encode(),
         )
 
         # Need to declare the options
@@ -153,6 +199,52 @@ class HttpReadWriteTestCase(unittest.TestCase):
         if self.tmpdir:
             if self.tmpdir.isLocal:
                 removeTestTempDir(self.tmpdir.ospath)
+
+    @responses.activate
+    def test_file_handle(self):
+        # Test that without the correct header the default method is used.
+        with self.handleWithOutRangeResourcePath.open('rb') as handle:
+            self.assertIsInstance(handle, io.BytesIO)
+
+        # Test that with correct header the correct handle is returned.
+        with self.handleWithRangeResourcePath.open('rb') as handle:
+            self.assertIsInstance(handle, HttpReadResourceHandle)
+
+        # Test reading byte ranges works
+        with self.handleWithRangeResourcePath.open('rb') as handle:
+            handle = cast(HttpReadResourceHandle, handle)
+            # This is not a real test, because responses can not actually
+            # handle reading sub byte ranges, so the whole thing needs to be
+            # read.
+            result = handle.read(len(self.handleWithRangeBody)).decode()
+            self.assertEqual(result, self.handleWithRangeBody)
+            # Verify there is no internal buffer.
+            self.assertIsNone(handle._completeBuffer)
+            # Verify the position.
+            self.assertEqual(handle.tell(), len(self.handleWithRangeBody))
+
+            # Jump back to the beginning and test if reading the whole file
+            # prompts the internal buffer to be read.
+            handle.seek(0)
+            self.assertEqual(handle.tell(), 0)
+            result = handle.read().decode()
+            self.assertIsNotNone(handle._completeBuffer)
+            self.assertEqual(result, self.handleWithRangeBody)
+
+        # Verify reading as a string handle works as expected.
+        with self.handleWithRangeResourcePath.open('r') as handle:
+            self.assertIsInstance(handle, io.TextIOWrapper)
+
+            handle = cast(io.TextIOWrapper, handle)
+            self.assertIsInstance(handle.buffer, HttpReadResourceHandle)
+
+            # Check if string methods work.
+            result = handle.read()
+            self.assertEqual(result, self.handleWithRangeBody)
+
+        # Verify that write modes invoke the default base method
+        with self.handleWithRangeResourcePath.open('w') as handle:
+            self.assertIsInstance(handle, io.StringIO)
 
     @responses.activate
     def test_exists(self):
