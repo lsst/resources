@@ -15,17 +15,16 @@ import os.path
 import stat
 import tempfile
 import unittest
-
 from typing import cast
 
 import lsst.resources
 import requests
 import responses
 from lsst.resources import ResourcePath
+from lsst.resources._resourceHandles._httpResourceHandle import HttpReadResourceHandle
 from lsst.resources.http import BearerTokenAuth, SessionStore, _is_protected, _is_webdav_endpoint
 from lsst.resources.tests import GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
-from lsst.resources._resourceHandles._httpResourceHandle import HttpReadResourceHandle
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -203,15 +202,15 @@ class HttpReadWriteTestCase(unittest.TestCase):
     @responses.activate
     def test_file_handle(self):
         # Test that without the correct header the default method is used.
-        with self.handleWithOutRangeResourcePath.open('rb') as handle:
+        with self.handleWithOutRangeResourcePath.open("rb") as handle:
             self.assertIsInstance(handle, io.BytesIO)
 
         # Test that with correct header the correct handle is returned.
-        with self.handleWithRangeResourcePath.open('rb') as handle:
+        with self.handleWithRangeResourcePath.open("rb") as handle:
             self.assertIsInstance(handle, HttpReadResourceHandle)
 
         # Test reading byte ranges works
-        with self.handleWithRangeResourcePath.open('rb') as handle:
+        with self.handleWithRangeResourcePath.open("rb") as handle:
             handle = cast(HttpReadResourceHandle, handle)
             # This is not a real test, because responses can not actually
             # handle reading sub byte ranges, so the whole thing needs to be
@@ -232,7 +231,7 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.assertEqual(result, self.handleWithRangeBody)
 
         # Verify reading as a string handle works as expected.
-        with self.handleWithRangeResourcePath.open('r') as handle:
+        with self.handleWithRangeResourcePath.open("r") as handle:
             self.assertIsInstance(handle, io.TextIOWrapper)
 
             handle = cast(io.TextIOWrapper, handle)
@@ -243,7 +242,7 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.assertEqual(result, self.handleWithRangeBody)
 
         # Verify that write modes invoke the default base method
-        with self.handleWithRangeResourcePath.open('w') as handle:
+        with self.handleWithRangeResourcePath.open("w") as handle:
             self.assertIsInstance(handle, io.StringIO)
 
     @responses.activate

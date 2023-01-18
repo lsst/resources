@@ -15,12 +15,12 @@ __all__ = ("HttpReadResourceHandle",)
 
 import io
 from logging import Logger
-from typing import AnyStr, Callable, Optional, Union
+from typing import AnyStr, Callable, Iterable, Optional, Union
 
 import requests
 from lsst.utils.timer import time_this
 
-from ._baseResourceHandle import BaseResourceHandle
+from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 
 class HttpReadResourceHandle(BaseResourceHandle[bytes]):
@@ -31,7 +31,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         *,
         session: Optional[requests.Session] = None,
         url: Optional[str] = None,
-        timeout: Optional[tuple[int, ...]] = None,
+        timeout: Optional[tuple[float, float]] = None,
         newline: Optional[AnyStr] = None,
     ) -> None:
         super().__init__(mode, log, newline=newline)
@@ -48,17 +48,16 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
         self._completeBuffer: Optional[io.BytesIO] = None
 
-        self._closed: bool = False
+        self._closed = CloseStatus.OPEN
         self._current_position = 0
 
     def close(self) -> None:
-        self._closed = True
+        self._closed = CloseStatus.CLOSED
         self._completeBuffer = None
-        self._readBuffers = {}
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        return self._closed == CloseStatus.CLOSED
 
     def fileno(self) -> int:
         raise io.UnsupportedOperation("HttpReadResourceHandle does not have a file number")
@@ -76,7 +75,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def readline(self, size: int = -1) -> AnyStr:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
-    def readlines(self, size: int = -1) -> AnyStr:
+    def readlines(self, size: int = -1) -> Iterable[bytes]:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
@@ -98,7 +97,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def tell(self) -> int:
         return self._current_position
 
-    def truncate(self, size: int = -1) -> AnyStr:
+    def truncate(self, size: Optional[int] = None) -> int:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support truncation")
 
     def writable(self) -> bool:
@@ -107,7 +106,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def write(self, b: bytes, /) -> int:
         raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
 
-    def writelines(self, b: bytes, /) -> int:
+    def writelines(self, b: Iterable[bytes], /) -> None:
         raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
 
     def read(self, size: int = -1) -> bytes:
@@ -121,7 +120,6 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             # The whole file has been requested, read it into a buffer and
             # return the result
             self._completeBuffer = io.BytesIO()
-            self._readBuffers = {}
             with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
                 resp = self._session.get(self._url, stream=False, timeout=self._timeout)
             if (code := resp.status_code) not in (200, 206):
@@ -134,7 +132,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         # a partial read is required, either because a size has been specified,
         # or a read has previously been done.
 
-        end_pos = self._current_position + size if size >= 0 else ""
+        end_pos = self._current_position + (size - 1) if size >= 0 else ""
         headers = {"Range": f"bytes={self._current_position}-{end_pos}"}
 
         with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):

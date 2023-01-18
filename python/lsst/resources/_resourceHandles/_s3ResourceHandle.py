@@ -166,7 +166,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             and not self._closed == CloseStatus.CLOSING
             and not self._warned
         ):
-            warnings.warn("S3 does not support flushing objects less than 5Mb, skipping")
+            amount = s3_min_bits / (1024 * 1024)
+            warnings.warn(f"S3 does not support flushing objects less than {amount} Mib, skipping")
             self._warned = True
             return
         # nothing to write, don't create an empty upload
