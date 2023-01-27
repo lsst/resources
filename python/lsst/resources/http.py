@@ -74,7 +74,8 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
     _is_webdav_endpoint : `bool`
         True if the endpoint implements WebDAV, False if it doesn't.
     """
-    if (ca_cert_bundle := os.getenv("LSST_HTTP_CACERT_BUNDLE")) is None:
+    is_https = str(path).lower().startswith("https://")
+    if (ca_cert_bundle := os.getenv("LSST_HTTP_CACERT_BUNDLE")) is None and is_https:
         log.warning(
             "Environment variable LSST_HTTP_CACERT_BUNDLE is not set: "
             "some HTTPS requests may fail if remote server presents a "
@@ -262,12 +263,13 @@ class SessionStore:
         if ca_bundle := os.getenv("LSST_HTTP_CACERT_BUNDLE"):
             session.verify = ca_bundle
         else:
-            log.debug(
-                "Environment variable LSST_HTTP_CACERT_BUNDLE is not set: "
-                "if you would need to verify the remote server's certificate "
-                "issued by specific certificate authorities please consider "
-                "initializing this variable."
-            )
+            if rpath.scheme == "https":
+                log.debug(
+                    "Environment variable LSST_HTTP_CACERT_BUNDLE is not set: "
+                    "if you would need to verify the remote server's certificate "
+                    "issued by specific certificate authorities please consider "
+                    "initializing this variable."
+                )
 
         # Should we use bearer tokens for client authentication?
         if token := os.getenv("LSST_HTTP_AUTH_BEARER_TOKEN"):
@@ -289,13 +291,13 @@ class SessionStore:
             session.cert = (client_cert, client_key)
             return session
 
-        if client_cert:
+        if client_cert and rpath.scheme == "https":
             # Only the client certificate was provided.
             raise ValueError(
                 "Environment variable LSST_HTTP_AUTH_CLIENT_KEY must be set to client private key file path"
             )
 
-        if client_key:
+        if client_key and rpath.scheme == "https":
             # Only the client private key was provided.
             raise ValueError(
                 "Environment variable LSST_HTTP_AUTH_CLIENT_CERT must be set to client certificate file path"
