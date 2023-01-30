@@ -358,6 +358,28 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.existingFileResourcePath.parent().geturl(), self.existingFileResourcePath.dirname().geturl()
         )
 
+
+class WebdavUtilsTestCase(unittest.TestCase):
+    """Test for the Webdav related utilities."""
+
+    def setUp(self):
+        self.tmpdir = ResourcePath(makeTestTempDir(TESTDIR))
+
+    def tearDown(self):
+        if self.tmpdir:
+            if self.tmpdir.isLocal:
+                removeTestTempDir(self.tmpdir.ospath)
+
+    @responses.activate
+    def test_is_webdav_endpoint(self):
+        davEndpoint = "http://www.lsstwithwebdav.org"
+        responses.add(responses.OPTIONS, davEndpoint, status=200, headers={"DAV": "1,2,3"})
+        self.assertTrue(_is_webdav_endpoint(davEndpoint))
+
+        plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
+        responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
+        self.assertFalse(_is_webdav_endpoint(plainHttpEndpoint))
+
     def test_send_expect_header(self):
         # Ensure _SEND_EXPECT_HEADER_ON_PUT is correctly initialized from
         # the environment.
@@ -394,22 +416,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
         for mode in (stat.S_IRGRP, stat.S_IWGRP, stat.S_IXGRP, stat.S_IROTH, stat.S_IWOTH, stat.S_IXOTH):
             os.chmod(file_path, stat.S_IRUSR | mode)
             self.assertFalse(_is_protected(file_path))
-
-
-class WebdavUtilsTestCase(unittest.TestCase):
-    """Test for the Webdav related utilities."""
-
-    serverRoot = "www.lsstwithwebdav.orgx"
-    wrongRoot = "www.lsstwithoutwebdav.org"
-
-    def setUp(self):
-        responses.add(responses.OPTIONS, f"https://{self.serverRoot}", status=200, headers={"DAV": "1,2,3"})
-        responses.add(responses.OPTIONS, f"https://{self.wrongRoot}", status=200)
-
-    @responses.activate
-    def test_is_webdav_endpoint(self):
-        self.assertTrue(_is_webdav_endpoint(f"https://{self.serverRoot}"))
-        self.assertFalse(_is_webdav_endpoint(f"https://{self.wrongRoot}"))
 
 
 class BearerTokenAuthTestCase(unittest.TestCase):
