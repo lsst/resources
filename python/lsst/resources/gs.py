@@ -19,7 +19,9 @@ import contextlib
 import logging
 import re
 import tempfile
-from typing import IO, TYPE_CHECKING, Iterator, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Iterator, List, Optional, Set, Tuple, Union
+
+from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 
 try:
     import google.api_core.retry as retry
@@ -262,7 +264,7 @@ class GSResourcePath(ResourcePath):
         *,
         encoding: Optional[str] = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[IO]:
+    ) -> Iterator[ResourceHandleProtocol]:
         # Docstring inherited
         if self.isdir() or self.is_root:
             raise IsADirectoryError(f"Can not 'open' a directory URI: {self}")

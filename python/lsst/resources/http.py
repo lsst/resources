@@ -11,25 +11,27 @@
 
 from __future__ import annotations
 
+__all__ = ("HttpResourcePath",)
+
+import contextlib
 import functools
+import io
 import logging
 import os
 import os.path
 import random
 import stat
 import tempfile
+from typing import TYPE_CHECKING, BinaryIO, Iterator, Optional, Tuple, Union, cast
 
 import requests
-
-__all__ = ("HttpResourcePath",)
-
-from typing import TYPE_CHECKING, BinaryIO, Optional, Tuple, Union
-
 from lsst.utils.timer import time_this
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 from urllib3.util.retry import Retry
 
+from ._resourceHandles import ResourceHandleProtocol
+from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle
 from ._resourcePath import ResourcePath
 
 if TYPE_CHECKING:
@@ -573,6 +575,31 @@ class HttpResourcePath(ResourcePath):
         resp = self.put_session.put(final_url, data=data, timeout=TIMEOUT)
         if resp.status_code not in [200, 201, 202, 204]:
             raise ValueError(f"Can not write file {self}, status code: {resp.status_code}")
+
+    @contextlib.contextmanager
+    def _openImpl(
+        self,
+        mode: str = "r",
+        *,
+        encoding: Optional[str] = None,
+    ) -> Iterator[ResourceHandleProtocol]:
+        url = self.geturl()
+        response = self.session.head(url, timeout=TIMEOUT, allow_redirects=True)
+        accepts_range = "Accept-Ranges" in response.headers
+        handle: ResourceHandleProtocol
+        if mode in ("rb", "r") and accepts_range:
+            handle = HttpReadResourceHandle(
+                mode, log, url=self.geturl(), session=self.session, timeout=TIMEOUT
+            )
+            if mode == "r":
+                # cast because the protocol is compatible, but does not have
+                # BytesIO in the inheritance tree
+                yield io.TextIOWrapper(cast(io.BytesIO, handle), encoding=encoding)
+            else:
+                yield handle
+        else:
+            with super()._openImpl(mode, encoding=encoding) as http_handle:
+                yield http_handle
 
 
 def _is_protected(filepath: str) -> bool:

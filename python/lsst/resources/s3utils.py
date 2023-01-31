@@ -17,11 +17,22 @@ __all__ = (
     "bucketExists",
     "setAwsEnvCredentials",
     "unsetAwsEnvCredentials",
+    "backoff",
+    "all_retryable_errors",
+    "max_retry_time",
+    "retryable_io_errors",
+    "retryable_client_errors",
+    "_TooManyRequestsException",
 )
 
 import functools
 import os
-from typing import Optional, Tuple, Union
+from http.client import HTTPException, ImproperConnectionState
+from types import ModuleType
+from typing import Any, Callable, Optional, Tuple, Union, cast
+
+from botocore.exceptions import ClientError
+from urllib3.exceptions import HTTPError, RequestError
 
 try:
     import boto3
@@ -33,8 +44,68 @@ try:
 except ImportError:
     botocore = None
 
+
 from ._resourcePath import ResourcePath
 from .location import Location
+
+# https://pypi.org/project/backoff/
+try:
+    import backoff
+except ImportError:
+
+    class Backoff:
+        @staticmethod
+        def expo(func: Callable, *args: Any, **kwargs: Any) -> Callable:
+            return func
+
+        @staticmethod
+        def on_exception(func: Callable, *args: Any, **kwargs: Any) -> Callable:
+            return func
+
+    backoff = cast(ModuleType, Backoff)
+
+
+class _TooManyRequestsException(Exception):
+    """Private exception that can be used for 429 retry.
+
+    botocore refuses to deal with 429 error itself so issues a generic
+    ClientError.
+    """
+
+    pass
+
+
+# settings for "backoff" retry decorators. these retries are belt-and-
+# suspenders along with the retries built into Boto3, to account for
+# semantic differences in errors between S3-like providers.
+retryable_io_errors = (
+    # http.client
+    ImproperConnectionState,
+    HTTPException,
+    # urllib3.exceptions
+    RequestError,
+    HTTPError,
+    # built-ins
+    TimeoutError,
+    ConnectionError,
+    # private
+    _TooManyRequestsException,
+)
+
+# Client error can include NoSuchKey so retry may not be the right
+# thing. This may require more consideration if it is to be used.
+retryable_client_errors = (
+    # botocore.exceptions
+    ClientError,
+    # built-ins
+    PermissionError,
+)
+
+
+# Combine all errors into an easy package. For now client errors
+# are not included.
+all_retryable_errors = retryable_io_errors
+max_retry_time = 60
 
 
 def getS3Client() -> boto3.client:

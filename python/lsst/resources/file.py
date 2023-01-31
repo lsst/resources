@@ -25,6 +25,7 @@ __all__ = ("FileResourcePath",)
 
 from typing import IO, TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
 
+from ._resourceHandles._fileResourceHandle import FileResourceHandle
 from ._resourcePath import ResourcePath
 from .utils import NoTransaction, os2posix, posix2os
 
@@ -477,13 +478,11 @@ class FileResourcePath(ResourcePath):
         return parsed, dirLike
 
     @contextlib.contextmanager
-    def open(
+    def _openImpl(
         self,
         mode: str = "r",
         *,
         encoding: Optional[str] = None,
-        prefer_file_temporary: bool = False,
     ) -> Iterator[IO]:
-        # Docstring inherited.
-        with open(self.ospath, mode=mode, encoding=encoding) as buffer:
-            yield buffer
+        with FileResourceHandle(mode=mode, log=log, filename=self.ospath, encoding=encoding) as buffer:
+            yield buffer  # type: ignore

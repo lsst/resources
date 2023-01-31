@@ -29,7 +29,6 @@ from random import Random
 __all__ = ("ResourcePath", "ResourcePathExpression")
 
 from typing import (
-    IO,
     TYPE_CHECKING,
     Any,
     Dict,
@@ -43,6 +42,8 @@ from typing import (
     Union,
     overload,
 )
+
+from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -1237,7 +1238,7 @@ class ResourcePath:
         *,
         encoding: Optional[str] = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[IO]:
+    ) -> Iterator[ResourceHandleProtocol]:
         """Return a context manager that wraps an object that behaves like an
         open file at the location of the URI.
 
@@ -1299,23 +1300,54 @@ class ResourcePath:
                 if "r" not in mode or "+" in mode:
                     self.transfer_from(local_uri, transfer="copy", overwrite=("x" not in mode))
         else:
-            if "r" in mode or "a" in mode:
-                in_bytes = self.read()
-            else:
-                in_bytes = b""
-            if "b" in mode:
-                bytes_buffer = io.BytesIO(in_bytes)
-                if "a" in mode:
-                    bytes_buffer.seek(0, io.SEEK_END)
-                yield bytes_buffer
-                out_bytes = bytes_buffer.getvalue()
-            else:
-                if encoding is None:
-                    encoding = locale.getpreferredencoding(False)
-                str_buffer = io.StringIO(in_bytes.decode(encoding))
-                if "a" in mode:
-                    str_buffer.seek(0, io.SEEK_END)
-                yield str_buffer
-                out_bytes = str_buffer.getvalue().encode(encoding)
-            if "r" not in mode or "+" in mode:
-                self.write(out_bytes, overwrite=("x" not in mode))
+            with self._openImpl(mode, encoding=encoding) as handle:
+                yield handle
+
+    @contextlib.contextmanager
+    def _openImpl(
+        self, mode: str = "r", *, encoding: Optional[str] = None
+    ) -> Iterator[ResourceHandleProtocol]:
+        """Implement opening of a resource handle.
+
+        This private method may be overridden by specific `ResourcePath`
+        implementations to provide a customized handle like interface.
+
+        Parameters
+        ----------
+        mode : `str`
+            The mode the handle should be opened with
+        encoding : `str`, optional
+            The byte encoding of any binary text
+
+        Yields
+        ------
+        handle : `BaseResourceHandle`
+            A handle that conforms to the `BaseResourcehandle interface
+
+        Notes
+        -----
+        The base implementation of a file handle reads in a files entire
+        contents into a buffer for manipulation, and then writes it back out
+        upon close. Subclasses of this class may offer more fine grained
+        control.
+        """
+        if "r" in mode or "a" in mode:
+            in_bytes = self.read()
+        else:
+            in_bytes = b""
+        if "b" in mode:
+            bytes_buffer = io.BytesIO(in_bytes)
+            if "a" in mode:
+                bytes_buffer.seek(0, io.SEEK_END)
+            yield bytes_buffer
+            out_bytes = bytes_buffer.getvalue()
+        else:
+            if encoding is None:
+                encoding = locale.getpreferredencoding(False)
+            str_buffer = io.StringIO(in_bytes.decode(encoding))
+            if "a" in mode:
+                str_buffer.seek(0, io.SEEK_END)
+            yield str_buffer
+            out_bytes = str_buffer.getvalue().encode(encoding)
+        if "r" not in mode or "+" in mode:
+            self.write(out_bytes, overwrite=("x" not in mode))
