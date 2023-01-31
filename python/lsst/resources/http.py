@@ -23,6 +23,7 @@ import random
 import stat
 import tempfile
 from typing import TYPE_CHECKING, BinaryIO, Iterator, Optional, Tuple, Union, cast
+import xml.etree.ElementTree as etree
 
 import requests
 from lsst.utils.timer import time_this
@@ -373,18 +374,81 @@ class HttpResourcePath(ResourcePath):
     def exists(self) -> bool:
         """Check that a remote HTTP resource exists."""
         log.debug("Checking if resource exists: %s", self.geturl())
-        resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True)
-        return resp.status_code == 200
+        if not self.is_webdav_endpoint:
+            # The remote is a plain HTTP server. Let's attempt a HEAD
+            # request, even if the behavior for such a request against a
+            # directory is not specified, so it depends on the server
+            # implementation.
+            resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True)
+            return resp.status_code == requests.codes.ok  # 200
+
+        # The remote endpoint is a webDAV server: send a PROPFIND request
+        # requesting only the 'getlastmodified' property.
+        request_body = """
+        <?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:"><D:prop><D:getlastmodified/></D:prop></D:propfind>
+        """
+        resp = self._propfind(request_body)
+        if resp.status_code == requests.codes.multi_status:  # 207
+            # Parse the XML-encoded response. Since we issue a request for a
+            # single remote resource, the response must include properties for
+            # that single resource. So either its response status is OK or not.
+            tree = etree.fromstring(resp.content.strip())
+            element = tree.find("./{DAV:}response/{DAV:}propstat/[{DAV:}status='HTTP/1.1 200 OK']")
+            return element is not None
+        elif resp.status_code == requests.codes.not_found:  # 404
+            return False
+        else:
+            raise ValueError(
+                f"Unexpected status received for PROPFIND request for {self}: {resp.status_code}"
+            )
 
     def size(self) -> int:
         """Return the size of the remote resource in bytes."""
         if self.dirLike:
             return 0
 
-        resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True)
-        if resp.status_code != 200:
-            raise FileNotFoundError(f"Resource {self} does not exist")
-        return int(resp.headers["Content-Length"])
+        if not self.is_webdav_endpoint:
+            # The remote is a plain HTTP server. Send a HEAD request to
+            # retrieve the size of the resource.
+            resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True)
+            if resp.status_code == requests.codes.ok:  # 200
+                if "Content-Length" in resp.headers:
+                    return int(resp.headers["Content-Length"])
+                else:
+                    raise ValueError(
+                        f"Response to HEAD request to {self} does not contain 'Content-Length' header"
+                    )
+            else:
+                raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
+
+        # The remote is a webDAV server: send a PROPFIND request to retrieve
+        # the 'getcontentlength' property of the resource.
+        request_body = """
+        <?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>
+        """
+        resp = self._propfind(body=request_body)
+        if resp.status_code == requests.codes.multi_status:  # 207
+            # Parse the XML-encoded response. Since we issue a request for a
+            # single remote resource, the response must only include properties
+            # for that single resource. So its response status is either OK
+            # or not.
+            tree = etree.fromstring(resp.content.strip())
+            element = tree.find("./{DAV:}response/{DAV:}propstat/[{DAV:}status='HTTP/1.1 200 OK']")
+            if element is None:
+                raise FileNotFoundError(f"Resource {self} does not exist")
+            element = tree.find("./{DAV:}response/{DAV:}propstat/{DAV:}prop/{DAV:}getcontentlength")
+            if element is None:
+                raise ValueError(f"Could not find size of {self} in server's reponse to PROPFIND request")
+            else:
+                return int(element.text)
+        elif resp.status_code == requests.codes.not_found:
+            raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
+        else:
+            raise ValueError(
+                f"Unexpected response for PROPFIND request for {self}, status code: {resp.status_code}"
+            )
 
     def mkdir(self) -> None:
         """Create the directory resource if it does not already exist."""
@@ -558,6 +622,85 @@ class HttpResourcePath(ResourcePath):
             if transfer == "move":
                 # Transactions do not work here
                 src.remove()
+
+    def _send_webdav_request(
+        self, method: str, url: str = None, headers: dict[str, str] = {}, body: str = None
+    ) -> requests.Response:
+        """Send a webDAV request and correctly handle redirects.
+
+        Parameters
+        ----------
+        method : `str`
+            The mthod of the HTTP request to be sent, e.g. PROPFIND, MKCOL.
+        headers : `dict`, optional
+            A dictionary of key-value pairs (both strings) to include as
+            headers in the request.
+        body: `str`, optional
+            The body of the request.
+
+        Notes
+        -----
+        This way of sending webDAV requests is necessary for handling
+        redirection ourselves, since the 'requests' package changes the method
+        of the redirected request when the server responds with status 302 and
+        the method of the original request is not HEAD (which is the case for
+        webDAV requests).
+
+        That means that when the webDAV server we interact with responds with
+        a redirection to a PROPFIND or MKCOL request, the request gets
+        converted to a GET request when sent to the redirected location.
+
+        See `SessionRedirectMixin.rebuild_method()` in
+            https://github.com/psf/requests/blob/main/requests/sessions.py
+
+        This behavior of the 'requests' package is meant to be compatible with
+        what is specified in RFC 9110:
+
+            https://www.rfc-editor.org/rfc/rfc9110#name-302-found
+
+        For our purposes, we do need to follow the redirection and send a new
+        request using the same HTTP verb.
+        """
+        if url is None:
+            url = self.geturl()
+
+        for _ in range(MAX_REDIRECTS := 5):
+            req = requests.Request(method, url, data=body, headers=headers)
+            resp = self.session.send(req.prepare(), timeout=TIMEOUT, allow_redirects=False)
+            if resp.is_redirect:
+                url = resp.headers["Location"]
+            else:
+                return resp
+
+        # We reached the maximum allowed number of redirects. Stop trying.
+        raise ValueError(
+            f"Could not get a response to {method} request for {self} after {MAX_REDIRECTS} redirections"
+        )
+
+    def _propfind(self, body: str = None, depth: str = "0") -> requests.Response:
+        """Send a PROPFIND webDAV request and return the response.
+
+        Parameters
+        ----------
+        body : `str`, optional
+            The body of the PROPFIND request to send to the server. If
+            provided, it is expected to be a XML document.
+        depth : `str`, optional
+            The value of the 'Depth' header to include in the request.
+
+        Returns
+        -------
+        response : `requests.Response`
+            Response to the PROPFIND request.
+        """
+        headers = {
+            "Depth": depth,
+        }
+        if body is not None:
+            headers.update(
+                {"Content-Type": 'application/xml; charset="utf-8"', "Content-Length": str(len(body))}
+            )
+        return self._send_webdav_request("PROPFIND", headers=headers, body=body)
 
     def _do_put(self, data: Union[BinaryIO, bytes]) -> None:
         """Perform an HTTP PUT request taking into account redirection."""
