@@ -374,6 +374,13 @@ class HttpReadWriteTestCase(unittest.TestCase):
         )
         self.assertEqual(self.davExistingFileResource.read().decode(), body.decode())
 
+        # Test read of a not existing file raises.
+        responses.add(
+            responses.GET, self.davNotExistingFileResource.geturl(), status=requests.codes.not_found
+        )
+        with self.assertRaises(FileNotFoundError):
+            self.davNotExistingFileResource.read()
+
         # Run this twice to ensure use of cache in code coverage.
         for _ in (1, 2):
             with self.davExistingFileResource.as_local() as local_uri:
@@ -383,6 +390,7 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
         # Check that the environment variable LSST_RESOURCES_TMPDIR is being
         # read.
+        saved_tmpdir = lsst.resources.http._TMPDIR
         lsst.resources.http._TMPDIR = None
         with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_TMPDIR": self.tmpdir.ospath}):
             with self.davExistingFileResource.as_local() as local_uri:
@@ -391,12 +399,26 @@ class HttpReadWriteTestCase(unittest.TestCase):
                 self.assertEqual(content, body.decode())
                 self.assertIsNotNone(local_uri.relative_to(self.tmpdir))
 
-        # Test read of a not existing file raises.
+        # Restore original _TMPDIR to avoid issues related to the execution
+        # order of tests
+        lsst.resources.http._TMPDIR = saved_tmpdir
+
+    @responses.activate
+    def test_as_local(self):
+
+        remote_path = self.davExistingFolderResource.join("test-as-local")
+        body = str.encode("12345")
         responses.add(
-            responses.GET, self.davNotExistingFileResource.geturl(), status=requests.codes.not_found
+            responses.GET,
+            remote_path.geturl(),
+            status=requests.codes.ok,
+            body=body,
+            auto_calculate_content_length=True,
         )
-        with self.assertRaises(FileNotFoundError):
-            self.davNotExistingFileResource.read()
+        local_path, is_temp = remote_path._as_local()
+        self.assertTrue(is_temp)
+        self.assertTrue(os.path.exists(local_path))
+        self.assertEqual(ResourcePath(local_path).read(), body)
 
     @responses.activate
     def test_remove_dav(self):
@@ -457,7 +479,10 @@ class HttpReadWriteTestCase(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.davExistingFileResource.transfer_from(src=self.davNotExistingFileResource, overwrite=False)
 
-        # Transfer in "copy" or "auto" mode.
+        # Transfer in "copy" or "auto" mode: we need to mock two responses.
+        # One using "COPY" and one using "GET", to turn around the issue when
+        # the DAV server does not correctly implement "COPY" and the client
+        # uses "GET" and then "PUT".
         responses.add(
             "COPY",
             self.davExistingFileResource.geturl(),
@@ -469,7 +494,15 @@ class HttpReadWriteTestCase(unittest.TestCase):
                 responses.matchers.header_matcher({"Destination": self.davNotExistingFileResource.geturl()})
             ],
         )
-        self.assertIsNone(self.davNotExistingFileResource.transfer_from(src=self.davExistingFileResource))
+        body = str.encode("12345")
+        responses.add(
+            responses.GET,
+            self.davExistingFileResource.geturl(),
+            status=requests.codes.ok,
+            body=body,
+            auto_calculate_content_length=True,
+        )
+        responses.add(responses.PUT, self.davNotExistingFileResource.geturl(), status=requests.codes.created)
         self.assertIsNone(
             self.davNotExistingFileResource.transfer_from(src=self.davExistingFileResource, transfer="auto")
         )
