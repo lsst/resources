@@ -247,7 +247,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_exists(self):
-
         self.assertTrue(self.existingFileResourcePath.exists())
         self.assertFalse(self.notExistingFileResourcePath.exists())
 
@@ -257,7 +256,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_remove(self):
-
         self.assertIsNone(self.existingFileResourcePath.remove())
         with self.assertRaises(FileNotFoundError):
             self.notExistingFileResourcePath.remove()
@@ -269,7 +267,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_mkdir(self):
-
         # The mock means that we can't check this now exists
         self.notExistingFolderResourcePath.mkdir()
 
@@ -281,7 +278,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_read(self):
-
         self.assertEqual(self.existingFileResourcePath.read().decode(), "It works!")
         self.assertNotEqual(self.existingFileResourcePath.read().decode(), "Nope.")
         with self.assertRaises(FileNotFoundError):
@@ -305,7 +301,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_write(self):
-
         self.assertIsNone(self.existingFileResourcePath.write(data=str.encode("Some content.")))
         with self.assertRaises(FileExistsError):
             self.existingFileResourcePath.write(data=str.encode("Some content."), overwrite=False)
@@ -317,7 +312,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_do_put_with_redirection(self):
-
         # Without LSST_HTTP_PUT_SEND_EXPECT_HEADER.
         os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
         importlib.reload(lsst.resources.http)
@@ -331,7 +325,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_transfer(self):
-
         # Transferring to self should be no-op.
         self.existingFileResourcePath.transfer_from(src=self.existingFileResourcePath)
 
@@ -357,7 +350,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
             )
 
     def test_parent(self):
-
         self.assertEqual(
             self.existingFolderResourcePath.geturl(), self.notExistingFileResourcePath.parent().geturl()
         )
@@ -367,7 +359,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
         )
 
     def test_send_expect_header(self):
-
         # Ensure _SEND_EXPECT_HEADER_ON_PUT is correctly initialized from
         # the environment.
         os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
@@ -379,7 +370,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.assertTrue(lsst.resources.http._SEND_EXPECT_HEADER_ON_PUT)
 
     def test_timeout(self):
-
         connect_timeout = 100
         read_timeout = 200
         with unittest.mock.patch.dict(
@@ -392,7 +382,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.assertEqual(lsst.resources.http.TIMEOUT, (connect_timeout, read_timeout))
 
     def test_is_protected(self):
-
         self.assertFalse(_is_protected("/this-file-does-not-exist"))
 
         with tempfile.NamedTemporaryFile(mode="wt", dir=self.tmpdir.ospath, delete=False) as f:
@@ -419,7 +408,6 @@ class WebdavUtilsTestCase(unittest.TestCase):
 
     @responses.activate
     def test_is_webdav_endpoint(self):
-
         self.assertTrue(_is_webdav_endpoint(f"https://{self.serverRoot}"))
         self.assertFalse(_is_webdav_endpoint(f"https://{self.wrongRoot}"))
 
