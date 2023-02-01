@@ -883,7 +883,7 @@ class HttpResourcePath(ResourcePath):
         elif resp.request.body is None:
             log.debug("   body=<empty>")
         else:
-            log.debug(f"   body={resp.request.body[:120]}")
+            log.debug(f"   body={resp.request.body[:120]!r}")
 
         log.debug("Response:")
         log.debug(f"   status_code={resp.status_code}")
@@ -891,9 +891,9 @@ class HttpResourcePath(ResourcePath):
         if resp.content is None:
             log.debug("   body=<empty>")
         elif "Content-Type" in resp.headers and resp.headers["Content-Type"] == "text/plain":
-            log.debug(f"   body={resp.content}")
+            log.debug(f"   body={resp.content!r}")
         else:
-            log.debug(f"   body={resp.content[:80]}")
+            log.debug(f"   body={resp.content[:80]!r}")
 
 
 def _is_protected(filepath: str) -> bool:
