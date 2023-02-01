@@ -771,7 +771,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
             _check_open(self, tmp, mode_suffixes=("t",), encoding="utf-16", prefer_file_temporary=True)
         with ResourcePath.temporary_uri(prefix=tmpdir, suffix=".dat") as tmp:
             _check_open(self, tmp, mode_suffixes=("b",))
-            _check_open(self, tmp, mode_suffixes=("b"), prefer_file_temporary=True)
+            _check_open(self, tmp, mode_suffixes=("b",), prefer_file_temporary=True)
 
         with self.assertRaises(IsADirectoryError):
             with self.root_uri.open():
