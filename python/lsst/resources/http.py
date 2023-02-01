@@ -446,7 +446,7 @@ class HttpResourcePath(ResourcePath):
             if element is None:
                 raise ValueError(f"Could not find size of {self} in server's reponse to PROPFIND request")
             else:
-                return int(element.text)
+                return int(str(element.text))
         elif resp.status_code == requests.codes.not_found:
             raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
         else:
@@ -622,7 +622,7 @@ class HttpResourcePath(ResourcePath):
         return tmpFile.name, True
 
     def _send_webdav_request(
-        self, method: str, url: str = None, headers: dict[str, str] = {}, body: str = None
+        self, method: str, url: Optional[str] = None, headers: dict[str, str] = {}, body: Optional[str] = None
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
@@ -679,7 +679,7 @@ class HttpResourcePath(ResourcePath):
             f"Could not get a response to {method} request for {self} after {MAX_REDIRECTS} redirections"
         )
 
-    def _propfind(self, body: str = None, depth: str = "0") -> requests.Response:
+    def _propfind(self, body: Optional[str] = None, depth: str = "0") -> requests.Response:
         """Send a PROPFIND webDAV request and return the response.
 
         Parameters
@@ -718,7 +718,7 @@ class HttpResourcePath(ResourcePath):
         else:
             raise ValueError(f"Can not create directory {self}, status code: {resp.status_code}")
 
-    def _delete(self):
+    def _delete(self) -> None:
         """Send a DELETE webDAV request for this resource."""
         # TODO: should we first check that the resource is not a directory?
         # TODO: we should remove Depth header which should not be used for
@@ -750,8 +750,10 @@ class HttpResourcePath(ResourcePath):
         #
         # For the time being, we use a temporary local file to
         # perform the copy client side.
-        # TODO: when those 2 issues above are solved remove the line below.
-        return self._copy_via_local(src)
+        # TODO: when those 2 issues above are solved remove the 3 lines below.
+        must_use_local = True
+        if must_use_local:
+            return self._copy_via_local(src)
 
         headers = {"Destination": self.geturl()}
         resp = self._send_webdav_request("COPY", url=src.geturl(), headers=headers)
@@ -760,14 +762,14 @@ class HttpResourcePath(ResourcePath):
 
         if resp.status_code == requests.codes.multi_status:
             tree = eTree.fromstring(resp.content)
-            status = tree.find("./{DAV:}response/{DAV:}status")
-            status = status.text if status is not None else "unknown"
+            status_element = tree.find("./{DAV:}response/{DAV:}status")
+            status = status_element.text if status_element is not None else "unknown"
             error = tree.find("./{DAV:}response/{DAV:}error")
             raise ValueError(f"COPY returned multistatus reponse with status {status} and error {error}")
         else:
             raise ValueError(f"Copy operation from {src} to {self} failed, status code: {resp.status_code}")
 
-    def _copy_via_local(self, src: HttpResourcePath) -> None:
+    def _copy_via_local(self, src: ResourcePath) -> None:
         """Replace the contents of this resource with the contents of a remote
         resource by using a local temporary file.
 
@@ -797,8 +799,8 @@ class HttpResourcePath(ResourcePath):
 
         if resp.status_code == requests.codes.multi_status:
             tree = eTree.fromstring(resp.content)
-            status = tree.find("./{DAV:}response/{DAV:}status")
-            status = status.text if status is not None else "unknown"
+            status_element = tree.find("./{DAV:}response/{DAV:}status")
+            status = status_element.text if status_element is not None else "unknown"
             error = tree.find("./{DAV:}response/{DAV:}error")
             raise ValueError(f"MOVE returned multistatus reponse with status {status} and error {error}")
         else:
