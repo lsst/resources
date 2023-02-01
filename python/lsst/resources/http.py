@@ -22,8 +22,8 @@ import os.path
 import random
 import stat
 import tempfile
+import xml.etree.ElementTree as eTree
 from typing import TYPE_CHECKING, BinaryIO, Iterator, Optional, Tuple, Union, cast
-import xml.etree.ElementTree as etree
 
 import requests
 from lsst.utils.timer import time_this
@@ -393,7 +393,7 @@ class HttpResourcePath(ResourcePath):
             # Parse the XML-encoded response. Since we issue a request for a
             # single remote resource, the response must include properties for
             # that single resource. So either its response status is OK or not.
-            tree = etree.fromstring(resp.content.strip())
+            tree = eTree.fromstring(resp.content.strip())
             element = tree.find("./{DAV:}response/{DAV:}propstat/[{DAV:}status='HTTP/1.1 200 OK']")
             return element is not None
         elif resp.status_code == requests.codes.not_found:  # 404
@@ -438,7 +438,7 @@ class HttpResourcePath(ResourcePath):
             # single remote resource, the response must only include properties
             # for that single resource. So its response status is either OK
             # or not.
-            tree = etree.fromstring(resp.content.strip())
+            tree = eTree.fromstring(resp.content.strip())
             element = tree.find("./{DAV:}response/{DAV:}propstat/[{DAV:}status='HTTP/1.1 200 OK']")
             if element is None:
                 raise FileNotFoundError(f"Resource {self} does not exist")
@@ -759,7 +759,7 @@ class HttpResourcePath(ResourcePath):
             return
 
         if resp.status_code == requests.codes.multi_status:
-            tree = etree.fromstring(resp.content)
+            tree = eTree.fromstring(resp.content)
             status = tree.find("./{DAV:}response/{DAV:}status")
             status = status.text if status is not None else "unknown"
             error = tree.find("./{DAV:}response/{DAV:}error")
@@ -796,7 +796,7 @@ class HttpResourcePath(ResourcePath):
             return
 
         if resp.status_code == requests.codes.multi_status:
-            tree = etree.fromstring(resp.content)
+            tree = eTree.fromstring(resp.content)
             status = tree.find("./{DAV:}response/{DAV:}status")
             status = status.text if status is not None else "unknown"
             error = tree.find("./{DAV:}response/{DAV:}error")
