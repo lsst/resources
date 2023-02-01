@@ -244,19 +244,19 @@ class HttpReadWriteTestCase(unittest.TestCase):
         responses.add(
             responses.GET,
             self.handleWithRangeResourcePath.geturl(),
-            status=requests.codes.partial_content, # 206
+            status=requests.codes.partial_content,  # 206
             body=handleWithRangeBody.encode(),
         )
         responses.add(
             responses.PUT,
             self.handleWithRangeResourcePath.geturl(),
-            status=requests.codes.created, # 201
+            status=requests.codes.created,  # 201
         )
 
         responses.add(
             responses.HEAD,
             self.handleWithOutRangeResourcePath.geturl(),
-            status=requests.codes.ok, # 200
+            status=requests.codes.ok,  # 200
             headers={"Content-Length": "1024"},
         )
         responses.add(
