@@ -405,7 +405,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_as_local(self):
-
         remote_path = self.davExistingFolderResource.join("test-as-local")
         body = str.encode("12345")
         responses.add(
