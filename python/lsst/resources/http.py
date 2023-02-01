@@ -86,7 +86,14 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
     log.debug("Detecting HTTP endpoint type for '%s'...", path)
     verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
     resp = requests.options(str(path), verify=verify)
-    return "DAV" in resp.headers
+
+    # Explicitly check that "1" is part of the value of the "DAV" header
+    # since some servers liberally put information in that header than
+    # is not required by the RFC.
+    if "DAV" not in resp.headers:
+        return False
+    else:
+        return "1" in resp.headers.get("DAV").replace(" ", "").split(",")
 
 
 # Tuple (path, block_size) pointing to the location of a local directory
@@ -859,41 +866,40 @@ class HttpResourcePath(ResourcePath):
             with super()._openImpl(mode, encoding=encoding) as http_handle:
                 yield http_handle
 
-    def _dump_response(self, resp: requests.Response) -> None:
-        """Logs the contents of a HTTP or webDAV request and its response.
 
-        Parameters
-        ----------
-        resp : `requests.Response`
-            The response to log.
+def _dump_response(resp: requests.Response) -> None:
+    """Log the contents of a HTTP or webDAV request and its response.
 
-        Notes
-        -----
-        Intended for development purposes only. To use do:
+    Parameters
+    ----------
+    resp : `requests.Response`
+        The response to log.
 
-            self._dump_response(resp)
-        """
-        log.debug("-----------------------------------------------")
-        log.debug("Request")
-        log.debug(f"   method={resp.request.method}")
-        log.debug(f"   URL={resp.request.url}")
-        log.debug(f"   headers={resp.request.headers}")
-        if resp.request.method == "PUT":
-            log.debug("   body=<data>")
-        elif resp.request.body is None:
-            log.debug("   body=<empty>")
-        else:
-            log.debug(f"   body={resp.request.body[:120]!r}")
+    Notes
+    -----
+    Intended for development purposes only.
+    """
+    log.debug("-----------------------------------------------")
+    log.debug("Request")
+    log.debug(f"   method={resp.request.method}")
+    log.debug(f"   URL={resp.request.url}")
+    log.debug(f"   headers={resp.request.headers}")
+    if resp.request.method == "PUT":
+        log.debug("   body=<data>")
+    elif resp.request.body is None:
+        log.debug("   body=<empty>")
+    else:
+        log.debug(f"   body={resp.request.body[:120]!r}")
 
-        log.debug("Response:")
-        log.debug(f"   status_code={resp.status_code}")
-        log.debug(f"   headers={resp.headers}")
-        if resp.content is None:
-            log.debug("   body=<empty>")
-        elif "Content-Type" in resp.headers and resp.headers["Content-Type"] == "text/plain":
-            log.debug(f"   body={resp.content!r}")
-        else:
-            log.debug(f"   body={resp.content[:80]!r}")
+    log.debug("Response:")
+    log.debug(f"   status_code={resp.status_code}")
+    log.debug(f"   headers={resp.headers}")
+    if not resp.content:
+        log.debug("   body=<empty>")
+    elif "Content-Type" in resp.headers and resp.headers["Content-Type"] == "text/plain":
+        log.debug(f"   body={resp.content!r}")
+    else:
+        log.debug(f"   body={resp.content[:80]!r}")
 
 
 def _is_protected(filepath: str) -> bool:
