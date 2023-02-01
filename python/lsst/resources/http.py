@@ -93,7 +93,11 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
     if "DAV" not in resp.headers:
         return False
     else:
-        return "1" in resp.headers.get("DAV").replace(" ", "").split(",")
+        dav_version = resp.headers.get("DAV")
+        if dav_version is None:
+            return False
+        else:
+            return "1" in dav_version.replace(" ", "").split(",")
 
 
 # Tuple (path, block_size) pointing to the location of a local directory
