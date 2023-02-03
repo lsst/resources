@@ -970,8 +970,7 @@ def _parse_propfind_response_body(body: str) -> List[PropfindResponse]:
     responses = []
     multistatus = eTree.fromstring(body.strip())
     for response in multistatus.findall("./{DAV:}response"):
-        propfind_response = PropfindResponse(response)
-        responses.append(propfind_response)
+        responses.append(PropfindResponse(response))
 
     if len(responses) == 0:
         # Could not parse the body
