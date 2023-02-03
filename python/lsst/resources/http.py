@@ -653,7 +653,7 @@ class HttpResourcePath(ResourcePath):
         a redirection to a PROPFIND or MKCOL request, the request gets
         converted to a GET request when sent to the redirected location.
 
-        See `SessionRedirectMixin.rebuild_method()` in
+        See `requests.sessions.SessionRedirectMixin.rebuild_method()` in
             https://github.com/psf/requests/blob/main/requests/sessions.py
 
         This behavior of the 'requests' package is meant to be compatible with
@@ -671,7 +671,7 @@ class HttpResourcePath(ResourcePath):
         # XML parsers don't handle that correctly.
         body = body.strip() if body is not None else None
 
-        for _ in range(MAX_REDIRECTS := 5):
+        for _ in range(max_redirects := 5):
             req = requests.Request(method, url, data=body, headers=headers)
             resp = self.session.send(req.prepare(), timeout=TIMEOUT, allow_redirects=False)
             if resp.is_redirect:
@@ -681,7 +681,7 @@ class HttpResourcePath(ResourcePath):
 
         # We reached the maximum allowed number of redirects. Stop trying.
         raise ValueError(
-            f"Could not get a response to {method} request for {self} after {MAX_REDIRECTS} redirections"
+            f"Could not get a response to {method} request for {self} after {max_redirects} redirections"
         )
 
     def _propfind(self, body: Optional[str] = None, depth: str = "0") -> requests.Response:
