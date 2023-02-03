@@ -75,29 +75,36 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
     _is_webdav_endpoint : `bool`
         True if the endpoint implements WebDAV, False if it doesn't.
     """
-    is_https = str(path).lower().startswith("https://")
-    if (ca_cert_bundle := os.getenv("LSST_HTTP_CACERT_BUNDLE")) is None and is_https:
-        log.warning(
-            "Environment variable LSST_HTTP_CACERT_BUNDLE is not set: "
-            "some HTTPS requests may fail if remote server presents a "
-            "certificate issued by an unknown certificate authority."
-        )
-
     log.debug("Detecting HTTP endpoint type for '%s'...", path)
-    verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
-    resp = requests.options(str(path), verify=verify)
+    try:
+        ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
+        verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
+        resp = requests.options(str(path), verify=verify)
 
-    # Explicitly check that "1" is part of the value of the "DAV" header
-    # since some servers liberally put information in that header than
-    # is not required by the RFC.
-    if "DAV" not in resp.headers:
-        return False
-    else:
-        dav_version = resp.headers.get("DAV")
-        if dav_version is None:
+        # Check that "1" is part of the value of the "DAV" header. We don't
+        # use locks, so a server complying to class 1 is enough for our
+        # purposes. All webDAV servers must advertise at least compliance
+        # class "1".
+        #
+        # Compliance classes are documented in
+        #    http://www.webdav.org/specs/rfc4918.html#dav.compliance.classes
+        #
+        # Examples of values for header DAV are:
+        #   DAV: 1, 2
+        #   DAV: 1, <http://apache.org/dav/propset/fs/1>
+        if "DAV" not in resp.headers:
             return False
         else:
-            return "1" in dav_version.replace(" ", "").split(",")
+            compliance_class = resp.headers.get("DAV")
+            return "1" in compliance_class.replace(" ", "").split(",")
+    except requests.exceptions.SSLError as e:
+        log.warning(
+            "Environment variable LSST_HTTP_CACERT_BUNDLE can be used to "
+            "specify a bundle of certificate authorities you trust which are "
+            "not included in the default set of trusted authorities of your "
+            "system."
+        )
+        raise e
 
 
 # Tuple (path, block_size) pointing to the location of a local directory
@@ -885,25 +892,25 @@ def _dump_response(resp: requests.Response) -> None:
     """
     log.debug("-----------------------------------------------")
     log.debug("Request")
-    log.debug(f"   method={resp.request.method}")
-    log.debug(f"   URL={resp.request.url}")
-    log.debug(f"   headers={resp.request.headers}")
+    log.debug("   method=%s", resp.request.method)
+    log.debug("   URL=%s", resp.request.url)
+    log.debug("   headers=%s", resp.request.headers)
     if resp.request.method == "PUT":
         log.debug("   body=<data>")
     elif resp.request.body is None:
         log.debug("   body=<empty>")
     else:
-        log.debug(f"   body={resp.request.body[:120]!r}")
+        log.debug("   body=%r", resp.request.body[:120])
 
     log.debug("Response:")
-    log.debug(f"   status_code={resp.status_code}")
-    log.debug(f"   headers={resp.headers}")
+    log.debug("   status_code=%d", resp.status_code)
+    log.debug("   headers=%s", resp.headers)
     if not resp.content:
         log.debug("   body=<empty>")
     elif "Content-Type" in resp.headers and resp.headers["Content-Type"] == "text/plain":
-        log.debug(f"   body={resp.content!r}")
+        log.debug("   body=%r", resp.content)
     else:
-        log.debug(f"   body={resp.content[:80]!r}")
+        log.debug("   body=%r", resp.content[:80])
 
 
 def _is_protected(filepath: str) -> bool:
