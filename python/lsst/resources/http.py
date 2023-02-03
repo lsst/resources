@@ -95,7 +95,8 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
         if "DAV" not in resp.headers:
             return False
         else:
-            compliance_class = resp.headers.get("DAV")
+            # Convert to str to keep mypy happy
+            compliance_class = str(resp.headers.get("DAV"))
             return "1" in compliance_class.replace(" ", "").split(",")
     except requests.exceptions.SSLError as e:
         log.warning(
@@ -405,7 +406,7 @@ class HttpResourcePath(ResourcePath):
         """
         resp = self._propfind(request_body)
         if resp.status_code == requests.codes.multi_status:  # 207
-            propfind_resp = _parse_propfind_response_body(resp.content)[0]
+            propfind_resp = _parse_propfind_response_body(resp.text)[0]
             return propfind_resp.status == "HTTP/1.1 200 OK"
         elif resp.status_code == requests.codes.not_found:  # 404
             return False
@@ -447,7 +448,7 @@ class HttpResourcePath(ResourcePath):
         if resp.status_code == requests.codes.multi_status:  # 207
             # Parse the response body and retrieve the 'getcontentlength'
             # property
-            propfind_resp = _parse_propfind_response_body(resp.content)[0]
+            propfind_resp = _parse_propfind_response_body(resp.text)[0]
             if propfind_resp.status == "HTTP/1.1 200 OK":
                 return propfind_resp.getcontentlength
             else:
