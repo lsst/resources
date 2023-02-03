@@ -66,14 +66,11 @@ class HttpReadWriteTestCase(unittest.TestCase):
         self.davExistingFolderResource = ResourcePath(
             f"{self.davEndpoint}/{existingFolderName}", forceDirectory=True
         )
-        href = self.davExistingFolderResource.geturl().replace(
-            str(self.davExistingFolderResource.root_uri()), "", 1
-        )
         body = f"""
         <?xml version="1.0" encoding="UTF-8"?>
         <D:multistatus xmlns:D="DAV:">
             <D:response>
-                <D:href>{href}</D:href>
+                <D:href>{self.davExistingFolderResource.relativeToPathRoot}</D:href>
                 <D:propstat>
                     <D:prop>
                         <D:resourcetype>
@@ -95,16 +92,13 @@ class HttpReadWriteTestCase(unittest.TestCase):
             auto_calculate_content_length=True,
         )
 
-        href = (
-            self.davExistingFolderResource.parent()
-            .geturl()
-            .replace(str(self.davExistingFolderResource.root_uri()), "", 1)
-        )
+        href = self.davExistingFolderResource.parent().relativeToPathRoot
+        href = "/" if href in (".", "./") else href
         body = f"""
         <?xml version="1.0" encoding="UTF-8"?>
         <D:multistatus xmlns:D="DAV:">
             <D:response>
-                <D:href>{href if href != "" else "/"}</D:href>
+                <D:href>{href}</D:href>
                 <D:propstat>
                     <D:prop>
                         <D:resourcetype>
@@ -130,14 +124,11 @@ class HttpReadWriteTestCase(unittest.TestCase):
         self.davExistingFileResource = ResourcePath(
             f"{self.davEndpoint}/{existingFolderName}/{existingFileName}"
         )
-        href = self.davExistingFileResource.geturl().replace(
-            str(self.davExistingFileResource.root_uri()), "", 1
-        )
         self.davExistingFileSize = 1024
         body = f"""
         <?xml version="1.0" encoding="UTF-8"?>
         <D:multistatus xmlns:D="DAV:">
-            <D:response><D:href>{href}</D:href>
+            <D:response><D:href>{self.davExistingFileResource.relativeToPathRoot}</D:href>
                 <D:propstat>
                     <D:prop>
                         <D:getlastmodified>Fri, 27 Jan 2023 13:05:16 GMT</D:getlastmodified>
