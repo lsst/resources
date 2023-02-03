@@ -23,7 +23,7 @@ import random
 import stat
 import tempfile
 import xml.etree.ElementTree as eTree
-from typing import TYPE_CHECKING, BinaryIO, Iterator, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, BinaryIO, Iterator, List, Optional, Tuple, Union, cast
 
 import requests
 from lsst.utils.timer import time_this
@@ -405,12 +405,8 @@ class HttpResourcePath(ResourcePath):
         """
         resp = self._propfind(request_body)
         if resp.status_code == requests.codes.multi_status:  # 207
-            # Parse the XML-encoded response. Since we issue a request for a
-            # single remote resource, the response must include properties for
-            # that single resource. So either its response status is OK or not.
-            tree = eTree.fromstring(resp.content.strip())
-            element = tree.find("./{DAV:}response/{DAV:}propstat/[{DAV:}status='HTTP/1.1 200 OK']")
-            return element is not None
+            propfind_resp = _parse_propfind_response_body(resp.content)[0]
+            return propfind_resp.status == "HTTP/1.1 200 OK"
         elif resp.status_code == requests.codes.not_found:  # 404
             return False
         else:
@@ -449,19 +445,13 @@ class HttpResourcePath(ResourcePath):
         """
         resp = self._propfind(body=request_body)
         if resp.status_code == requests.codes.multi_status:  # 207
-            # Parse the XML-encoded response. Since we issue a request for a
-            # single remote resource, the response must only include properties
-            # for that single resource. So its response status is either OK
-            # or not.
-            tree = eTree.fromstring(resp.content.strip())
-            element = tree.find("./{DAV:}response/{DAV:}propstat/[{DAV:}status='HTTP/1.1 200 OK']")
-            if element is None:
-                raise FileNotFoundError(f"Resource {self} does not exist")
-            element = tree.find("./{DAV:}response/{DAV:}propstat/{DAV:}prop/{DAV:}getcontentlength")
-            if element is None:
-                raise ValueError(f"Could not find size of {self} in server's reponse to PROPFIND request")
+            # Parse the response body and retrieve the 'getcontentlength'
+            # property
+            propfind_resp = _parse_propfind_response_body(resp.content)[0]
+            if propfind_resp.status == "HTTP/1.1 200 OK":
+                return propfind_resp.getcontentlength
             else:
-                return int(str(element.text))
+                raise FileNotFoundError(f"Resource {self} does not exist")
         elif resp.status_code == requests.codes.not_found:
             raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
         else:
@@ -926,3 +916,110 @@ def _is_protected(filepath: str) -> bool:
     group_accessible = bool(mode & stat.S_IRWXG)
     other_accessible = bool(mode & stat.S_IRWXO)
     return owner_accessible and not group_accessible and not other_accessible
+
+
+def _parse_propfind_response_body(body: str) -> List[PropfindResponse]:
+    """Parse the XML-encoded contents of the response body to a webDAV PROPFIND
+    request.
+
+    Parameters
+    ----------
+    body : `str`
+        XML-encoded response body to a PROPFIND request
+
+    Returns
+    -------
+    responses : `List[PropfindResponse]`
+
+    Notes
+    -----
+    Is is expected that there is at least one reponse in `body`, otherwise
+    this function raises.
+    """
+    # A response body to a PROPFIND request is of the form (indented for
+    # readability):
+    #
+    # <?xml version="1.0" encoding="UTF-8"?>
+    # <D:multistatus xmlns:D="DAV:">
+    #     <D:response>
+    #         <D:href>path/to/resource</D:href>
+    #         <D:propstat>
+    #             <D:prop>
+    #                 <D:resourcetype>
+    #                     <D:collection xmlns:D="DAV:"/>
+    #                 </D:resourcetype>
+    #                 <D:getlastmodified>
+    #                     Fri, 27 Jan 2 023 13:59:01 GMT
+    #                 </D:getlastmodified>
+    #                 <D:getcontentlength>
+    #                   12345
+    #                 </D:getcontentlength>
+    #             </D:prop>
+    #             <D:status>
+    #                 HTTP/1.1 200 OK
+    #             </D:status>
+    #         </D:propstat>
+    #     </D:response>
+    #     <D:response>
+    #        ...
+    #     </D:response>
+    #     <D:response>
+    #        ...
+    #     </D:response>
+    # </D:multistatus>
+
+    # Scan all the 'response' elements and extract the relevant properties
+    responses = []
+    multistatus = eTree.fromstring(body.strip())
+    for response in multistatus.findall("./{DAV:}response"):
+        propfind_response = PropfindResponse(response)
+        responses.append(propfind_response)
+
+    if len(responses) == 0:
+        # Could not parse the body
+        raise ValueError(f"Unable to parse response for PROPFIND request: {response}")
+    else:
+        return responses
+
+
+class PropfindResponse:
+    """Helper class to contain the parsed response to a PROFIND request for
+    a single resource.
+    """
+
+    def __init__(self, response: Optional[eTree.Element]):
+        self.status: str = ""
+        self.href: str = ""
+        self.collection: bool = False
+        self.getlastmodified: str = ""
+        self.getcontentlength: int = 0
+
+        if response is not None:
+            self._parse(response)
+
+    def _parse(self, response: eTree.Element) -> None:
+        element = response.find("./{DAV:}propstat/{DAV:}status")
+        if element is not None:
+            # We need to use "str(element.text)"" instead of "element.text" to
+            # keep mypy happy
+            self.status = str(element.text).strip()
+
+        # Parse "href"
+        element = response.find("./{DAV:}href")
+        if element is not None:
+            self.href = str(element.text).strip()
+
+        # Parse "collection"
+        element = response.find("./{DAV:}propstat/{DAV:}prop/{DAV:}resourcetype/{DAV:}collection")
+        if element is not None:
+            self.collection = True
+
+        # Parse "getlastmodified"
+        element = response.find("./{DAV:}propstat/{DAV:}prop/{DAV:}getlastmodified")
+        if element is not None:
+            self.getlastmodified = str(element.text).strip()
+
+        # Parse "getcontentlength"
+        element = response.find("./{DAV:}propstat/{DAV:}prop/{DAV:}getcontentlength")
+        if element is not None:
+            self.getcontentlength = int(str(element.text).strip())
