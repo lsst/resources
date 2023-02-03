@@ -281,14 +281,11 @@ class SessionStore:
         session.verify = True
         if ca_bundle := os.getenv("LSST_HTTP_CACERT_BUNDLE"):
             session.verify = ca_bundle
-        else:
-            if rpath.scheme == "https":
-                log.debug(
-                    "Environment variable LSST_HTTP_CACERT_BUNDLE is not set: "
-                    "if you would need to verify the remote server's certificate "
-                    "issued by specific certificate authorities please consider "
-                    "initializing this variable."
-                )
+
+        # If the remote endpoint don't use secure HTTP dont include bearer
+        # tokens in the requests.
+        if rpath.scheme != "https":
+            return session
 
         # Should we use bearer tokens for client authentication?
         if token := os.getenv("LSST_HTTP_AUTH_BEARER_TOKEN"):
@@ -310,13 +307,13 @@ class SessionStore:
             session.cert = (client_cert, client_key)
             return session
 
-        if client_cert and rpath.scheme == "https":
+        if client_cert:
             # Only the client certificate was provided.
             raise ValueError(
                 "Environment variable LSST_HTTP_AUTH_CLIENT_KEY must be set to client private key file path"
             )
 
-        if client_key and rpath.scheme == "https":
+        if client_key:
             # Only the client private key was provided.
             raise ValueError(
                 "Environment variable LSST_HTTP_AUTH_CLIENT_CERT must be set to client certificate file path"
