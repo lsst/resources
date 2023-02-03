@@ -559,7 +559,7 @@ class HttpResourcePath(ResourcePath):
                 transfer,
             )
 
-        # Short circuit if the URIs are identical immediately.
+        # Short circuit immediately if the URIs are identical.
         if self == src:
             log.debug(
                 "Target and destination URIs are identical: %s, returning immediately."
@@ -576,27 +576,19 @@ class HttpResourcePath(ResourcePath):
 
         # We can use webDAV 'COPY' or 'MOVE' if both the current and source
         # resources are located in the same server.
-        if isinstance(src, type(self)) and self.root_uri() == src.root_uri():
-            # Only available on WebDAV backends.
-            if not self.is_webdav_endpoint:
-                raise NotImplementedError(
-                    f"Endpoint {self.root_uri()} does not implement WebDAV functionality"
-                )
-
+        if isinstance(src, type(self)) and self.root_uri() == src.root_uri() and self.is_webdav_endpoint:
             with time_this(log, msg="Transfer from %s to %s directly", args=(src, self)):
-                if transfer == "move":
-                    self._move(src)
-                else:
-                    self._copy(src)
-        else:
-            # Perform the copy by downloading to a local file and uploading
-            # to the destination.
+                return self._move(src) if transfer == "move" else self._copy(src)
+
+        # For resources of different classes or for plain HTTP resources we can
+        # perform the copy or move operation by downloading to a local file
+        # and uploading to the destination.
+        with time_this(log, msg="Transfer from %s to %s via local copy", args=(src, self)):
             self._copy_via_local(src)
 
-            # This was an explicit move requested from a remote resource
-            # try to remove that resource.
-            if transfer == "move":
-                src.remove()
+        # This was an explicit move, try to remove the source.
+        if transfer == "move":
+            src.remove()
 
     def _as_local(self) -> Tuple[str, bool]:
         """Download object over HTTP and place in temporary directory.
@@ -738,6 +730,50 @@ class HttpResourcePath(ResourcePath):
         else:
             raise ValueError(f"Unable to delete resource {self}; status code: {resp.status_code}")
 
+    def _copy_via_local(self, src: ResourcePath) -> None:
+        """Replace the contents of this resource with the contents of a remote
+        resource by using a local temporary file.
+
+        Parameters
+        ----------
+        src : `HttpResourcePath`
+            The source of the contents to copy to `self`.
+        """
+        with src.as_local() as local_uri:
+            with open(local_uri.ospath, "rb") as f:
+                with time_this(log, msg="Transfer from %s to %s via local file", args=(src, self)):
+                    self._put(data=f)
+
+    def _copy_or_move(self, method: str, src: HttpResourcePath) -> None:
+        """Send a COPY or MOVE webDAV request to copy or replace the contents
+        of this resource with the contents of another resource located in the
+        same server.
+
+        Parameters
+        ----------
+        method : `str`
+            The method to perform. Valid values are "COPY" or "MOVE" (in
+            uppercase).
+
+        src : `HttpResourcePath`
+            The source of the contents to move to `self`.
+        """
+        headers = {"Destination": self.geturl()}
+        resp = self._send_webdav_request(method, url=src.geturl(), headers=headers)
+        if resp.status_code in (requests.codes.created, requests.codes.no_content):
+            return
+
+        if resp.status_code == requests.codes.multi_status:
+            tree = eTree.fromstring(resp.content)
+            status_element = tree.find("./{DAV:}response/{DAV:}status")
+            status = status_element.text if status_element is not None else "unknown"
+            error = tree.find("./{DAV:}response/{DAV:}error")
+            raise ValueError(f"{method} returned multistatus reponse with status {status} and error {error}")
+        else:
+            raise ValueError(
+                f"{method} operation from {src} to {self} failed, status code: {resp.status_code}"
+            )
+
     def _copy(self, src: HttpResourcePath) -> None:
         """Send a COPY webDAV request to replace the contents of this resource
         (if any) with the contents of another resource located in the same
@@ -760,33 +796,7 @@ class HttpResourcePath(ResourcePath):
         if must_use_local:
             return self._copy_via_local(src)
 
-        headers = {"Destination": self.geturl()}
-        resp = self._send_webdav_request("COPY", url=src.geturl(), headers=headers)
-        if resp.status_code in (requests.codes.created, requests.codes.no_content):
-            return
-
-        if resp.status_code == requests.codes.multi_status:
-            tree = eTree.fromstring(resp.content)
-            status_element = tree.find("./{DAV:}response/{DAV:}status")
-            status = status_element.text if status_element is not None else "unknown"
-            error = tree.find("./{DAV:}response/{DAV:}error")
-            raise ValueError(f"COPY returned multistatus reponse with status {status} and error {error}")
-        else:
-            raise ValueError(f"Copy operation from {src} to {self} failed, status code: {resp.status_code}")
-
-    def _copy_via_local(self, src: ResourcePath) -> None:
-        """Replace the contents of this resource with the contents of a remote
-        resource by using a local temporary file.
-
-        Parameters
-        ----------
-        src : `HttpResourcePath`
-            The source of the contents to copy to `self`.
-        """
-        with src.as_local() as local_uri:
-            with open(local_uri.ospath, "rb") as f:
-                with time_this(log, msg="Transfer from %s to %s via local file", args=(src, self)):
-                    self._put(data=f)
+        return self._copy_or_move("COPY", src)
 
     def _move(self, src: HttpResourcePath) -> None:
         """Send a MOVE webDAV request to replace the contents of this resource
@@ -797,19 +807,7 @@ class HttpResourcePath(ResourcePath):
         src : `HttpResourcePath`
             The source of the contents to move to `self`.
         """
-        headers = {"Destination": self.geturl()}
-        resp = self._send_webdav_request("MOVE", url=src.geturl(), headers=headers)
-        if resp.status_code in (requests.codes.created, requests.codes.no_content):
-            return
-
-        if resp.status_code == requests.codes.multi_status:
-            tree = eTree.fromstring(resp.content)
-            status_element = tree.find("./{DAV:}response/{DAV:}status")
-            status = status_element.text if status_element is not None else "unknown"
-            error = tree.find("./{DAV:}response/{DAV:}error")
-            raise ValueError(f"MOVE returned multistatus reponse with status {status} and error {error}")
-        else:
-            raise ValueError(f"Move operation from {src} to {self} failed, status code: {resp.status_code}")
+        return self._copy_or_move("MOVE", src)
 
     def _put(self, data: Union[BinaryIO, bytes]) -> None:
         """Perform an HTTP PUT request and handle redirection.

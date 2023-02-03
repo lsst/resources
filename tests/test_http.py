@@ -541,17 +541,26 @@ class HttpReadWriteTestCase(unittest.TestCase):
                 src=self.plainNotExistingFileResource, overwrite=False
             )
 
-        # Transfer from plain HTTP servers must raise.
-        with self.assertRaises(NotImplementedError):
-            self.plainNotExistingFileResource.transfer_from(src=self.plainExistingFileResource)
-
-        # Transfer from local file to plain HTTP server must succeed.
-        content = "0123456"
-        local_file = self.tmpdir.join("test-local")
-        local_file.write(content.encode())
+        # Transfer from plain HTTP server to plain HTTP server must succeed.
+        content = "0123456".encode()
+        responses.add(
+            responses.GET,
+            self.plainExistingFileResource.geturl(),
+            status=requests.codes.ok,
+            body=content,
+            auto_calculate_content_length=True,
+        )
+        responses.add(
+            responses.GET, self.plainNotExistingFileResource.geturl(), status=requests.codes.created
+        )
         responses.add(
             responses.PUT, self.plainNotExistingFileResource.geturl(), status=requests.codes.created
         )
+        self.assertIsNone(self.plainNotExistingFileResource.transfer_from(src=self.plainExistingFileResource))
+
+        # Transfer from local file to plain HTTP server must succeed.
+        local_file = self.tmpdir.join("test-local")
+        local_file.write(content)
         self.assertIsNone(self.plainNotExistingFileResource.transfer_from(src=local_file))
 
     @responses.activate
