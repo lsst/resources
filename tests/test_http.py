@@ -47,152 +47,176 @@ class HttpReadWriteTestCase(unittest.TestCase):
         # Local test directory
         self.tmpdir = ResourcePath(makeTestTempDir(TESTDIR))
 
-        serverRoot = "www.not-exists.orgx"
         existingFolderName = "existingFolder"
+        notExistingFolderName = "notExistingFolder"
         existingFileName = "existingFile"
         notExistingFileName = "notExistingFile"
 
-        fileForHandleWithRange = "handleWithRange"
-        fileForHandleWithOutRange = "handleWithOutRange"
+        # DAV endpoint resources
+        self.davEndpoint = "http://dav.not-exists.org"
+        responses.add(
+            responses.OPTIONS,
+            self.davEndpoint,
+            status=200,
+            headers={"DAV": "1,2,3"},
+            auto_calculate_content_length=True,
+        )
 
-        self.baseURL = ResourcePath(f"https://{serverRoot}", forceDirectory=True)
-        self.existingFileResourcePath = ResourcePath(
-            f"https://{serverRoot}/{existingFolderName}/{existingFileName}"
+        # DAV existing folder and its parent directory
+        self.davExistingFolderResource = ResourcePath(
+            f"{self.davEndpoint}/{existingFolderName}", forceDirectory=True
         )
-        self.notExistingFileResourcePath = ResourcePath(
-            f"https://{serverRoot}/{existingFolderName}/{notExistingFileName}"
+        body = f"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <D:multistatus xmlns:D="DAV:">
+            <D:response>
+                <D:href>{self.davExistingFolderResource.relativeToPathRoot}</D:href>
+                <D:propstat>
+                    <D:prop>
+                        <D:resourcetype>
+                            <D:collection xmlns:D="DAV:"/>
+                        </D:resourcetype>
+                        <D:getlastmodified>Fri, 27 Jan 2 023 13:59:01 GMT</D:getlastmodified>
+                    </D:prop>
+                    <D:status>HTTP/1.1 200 OK</D:status>
+                </D:propstat>
+            </D:response>
+        </D:multistatus>
+        """
+        responses.add(
+            "PROPFIND",
+            self.davExistingFolderResource.geturl(),
+            body=body,
+            status=requests.codes.multi_status,
+            content_type="text/xml; charset=utf-8",
+            auto_calculate_content_length=True,
         )
-        self.existingFolderResourcePath = ResourcePath(
-            f"https://{serverRoot}/{existingFolderName}", forceDirectory=True
+
+        href = self.davExistingFolderResource.parent().relativeToPathRoot
+        href = "/" if href in (".", "./") else href
+        body = f"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <D:multistatus xmlns:D="DAV:">
+            <D:response>
+                <D:href>{href}</D:href>
+                <D:propstat>
+                    <D:prop>
+                        <D:resourcetype>
+                            <D:collection xmlns:D="DAV:"/>
+                        </D:resourcetype>
+                        <D:getlastmodified>Fri, 27 Jan 2 023 13:59:01 GMT</D:getlastmodified>
+                    </D:prop>
+                    <D:status>HTTP/1.1 200 OK</D:status>
+                </D:propstat>
+            </D:response>
+        </D:multistatus>
+        """
+        responses.add(
+            "PROPFIND",
+            self.davExistingFolderResource.parent().geturl(),
+            body=body,
+            status=requests.codes.multi_status,
+            content_type="text/xml; charset=utf-8",
+            auto_calculate_content_length=True,
         )
-        self.notExistingFolderResourcePath = ResourcePath(
-            f"https://{serverRoot}/{notExistingFileName}", forceDirectory=True
+
+        # DAV existing file.
+        self.davExistingFileResource = ResourcePath(
+            f"{self.davEndpoint}/{existingFolderName}/{existingFileName}"
         )
+        self.davExistingFileSize = 1024
+        body = f"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <D:multistatus xmlns:D="DAV:">
+            <D:response><D:href>{self.davExistingFileResource.relativeToPathRoot}</D:href>
+                <D:propstat>
+                    <D:prop>
+                        <D:getlastmodified>Fri, 27 Jan 2023 13:05:16 GMT</D:getlastmodified>
+                        <D:getcontentlength>{self.davExistingFileSize}</D:getcontentlength>
+                    </D:prop>
+                    <D:status>HTTP/1.1 200 OK</D:status>
+                </D:propstat>
+            </D:response>
+        </D:multistatus>
+        """
+        responses.add(
+            "PROPFIND",
+            self.davExistingFileResource.geturl(),
+            body=body,
+            status=requests.codes.multi_status,
+            content_type="text/xml; charset=utf-8",
+            auto_calculate_content_length=True,
+        )
+
+        # DAV not existing file.
+        self.davNotExistingFileResource = ResourcePath(
+            f"{self.davEndpoint}/{existingFolderName}/{notExistingFileName}"
+        )
+        responses.add(
+            "PROPFIND",
+            self.davNotExistingFileResource.geturl(),
+            body="Not Found",
+            status=requests.codes.not_found,
+            content_type="text/plain; charset=utf-8",
+            auto_calculate_content_length=True,
+        )
+
+        # DAV not existing folder.
+        self.davNotExistingFolderResource = ResourcePath(
+            f"{self.davEndpoint}/{notExistingFolderName}", forceDirectory=True
+        )
+        responses.add(
+            "PROPFIND",
+            self.davNotExistingFolderResource.geturl(),
+            body="Not Found",
+            status=requests.codes.not_found,
+            content_type="text/plain; charset=utf-8",
+            auto_calculate_content_length=True,
+        )
+
+        # Plain HTTP endpoint resources.
+        self.plainHttpEndpoint = "http://plain.not-exists.org"
+        responses.add(
+            responses.OPTIONS,
+            self.plainHttpEndpoint,
+            status=200,
+            headers={"Allow": "POST,OPTIONS,GET,HEAD,TRACE"},
+            auto_calculate_content_length=True,
+        )
+
+        # Plain HTTP existing folder and existing file.
+        self.plainExistingFolderResource = ResourcePath(
+            f"{self.plainHttpEndpoint}/{existingFolderName}", forceDirectory=True
+        )
+
+        self.plainExistingFileResource = ResourcePath(
+            f"{self.plainHttpEndpoint}/{existingFolderName}/{existingFileName}"
+        )
+        self.plainExistingFileSize = 1024
+        responses.add(
+            responses.HEAD,
+            self.plainExistingFileResource.geturl(),
+            status=requests.codes.ok,
+            headers={"Content-Length": f"{self.plainExistingFileSize}"},
+        )
+
+        # Plain HTTP not existing file.
+        self.plainNotExistingFileResource = ResourcePath(
+            f"{self.plainHttpEndpoint}/{existingFolderName}/{notExistingFileName}"
+        )
+        responses.add(
+            responses.HEAD,
+            self.plainNotExistingFileResource.geturl(),
+            status=requests.codes.not_found,
+        )
+
+        # Resources for file handle tests.
         self.handleWithRangeResourcePath = ResourcePath(
-            f"https://{serverRoot}/{existingFolderName}/{fileForHandleWithRange}"
+            f"{self.plainHttpEndpoint}/{existingFolderName}/handleWithRange"
         )
         self.handleWithOutRangeResourcePath = ResourcePath(
-            f"https://{serverRoot}/{existingFolderName}/{fileForHandleWithOutRange}"
+            f"{self.plainHttpEndpoint}/{existingFolderName}/handleWithOutRange"
         )
-
-        # Used by the handle tests
-        responses.add(
-            responses.HEAD,
-            self.handleWithRangeResourcePath.geturl(),
-            status=200,
-            headers={"Content-Length": "1024", "Accept-Ranges": "true"},
-        )
-        self.handleWithRangeBody = "These are some \n bytes to read"
-        responses.add(
-            responses.GET,
-            self.handleWithRangeResourcePath.geturl(),
-            status=206,
-            body=self.handleWithRangeBody.encode(),
-        )
-        responses.add(
-            responses.PUT,
-            self.handleWithRangeResourcePath.geturl(),
-            status=201,
-        )
-
-        responses.add(
-            responses.HEAD,
-            self.handleWithOutRangeResourcePath.geturl(),
-            status=200,
-            headers={"Content-Length": "1024"},
-        )
-        responses.add(
-            responses.GET,
-            self.handleWithOutRangeResourcePath.geturl(),
-            status=200,
-            body="These are some bytes to read".encode(),
-        )
-
-        # Need to declare the options
-        responses.add(responses.OPTIONS, self.baseURL.geturl(), status=200, headers={"DAV": "1,2,3"})
-
-        # Used by HttpResourcePath.exists()
-        responses.add(
-            responses.HEAD,
-            self.existingFileResourcePath.geturl(),
-            status=200,
-            headers={"Content-Length": "1024"},
-        )
-        responses.add(responses.HEAD, self.notExistingFileResourcePath.geturl(), status=404)
-
-        # Used by HttpResourcePath.read()
-        responses.add(
-            responses.GET, self.existingFileResourcePath.geturl(), status=200, body=str.encode("It works!")
-        )
-        responses.add(responses.GET, self.notExistingFileResourcePath.geturl(), status=404)
-
-        # Used by HttpResourcePath.write()
-        responses.add(responses.PUT, self.existingFileResourcePath.geturl(), status=201)
-
-        # Used by HttpResourcePath.transfer_from()
-        responses.add(
-            responses.Response(
-                url=self.existingFileResourcePath.geturl(),
-                method="COPY",
-                headers={"Destination": self.existingFileResourcePath.geturl()},
-                status=201,
-            )
-        )
-        responses.add(
-            responses.Response(
-                url=self.existingFileResourcePath.geturl(),
-                method="COPY",
-                headers={"Destination": self.notExistingFileResourcePath.geturl()},
-                status=201,
-            )
-        )
-        responses.add(
-            responses.Response(
-                url=self.existingFileResourcePath.geturl(),
-                method="MOVE",
-                headers={"Destination": self.notExistingFileResourcePath.geturl()},
-                status=201,
-            )
-        )
-
-        # Used by HttpResourcePath.remove()
-        responses.add(responses.DELETE, self.existingFileResourcePath.geturl(), status=200)
-        responses.add(responses.DELETE, self.notExistingFileResourcePath.geturl(), status=404)
-
-        # Used by HttpResourcePath.mkdir()
-        responses.add(
-            responses.HEAD,
-            self.existingFolderResourcePath.geturl(),
-            status=200,
-            headers={"Content-Length": "1024"},
-        )
-        responses.add(responses.HEAD, self.baseURL.geturl(), status=200, headers={"Content-Length": "1024"})
-        responses.add(responses.HEAD, self.notExistingFolderResourcePath.geturl(), status=404)
-        responses.add(
-            responses.Response(url=self.notExistingFolderResourcePath.geturl(), method="MKCOL", status=201)
-        )
-        responses.add(
-            responses.Response(url=self.existingFolderResourcePath.geturl(), method="MKCOL", status=403)
-        )
-
-        # Used by HttpResourcePath._do_put()
-        self.redirectPathNoExpect = ResourcePath(f"https://{serverRoot}/redirect-no-expect/file")
-        self.redirectPathExpect = ResourcePath(f"https://{serverRoot}/redirect-expect/file")
-        redirected_url = f"https://{serverRoot}/redirect/location"
-        responses.add(
-            responses.PUT,
-            self.redirectPathNoExpect.geturl(),
-            headers={"Location": redirected_url},
-            status=307,
-        )
-        responses.add(
-            responses.PUT,
-            self.redirectPathExpect.geturl(),
-            headers={"Location": redirected_url},
-            status=307,
-            match=[responses.matchers.header_matcher({"Content-Length": "0", "Expect": "100-continue"})],
-        )
-        responses.add(responses.PUT, redirected_url, status=202)
 
     def tearDown(self):
         if self.tmpdir:
@@ -201,6 +225,38 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
     @responses.activate
     def test_file_handle(self):
+        responses.add(
+            responses.HEAD,
+            self.handleWithRangeResourcePath.geturl(),
+            status=requests.codes.ok,
+            headers={"Content-Length": "1024", "Accept-Ranges": "true"},
+        )
+        handleWithRangeBody = "These are some \n bytes to read"
+        responses.add(
+            responses.GET,
+            self.handleWithRangeResourcePath.geturl(),
+            status=requests.codes.partial_content,  # 206
+            body=handleWithRangeBody.encode(),
+        )
+        responses.add(
+            responses.PUT,
+            self.handleWithRangeResourcePath.geturl(),
+            status=requests.codes.created,  # 201
+        )
+
+        responses.add(
+            responses.HEAD,
+            self.handleWithOutRangeResourcePath.geturl(),
+            status=requests.codes.ok,  # 200
+            headers={"Content-Length": "1024"},
+        )
+        responses.add(
+            responses.GET,
+            self.handleWithOutRangeResourcePath.geturl(),
+            status=requests.codes.ok,  # 200
+            body="These are some bytes to read".encode(),
+        )
+
         # Test that without the correct header the default method is used.
         with self.handleWithOutRangeResourcePath.open("rb") as handle:
             self.assertIsInstance(handle, io.BytesIO)
@@ -215,12 +271,12 @@ class HttpReadWriteTestCase(unittest.TestCase):
             # This is not a real test, because responses can not actually
             # handle reading sub byte ranges, so the whole thing needs to be
             # read.
-            result = handle.read(len(self.handleWithRangeBody)).decode()
-            self.assertEqual(result, self.handleWithRangeBody)
+            result = handle.read(len(handleWithRangeBody)).decode()
+            self.assertEqual(result, handleWithRangeBody)
             # Verify there is no internal buffer.
             self.assertIsNone(handle._completeBuffer)
             # Verify the position.
-            self.assertEqual(handle.tell(), len(self.handleWithRangeBody))
+            self.assertEqual(handle.tell(), len(handleWithRangeBody))
 
             # Jump back to the beginning and test if reading the whole file
             # prompts the internal buffer to be read.
@@ -228,7 +284,7 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.assertEqual(handle.tell(), 0)
             result = handle.read().decode()
             self.assertIsNotNone(handle._completeBuffer)
-            self.assertEqual(result, self.handleWithRangeBody)
+            self.assertEqual(result, handleWithRangeBody)
 
         # Verify reading as a string handle works as expected.
         with self.handleWithRangeResourcePath.open("r") as handle:
@@ -239,124 +295,344 @@ class HttpReadWriteTestCase(unittest.TestCase):
 
             # Check if string methods work.
             result = handle.read()
-            self.assertEqual(result, self.handleWithRangeBody)
+            self.assertEqual(result, handleWithRangeBody)
 
         # Verify that write modes invoke the default base method
         with self.handleWithRangeResourcePath.open("w") as handle:
             self.assertIsInstance(handle, io.StringIO)
 
     @responses.activate
-    def test_exists(self):
-        self.assertTrue(self.existingFileResourcePath.exists())
-        self.assertFalse(self.notExistingFileResourcePath.exists())
+    def test_exists_dav(self):
+        # Existing file
+        self.assertTrue(self.davExistingFileResource.exists())
 
-        self.assertEqual(self.existingFileResourcePath.size(), 1024)
-        with self.assertRaises(FileNotFoundError):
-            self.notExistingFileResourcePath.size()
-
-    @responses.activate
-    def test_remove(self):
-        self.assertIsNone(self.existingFileResourcePath.remove())
-        with self.assertRaises(FileNotFoundError):
-            self.notExistingFileResourcePath.remove()
-
-        url = "https://example.org/delete"
-        responses.add(responses.DELETE, url, status=404)
-        with self.assertRaises(FileNotFoundError):
-            ResourcePath(url).remove()
+        # Not existing file
+        self.assertFalse(self.davNotExistingFileResource.exists())
 
     @responses.activate
-    def test_mkdir(self):
-        # The mock means that we can't check this now exists
-        self.notExistingFolderResourcePath.mkdir()
+    def test_exists_plain(self):
+        # Existing file
+        self.assertTrue(self.plainExistingFileResource.exists())
 
-        # This should do nothing
-        self.existingFolderResourcePath.mkdir()
+        # Not existing file
+        self.assertFalse(self.plainNotExistingFileResource.exists())
 
+    @responses.activate
+    def test_mkdir_dav(self):
+        # Test we cannot create a directory from a non-directory like resource
+        # path.
         with self.assertRaises(ValueError):
-            self.notExistingFileResourcePath.mkdir()
+            self.davNotExistingFileResource.mkdir()
 
-    @responses.activate
-    def test_read(self):
-        self.assertEqual(self.existingFileResourcePath.read().decode(), "It works!")
-        self.assertNotEqual(self.existingFileResourcePath.read().decode(), "Nope.")
-        with self.assertRaises(FileNotFoundError):
-            self.notExistingFileResourcePath.read()
-
-        # Run this twice to ensure use of cache in code coverage.
-        for _ in (1, 2):
-            with self.existingFileResourcePath.as_local() as local_uri:
-                self.assertTrue(local_uri.isLocal)
-                content = local_uri.read().decode()
-                self.assertEqual(content, "It works!")
-
-        # Check that the environment variable is being read.
-        lsst.resources.http._TMPDIR = None
-        with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_TMPDIR": self.tmpdir.ospath}):
-            with self.existingFileResourcePath.as_local() as local_uri:
-                self.assertTrue(local_uri.isLocal)
-                content = local_uri.read().decode()
-                self.assertEqual(content, "It works!")
-                self.assertIsNotNone(local_uri.relative_to(self.tmpdir))
-
-    @responses.activate
-    def test_write(self):
-        self.assertIsNone(self.existingFileResourcePath.write(data=str.encode("Some content.")))
-        with self.assertRaises(FileExistsError):
-            self.existingFileResourcePath.write(data=str.encode("Some content."), overwrite=False)
-
-        url = "https://example.org/put"
-        responses.add(responses.PUT, url, status=404)
-        with self.assertRaises(ValueError):
-            ResourcePath(url).write(data=str.encode("Some content."))
-
-    @responses.activate
-    def test_do_put_with_redirection(self):
-        # Without LSST_HTTP_PUT_SEND_EXPECT_HEADER.
-        os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
-        importlib.reload(lsst.resources.http)
-        body = str.encode("any contents")
-        self.assertIsNone(self.redirectPathNoExpect._do_put(data=body))
-
-        # With LSST_HTTP_PUT_SEND_EXPECT_HEADER.
-        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "True"}, clear=True):
-            importlib.reload(lsst.resources.http)
-            self.assertIsNone(self.redirectPathExpect._do_put(data=body))
-
-    @responses.activate
-    def test_transfer(self):
-        # Transferring to self should be no-op.
-        self.existingFileResourcePath.transfer_from(src=self.existingFileResourcePath)
-
-        self.assertIsNone(self.notExistingFileResourcePath.transfer_from(src=self.existingFileResourcePath))
-        # Should test for existence.
-        # self.assertTrue(self.notExistingFileResourcePath.exists())
-
-        # Should delete and try again with move.
-        # self.notExistingFileResourcePath.remove()
-        self.assertIsNone(
-            self.notExistingFileResourcePath.transfer_from(src=self.existingFileResourcePath, transfer="move")
+        # Test we can successfully create a non-existing directory.
+        responses.add(
+            "MKCOL",
+            self.davNotExistingFolderResource.geturl(),
+            body="Created",
+            status=requests.codes.created,
+            content_type="text/plain; charset=utf-8",
+            auto_calculate_content_length=True,
         )
-        # Should then check that it was moved.
-        # self.assertFalse(self.existingFileResourcePath.exists())
+        self.davNotExistingFolderResource.mkdir()
 
-        # Existing file resource should have been removed so this should
-        # trigger FileNotFoundError.
-        # with self.assertRaises(FileNotFoundError):
-        #    self.notExistingFileResourcePath.transfer_from(src=self.existingFileResourcePath)
-        with self.assertRaises(ValueError):
-            self.notExistingFileResourcePath.transfer_from(
-                src=self.existingFileResourcePath, transfer="unsupported"
-            )
+        # Test that creation of a existing directory works.
+        self.davExistingFolderResource.mkdir()
+
+    @responses.activate
+    def test_mkdir_plain(self):
+        # Ensure creation of directories on plain HTTP servers raises.
+        with self.assertRaises(NotImplementedError):
+            self.plainExistingFileResource.mkdir()
 
     def test_parent(self):
         self.assertEqual(
-            self.existingFolderResourcePath.geturl(), self.notExistingFileResourcePath.parent().geturl()
+            self.davExistingFolderResource.geturl(), self.davNotExistingFileResource.parent().geturl()
         )
-        self.assertEqual(self.baseURL.geturl(), self.baseURL.parent().geturl())
+
+        baseURL = ResourcePath(self.davEndpoint, forceDirectory=True)
+        self.assertEqual(baseURL.geturl(), baseURL.parent().geturl())
+
         self.assertEqual(
-            self.existingFileResourcePath.parent().geturl(), self.existingFileResourcePath.dirname().geturl()
+            self.davExistingFileResource.parent().geturl(), self.davExistingFileResource.dirname().geturl()
         )
+
+    @responses.activate
+    def test_read(self):
+        # Test read of an existing file works.
+        body = str.encode("It works!")
+        responses.add(
+            responses.GET, self.davExistingFileResource.geturl(), status=requests.codes.ok, body=body
+        )
+        self.assertEqual(self.davExistingFileResource.read().decode(), body.decode())
+
+        # Test read of a not existing file raises.
+        responses.add(
+            responses.GET, self.davNotExistingFileResource.geturl(), status=requests.codes.not_found
+        )
+        with self.assertRaises(FileNotFoundError):
+            self.davNotExistingFileResource.read()
+
+        # Run this twice to ensure use of cache in code coverage.
+        for _ in (1, 2):
+            with self.davExistingFileResource.as_local() as local_uri:
+                self.assertTrue(local_uri.isLocal)
+                content = local_uri.read().decode()
+                self.assertEqual(content, body.decode())
+
+        # Check that the environment variable LSST_RESOURCES_TMPDIR is being
+        # read.
+        saved_tmpdir = lsst.resources.http._TMPDIR
+        lsst.resources.http._TMPDIR = None
+        with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_TMPDIR": self.tmpdir.ospath}):
+            with self.davExistingFileResource.as_local() as local_uri:
+                self.assertTrue(local_uri.isLocal)
+                content = local_uri.read().decode()
+                self.assertEqual(content, body.decode())
+                self.assertIsNotNone(local_uri.relative_to(self.tmpdir))
+
+        # Restore original _TMPDIR to avoid issues related to the execution
+        # order of tests
+        lsst.resources.http._TMPDIR = saved_tmpdir
+
+    @responses.activate
+    def test_as_local(self):
+        remote_path = self.davExistingFolderResource.join("test-as-local")
+        body = str.encode("12345")
+        responses.add(
+            responses.GET,
+            remote_path.geturl(),
+            status=requests.codes.ok,
+            body=body,
+            auto_calculate_content_length=True,
+        )
+        local_path, is_temp = remote_path._as_local()
+        self.assertTrue(is_temp)
+        self.assertTrue(os.path.exists(local_path))
+        self.assertEqual(ResourcePath(local_path).read(), body)
+
+    @responses.activate
+    def test_remove_dav(self):
+        # Test deletion of an existing file.
+        responses.add(responses.DELETE, self.davExistingFileResource.geturl(), status=requests.codes.ok)
+        self.assertIsNone(self.davExistingFileResource.remove())
+
+        # Test deletion of a non-existing file.
+        responses.add(
+            responses.DELETE, self.davNotExistingFileResource.geturl(), status=requests.codes.not_found
+        )
+        with self.assertRaises(FileNotFoundError):
+            self.davNotExistingFileResource.remove()
+
+    @responses.activate
+    def test_remove_plain(self):
+        # Test deletion of an existing file.
+        responses.add(responses.DELETE, self.plainExistingFileResource.geturl(), status=requests.codes.ok)
+        self.assertIsNone(self.plainExistingFileResource.remove())
+
+        # Test deletion of a non-existing file.
+        responses.add(
+            responses.DELETE, self.plainNotExistingFileResource.geturl(), status=requests.codes.not_found
+        )
+        with self.assertRaises(FileNotFoundError):
+            self.plainNotExistingFileResource.remove()
+
+    @responses.activate
+    def test_size_dav(self):
+        # Existing file
+        self.assertEqual(self.davExistingFileResource.size(), self.davExistingFileSize)
+
+        # Not existing file
+        with self.assertRaises(FileNotFoundError):
+            self.davNotExistingFileResource.size()
+
+    @responses.activate
+    def test_size_plain(self):
+        # Existing file
+        self.assertEqual(self.plainExistingFileResource.size(), self.plainExistingFileSize)
+
+        # Not existing file
+        with self.assertRaises(FileNotFoundError):
+            self.plainNotExistingFileResource.size()
+
+    @responses.activate
+    def test_transfer_dav(self):
+        # Transferring with an invalid transfer mode must raise.
+        with self.assertRaises(ValueError):
+            self.davNotExistingFileResource.transfer_from(
+                src=self.davExistingFileResource, transfer="unsupported"
+            )
+
+        # Transferring to self should be no-op.
+        self.assertIsNone(self.davExistingFileResource.transfer_from(src=self.davExistingFileResource))
+
+        # Transferring to an existing file without overwrite must raise.
+        with self.assertRaises(FileExistsError):
+            self.davExistingFileResource.transfer_from(src=self.davNotExistingFileResource, overwrite=False)
+
+        # Transfer in "copy" or "auto" mode: we need to mock two responses.
+        # One using "COPY" and one using "GET", to turn around the issue when
+        # the DAV server does not correctly implement "COPY" and the client
+        # uses "GET" and then "PUT".
+        responses.add(
+            "COPY",
+            self.davExistingFileResource.geturl(),
+            body="Created",
+            status=requests.codes.created,
+            content_type="text/plain; charset=utf-8",
+            auto_calculate_content_length=True,
+            match=[
+                responses.matchers.header_matcher({"Destination": self.davNotExistingFileResource.geturl()})
+            ],
+        )
+        body = str.encode("12345")
+        responses.add(
+            responses.GET,
+            self.davExistingFileResource.geturl(),
+            status=requests.codes.ok,
+            body=body,
+            auto_calculate_content_length=True,
+        )
+        responses.add(responses.PUT, self.davNotExistingFileResource.geturl(), status=requests.codes.created)
+        self.assertIsNone(
+            self.davNotExistingFileResource.transfer_from(src=self.davExistingFileResource, transfer="auto")
+        )
+
+        # Transfer in "move" mode.
+        responses.add(
+            "MOVE",
+            self.davExistingFileResource.geturl(),
+            body="Created",
+            status=requests.codes.created,
+            content_type="text/plain; charset=utf-8",
+            auto_calculate_content_length=True,
+            match=[
+                responses.matchers.header_matcher({"Destination": self.davNotExistingFileResource.geturl()})
+            ],
+        )
+        self.assertIsNone(
+            self.davNotExistingFileResource.transfer_from(src=self.davExistingFileResource, transfer="move")
+        )
+
+        # TODO: when testing against a real server, we should test for
+        # existence of the destination file after successful "copy" or "move",
+        # and for inexistance of source file after successful "move"
+
+        # Transfer from local file to DAV server must succeed.
+        content = "0123456"
+        local_file = self.tmpdir.join("test-local")
+        local_file.write(content.encode())
+        responses.add(responses.PUT, self.davNotExistingFileResource.geturl(), status=requests.codes.created)
+        self.assertIsNone(self.davNotExistingFileResource.transfer_from(src=local_file))
+
+    @responses.activate
+    def test_transfer_plain(self):
+        # Transferring with an invalid mode must raise.
+        with self.assertRaises(ValueError):
+            self.plainNotExistingFileResource.transfer_from(
+                src=self.plainExistingFileResource, transfer="unsupported"
+            )
+
+        # Transferring to self should be no-op.
+        self.assertIsNone(self.plainExistingFileResource.transfer_from(src=self.plainExistingFileResource))
+
+        # Transferring to an existing file without overwrite must raise.
+        with self.assertRaises(FileExistsError):
+            self.plainExistingFileResource.transfer_from(
+                src=self.plainNotExistingFileResource, overwrite=False
+            )
+
+        # Transfer from plain HTTP server to plain HTTP server must succeed.
+        content = "0123456".encode()
+        responses.add(
+            responses.GET,
+            self.plainExistingFileResource.geturl(),
+            status=requests.codes.ok,
+            body=content,
+            auto_calculate_content_length=True,
+        )
+        responses.add(
+            responses.GET, self.plainNotExistingFileResource.geturl(), status=requests.codes.created
+        )
+        responses.add(
+            responses.PUT, self.plainNotExistingFileResource.geturl(), status=requests.codes.created
+        )
+        self.assertIsNone(self.plainNotExistingFileResource.transfer_from(src=self.plainExistingFileResource))
+
+        # Transfer from local file to plain HTTP server must succeed.
+        local_file = self.tmpdir.join("test-local")
+        local_file.write(content)
+        self.assertIsNone(self.plainNotExistingFileResource.transfer_from(src=local_file))
+
+    @responses.activate
+    def test_write(self):
+        # Test write an existing file without overwrite raises.
+        data = str.encode("Some content.")
+        with self.assertRaises(FileExistsError):
+            self.davExistingFileResource.write(data=data, overwrite=False)
+
+        # Test write succeeds.
+        path = ResourcePath(f"{self.davEndpoint}/put")
+        responses.add(responses.PUT, path.geturl(), status=requests.codes.created)
+        self.assertIsNone(path.write(data=data))
+
+        # Test a server error response raises.
+        path = ResourcePath(f"{self.davEndpoint}/put-error")
+        responses.add(responses.PUT, path.geturl(), status=requests.codes.not_found)
+        with self.assertRaises(ValueError):
+            path.write(data=data)
+
+        # Test write with redirection succeeds.
+        os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
+        importlib.reload(lsst.resources.http)
+
+        path_redirect = ResourcePath(f"{self.davEndpoint}/redirect/file")
+        redirected_url = f"{self.davEndpoint}/redirect/location"
+        responses.add(
+            responses.PUT,
+            path_redirect.geturl(),
+            headers={"Location": redirected_url},
+            status=requests.codes.temporary_redirect,
+        )
+        responses.add(responses.PUT, redirected_url, status=requests.codes.ok)
+        self.assertIsNone(path_redirect.write(data=data))
+
+        # Test write with redirection and using Expect header succeeds.
+        path_expect = ResourcePath(f"{self.davEndpoint}/redirect-expect/file")
+        redirected_url = f"{self.davEndpoint}/redirect-expect/location"
+        responses.add(
+            responses.PUT,
+            path_expect.geturl(),
+            headers={"Location": redirected_url},
+            status=requests.codes.temporary_redirect,
+            match=[responses.matchers.header_matcher({"Content-Length": "0", "Expect": "100-continue"})],
+        )
+        responses.add(responses.PUT, redirected_url, status=requests.codes.ok)
+
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "True"}, clear=True):
+            importlib.reload(lsst.resources.http)
+            self.assertIsNone(path_expect.write(data=data))
+
+
+class WebdavUtilsTestCase(unittest.TestCase):
+    """Test for the Webdav related utilities."""
+
+    def setUp(self):
+        self.tmpdir = ResourcePath(makeTestTempDir(TESTDIR))
+
+    def tearDown(self):
+        if self.tmpdir:
+            if self.tmpdir.isLocal:
+                removeTestTempDir(self.tmpdir.ospath)
+
+    @responses.activate
+    def test_is_webdav_endpoint(self):
+        davEndpoint = "http://www.lsstwithwebdav.org"
+        responses.add(responses.OPTIONS, davEndpoint, status=200, headers={"DAV": "1,2,3"})
+        self.assertTrue(_is_webdav_endpoint(davEndpoint))
+
+        plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
+        responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
+        self.assertFalse(_is_webdav_endpoint(plainHttpEndpoint))
 
     def test_send_expect_header(self):
         # Ensure _SEND_EXPECT_HEADER_ON_PUT is correctly initialized from
@@ -394,22 +670,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
         for mode in (stat.S_IRGRP, stat.S_IWGRP, stat.S_IXGRP, stat.S_IROTH, stat.S_IWOTH, stat.S_IXOTH):
             os.chmod(file_path, stat.S_IRUSR | mode)
             self.assertFalse(_is_protected(file_path))
-
-
-class WebdavUtilsTestCase(unittest.TestCase):
-    """Test for the Webdav related utilities."""
-
-    serverRoot = "www.lsstwithwebdav.orgx"
-    wrongRoot = "www.lsstwithoutwebdav.org"
-
-    def setUp(self):
-        responses.add(responses.OPTIONS, f"https://{self.serverRoot}", status=200, headers={"DAV": "1,2,3"})
-        responses.add(responses.OPTIONS, f"https://{self.wrongRoot}", status=200)
-
-    @responses.activate
-    def test_is_webdav_endpoint(self):
-        self.assertTrue(_is_webdav_endpoint(f"https://{self.serverRoot}"))
-        self.assertFalse(_is_webdav_endpoint(f"https://{self.wrongRoot}"))
 
 
 class BearerTokenAuthTestCase(unittest.TestCase):
