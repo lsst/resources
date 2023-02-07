@@ -436,6 +436,10 @@ class HttpReadWriteTestCase(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.plainNotExistingFileResource.remove()
 
+        # Deletion of a directory must raise
+        with self.assertRaises(NotImplementedError):
+            self.plainExistingFolderResource.remove()
+
     @responses.activate
     def test_size_dav(self):
         # Existing file
