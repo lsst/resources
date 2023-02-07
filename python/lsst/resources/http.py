@@ -464,7 +464,9 @@ class HttpResourcePath(ResourcePath):
         """Create the directory resource if it does not already exist."""
         # Creating directories is only available on WebDAV backends.
         if not self.is_webdav_endpoint:
-            raise NotImplementedError("Endpoint does not implement WebDAV functionality")
+            raise NotImplementedError(
+                f"Creation of directory {self} is not implemented by plain HTTP servers"
+            )
 
         if not self.dirLike:
             raise ValueError(f"Can not create a 'directory' for file-like URI {self}")
@@ -718,17 +720,27 @@ class HttpResourcePath(ResourcePath):
 
     def _delete(self) -> None:
         """Send a DELETE webDAV request for this resource."""
-        # TODO: should we first check that the resource is not a directory?
-        # TODO: we should remove Depth header which should not be used for
-        # directories and systematically check if the return code is
-        # multistatus, in which case we need to look for errors in the
-        # response.
-        resp = self._send_webdav_request("DELETE", headers={"Depth": "0"})
+
+        log.debug("Deleting %s ...", self.geturl())
+
+        # If this is a directory, ensure the remote is a webDAV server because
+        # plain HTTP servers don't support DELETE requests on non-file
+        # paths.
+        if self.dirLike and not self.is_webdav_endpoint:
+            raise NotImplementedError(
+                f"Deletion of directory {self} is not implemented by plain HTTP servers"
+            )
+
+        resp = self._send_webdav_request("DELETE")
         if resp.status_code in (requests.codes.ok, requests.codes.accepted, requests.codes.no_content):
             return
         elif resp.status_code == requests.codes.not_found:
             raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
         else:
+            # TODO: the response to a DELETE request against a webDAV server
+            # may be multistatus. If so, we need to parse the reponse body to
+            # determine more precisely the reason of the failure (e.g. a lock)
+            # and provide a more helpful error message.
             raise ValueError(f"Unable to delete resource {self}; status code: {resp.status_code}")
 
     def _copy_via_local(self, src: ResourcePath) -> None:
