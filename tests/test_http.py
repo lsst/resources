@@ -9,13 +9,26 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import hashlib
 import importlib
 import io
 import os.path
+import random
+import shutil
+import socket
 import stat
+import string
 import tempfile
+import time
 import unittest
-from typing import cast
+from threading import Thread
+from typing import Callable, Tuple, cast
+
+try:
+    from cheroot import wsgi
+    from wsgidav.wsgidav_app import WsgiDAVApp
+except ImportError:
+    WsgiDAVApp = None
 
 import lsst.resources
 import requests
@@ -517,10 +530,6 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.davNotExistingFileResource.transfer_from(src=self.davExistingFileResource, transfer="move")
         )
 
-        # TODO: when testing against a real server, we should test for
-        # existence of the destination file after successful "copy" or "move",
-        # and for inexistance of source file after successful "move"
-
         # Transfer from local file to DAV server must succeed.
         content = "0123456"
         local_file = self.tmpdir.join("test-local")
@@ -615,6 +624,286 @@ class HttpReadWriteTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "True"}, clear=True):
             importlib.reload(lsst.resources.http)
             self.assertIsNone(path_expect.write(data=data))
+
+
+class HttpReadWriteWebdavServerTestCase(unittest.TestCase):
+    """Test with a real webDAV server, as opposed to mocking responses."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.port_number = 65160
+        cls.endpoint = f"http://127.0.0.1:{cls.port_number}"
+        cls.tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
+        cls.local_files_to_remove = []
+
+        # Launch a local WsgiDAVApp server, if available
+        if WsgiDAVApp is not None:
+            # Get an available port for the server to listen to
+            cls.port_number = cls._get_port_number()
+            cls.endpoint = f"http://127.0.0.1:{cls.port_number}"
+            cls.stop_webdav_server = False
+            cls.server_thread = Thread(
+                target=cls._serve_webdav,
+                args=(cls, cls.tmpdir, cls.port_number, lambda: cls.stop_webdav_server),
+                daemon=True,
+            )
+            cls.server_thread.start()
+
+            # Wait for it to start
+            time.sleep(1)
+
+    @classmethod
+    def tearDownClass(cls):
+        # Stop the WsgiDAVApp server, if any
+        if WsgiDAVApp is not None:
+            # Shut down of the webdav server and wait for the thread to exit
+            cls.stop_webdav_server = True
+            if cls.server_thread is not None:
+                cls.server_thread.join()
+
+        # Remove local temporary files
+        for file in cls.local_files_to_remove:
+            if os.path.exists(file):
+                os.remove(file)
+
+        # Remove temp dir
+        if cls.tmpdir:
+            shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    def setUp(self):
+        self.root_dir = ResourcePath(self.endpoint)
+
+    def tearDown(self):
+        pass
+
+    def test_with_local_webdav_server(self):
+        # Skip this test if there is no local webDAV server to test against.
+        # This is useful in development for testing again real servers
+        # other than WsgiDAVApp, running in the local host.
+        if not self._is_server_running(port=self.port_number):
+            self.skipTest(f"local webDAV server not available at {self.endpoint}")
+
+        # Creation of a remote directory  must succeed
+        work_dir = self.root_dir.join(self._get_dir_name(), forceDirectory=True)
+        self.assertIsNone(work_dir.mkdir())
+        self.assertTrue(work_dir.exists())
+        self.assertTrue(work_dir.is_webdav_endpoint)
+
+        # Creating an existing remote directory must succeed
+        self.assertIsNone(work_dir.mkdir())
+
+        # Upload a randomly-generated file via write() with and without
+        # overwrite
+        local_file, file_size = self._generate_file()
+        with open(local_file, "rb") as f:
+            data = f.read()
+
+        remote_file = work_dir.join(self._get_file_name())
+        self.assertIsNone(remote_file.write(data, overwrite=True))
+        self.assertTrue(remote_file.exists())
+        self.assertEqual(remote_file.size(), file_size)
+
+        # Write without overwrite must raise since target file exists
+        with self.assertRaises(FileExistsError):
+            remote_file.write(data, overwrite=False)
+
+        # Download the file we just uploaded
+        downloaded_data = remote_file.read()
+        self.assertEqual(len(downloaded_data), file_size)
+
+        # Compute and compare a digest of the uploaded and downloaded data
+        # and ensure they match
+        upload_digest = self._compute_digest(data)
+        download_digest = self._compute_digest(downloaded_data)
+        self.assertEqual(upload_digest, download_digest)
+
+        # Transfer from local file via "copy", with and without overwrite
+        remote_file = work_dir.join(self._get_file_name())
+        source_file = ResourcePath(local_file)
+        self.assertIsNone(remote_file.transfer_from(source_file, transfer="copy", overwrite=True))
+        self.assertTrue(remote_file.exists())
+        self.assertEqual(remote_file.size(), source_file.size())
+        with self.assertRaises(FileExistsError):
+            remote_file.transfer_from(ResourcePath(local_file), transfer="copy", overwrite=False)
+
+        # Transfer from remote file via "copy", with and without overwrite
+        source_file = remote_file
+        target_file = work_dir.join(self._get_file_name())
+        self.assertIsNone(target_file.transfer_from(source_file, transfer="copy", overwrite=True))
+        self.assertTrue(target_file.exists())
+        self.assertEqual(target_file.size(), source_file.size())
+
+        # Transfer without overwrite must raise since target resource exists
+        with self.assertRaises(FileExistsError):
+            target_file.transfer_from(source_file, transfer="copy", overwrite=False)
+
+        # Test transfer from local file via "move", with and without overwrite
+        source_file = ResourcePath(local_file)
+        source_size = source_file.size()
+        target_file = work_dir.join(self._get_file_name())
+        self.assertIsNone(target_file.transfer_from(source_file, transfer="move", overwrite=True))
+        self.assertTrue(target_file.exists())
+        self.assertEqual(target_file.size(), source_size)
+        self.assertFalse(source_file.exists())
+
+        # Test transfer without overwrite must raise since target resource
+        # exists
+        local_file, file_size = self._generate_file()
+        with self.assertRaises(FileExistsError):
+            source_file = ResourcePath(local_file)
+            target_file.transfer_from(source_file, transfer="move", overwrite=False)
+
+        # Test transfer from remote file via "move", with and without overwrite
+        source_file = target_file
+        source_size = source_file.size()
+        target_file = work_dir.join(self._get_file_name())
+        self.assertIsNone(target_file.transfer_from(source_file, transfer="move", overwrite=True))
+        self.assertTrue(target_file.exists())
+        self.assertEqual(target_file.size(), source_size)
+        self.assertFalse(source_file.exists())
+
+        # Transfer without overwrite must raise since target resource exists
+        with self.assertRaises(FileExistsError):
+            source_file = ResourcePath(local_file)
+            target_file.transfer_from(source_file, transfer="move", overwrite=False)
+
+        # Test resource handle
+        target_file = work_dir.join(self._get_file_name())
+        data = "abcdefghi"
+        self.assertIsNone(target_file.write(data, overwrite=True))
+        with target_file.open("rb") as handle:
+            handle.seek(1)
+            self.assertEqual(handle.read(4).decode("utf-8"), data[1:5])
+
+        # Deletion of an existing remote file must succeed
+        self.assertIsNone(target_file.remove())
+
+        # Deletion of a non-existing remote file must raise
+        non_exisiting_file = work_dir.join(self._get_file_name())
+        with self.assertRaises(FileNotFoundError):
+            self.assertIsNone(non_exisiting_file.remove())
+
+        # Deletion of an empty remote directory must succeed
+        empty_dir = work_dir.join(self._get_dir_name(), forceDirectory=True)
+        self.assertIsNone(empty_dir.mkdir())
+        self.assertIsNone(empty_dir.remove())
+        self.assertFalse(empty_dir.exists())
+
+        # Deletion of a non-empty remote directory must succeed
+        local_file, _ = self._generate_file()
+        source_file = ResourcePath(local_file)
+        target_file = work_dir.join(self._get_file_name())
+        self.assertIsNone(target_file.transfer_from(source_file, transfer="copy", overwrite=True))
+        self.assertIsNone(work_dir.remove())
+        self.assertFalse(work_dir.exists())
+
+        # Close the underlying sessions, to avoid warning about sockets left
+        # open.
+        work_dir._close_sessions()
+
+    @classmethod
+    def _get_port_number(cls) -> int:
+        """Return a port number the webDAV server can use to listen to."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
+    def _serve_webdav(self, local_path: str, port: int, stop_webdav_server: Callable[[], bool]):
+        """Start a local webDAV server, listening on http://localhost:port
+        and exposing local_path.
+
+        This server only runs when this test class is instantiated,
+        and then shuts down. The server must be started is a separate thread.
+
+        Parameters
+        ----------
+        port : `int`
+            The port number on which the server should listen
+        local_path : `str`
+            Path to an existing local directory for the server to expose.
+        stop_webdav_server : `Callable[[], bool]`
+            Boolean function which returns True when the server should be
+            stopped.
+        """
+        try:
+            config = {
+                "host": "127.0.0.1",
+                "port": port,
+                "provider_mapping": {"/": local_path},
+                "http_authenticator": {"domain_controller": None},
+                "simple_dc": {"user_mapping": {"*": True}},
+                "verbose": 0,
+            }
+
+            # Start the wsgi server in a separate thread
+            server = wsgi.Server(wsgi_app=WsgiDAVApp(config), bind_addr=(config["host"], config["port"]))
+            server.prepare()
+            t = Thread(target=server.serve, daemon=True)
+            t.start()
+
+            # Shut down the server when done: stop_webdav_server() returns
+            # True when this test suite is being teared down
+            while not stop_webdav_server():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("Caught Ctrl-C, shutting down...")
+        finally:
+            server.stop()
+            t.join()
+
+    def _get_name(self, prefix: str) -> str:
+        alphabet = string.ascii_lowercase + string.digits
+        return f"{prefix}-" + "".join(random.choices(alphabet, k=8))
+
+    def _get_dir_name(self) -> str:
+        """Return a randomly selected name for a file"""
+        return self._get_name(prefix="dir")
+
+    def _get_file_name(self) -> str:
+        """Return a randomly selected name for a file"""
+        return self._get_name(prefix="file")
+
+    def _generate_file(self, remove_when_done=True) -> Tuple[str, int]:
+        """Create a local file of random size with random contents.
+
+        Returns
+        -------
+        path : `str`
+            Path to local temporary file. The caller is responsible for
+            removing the file when appropriate.
+        size : `int`
+            Size of the generated file, in bytes.
+        """
+        megabyte = 1024 * 1024
+        size = random.randint(2 * megabyte, 5 * megabyte)
+        tmpfile, path = tempfile.mkstemp()
+        self.assertEqual(os.write(tmpfile, os.urandom(size)), size)
+        os.close(tmpfile)
+
+        if remove_when_done:
+            self.local_files_to_remove.append(path)
+
+        return path, size
+
+    def _compute_digest(self, data: bytes) -> str:
+        """Computea SHA256 hash of data."""
+        m = hashlib.sha256()
+        m.update(data)
+        return m.hexdigest()
+
+    def _is_server_running(self, port: int) -> bool:
+        """Return True if there is a server listening on local address
+        127.0.0.1:<port>.
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.connect(("127.0.0.1", port))
+                return True
+            except ConnectionRefusedError:
+                return False
 
 
 class WebdavUtilsTestCase(unittest.TestCase):
