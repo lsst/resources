@@ -867,6 +867,8 @@ class HttpResourcePath(ResourcePath):
     def _close_sessions(self):
         """Close sockets used underlying sessions.
 
+        Notes
+        -----
         This method is intended exclusively to avoid warning messages when unit
         testing this class. Don't call it explicitly:  sessions are
         automatically closed in normal execution conditions.
