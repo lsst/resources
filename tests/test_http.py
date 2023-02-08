@@ -676,12 +676,12 @@ class HttpReadWriteWebdavServerTestCase(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def test_with_local_webdav_server(self):
+    def test_with_webdav_server(self):
         # Skip this test if there is no local webDAV server to test against.
         # This is useful in development for testing again real servers
         # other than WsgiDAVApp, running in the local host.
         if not self._is_server_running(port=self.port_number):
-            self.skipTest(f"local webDAV server not available at {self.endpoint}")
+            self.skipTest(f"webDAV server not available at {self.endpoint}")
 
         # Creation of a remote directory  must succeed
         work_dir = self.root_dir.join(self._get_dir_name(), forceDirectory=True)
@@ -889,7 +889,7 @@ class HttpReadWriteWebdavServerTestCase(unittest.TestCase):
         return path, size
 
     def _compute_digest(self, data: bytes) -> str:
-        """Computea SHA256 hash of data."""
+        """Compute a SHA256 hash of data."""
         m = hashlib.sha256()
         m.update(data)
         return m.hexdigest()
