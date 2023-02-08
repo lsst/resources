@@ -864,7 +864,7 @@ class HttpResourcePath(ResourcePath):
         if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
             raise ValueError(f"Can not write file {self}, status code: {resp.status_code}")
 
-    def _close_sessions(self):
+    def _close_sessions(self) -> None:
         """Close sockets used underlying sessions.
 
         Notes
