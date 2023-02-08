@@ -251,12 +251,26 @@ class SessionStore:
         log.debug("Creating new HTTP session for endpoint %s (persist connection=%s)...", root_uri, persist)
 
         retries = Retry(
+            # Total number of retries to allow. Takes precedence over other
+            # counts.
             total=3,
+            # How many connection-related errors to retry on.
             connect=3,
+            # How many times to retry on read errors.
             read=3,
+            # Backoff factor to apply between attempts after the second try
+            # (seconds)
             backoff_factor=5.0 + random.random(),
+            # How many times to retry on bad status codes
             status=3,
-            status_forcelist=[429, 500, 502, 503, 504],
+            # HTTP status codes that we should force a retry on
+            status_forcelist=[
+                requests.codes.too_many_requests,  # 429
+                requests.codes.internal_server_error,  # 500
+                requests.codes.bad_gateway,  # 502
+                requests.codes.service_unavailable,  # 503
+                requests.codes.gateway_timeout,  # 504
+            ],
         )
 
         # Persist a single connection to the front end server, if required
