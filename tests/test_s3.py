@@ -26,13 +26,13 @@ except ImportError:
         return cls
 
 
-class GenericFileTestCase(GenericTestCase, unittest.TestCase):
+class GenericS3TestCase(GenericTestCase, unittest.TestCase):
     scheme = "s3"
     netloc = "my_bucket"
 
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
-class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
+class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     scheme = "s3"
     netloc = "my_2nd_bucket"
 
