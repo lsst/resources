@@ -483,7 +483,7 @@ class HttpResourcePath(ResourcePath):
             )
 
         if not self.dirLike:
-            raise ValueError(f"Can not create a 'directory' for file-like URI {self}")
+            raise NotADirectoryError(f"Can not create a 'directory' for file-like URI {self}")
 
         if not self.exists():
             # We need to test the absence of the parent directory,

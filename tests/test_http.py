@@ -334,7 +334,7 @@ class HttpReadWriteTestCase(unittest.TestCase):
     def test_mkdir_dav(self):
         # Test we cannot create a directory from a non-directory like resource
         # path.
-        with self.assertRaises(ValueError):
+        with self.assertRaises(NotADirectoryError):
             self.davNotExistingFileResource.mkdir()
 
         # Test we can successfully create a non-existing directory.
