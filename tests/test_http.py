@@ -36,7 +36,7 @@ import responses
 from lsst.resources import ResourcePath
 from lsst.resources._resourceHandles._httpResourceHandle import HttpReadResourceHandle
 from lsst.resources.http import BearerTokenAuth, SessionStore, _is_protected, _is_webdav_endpoint
-from lsst.resources.tests import GenericTestCase
+from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
@@ -626,31 +626,37 @@ class HttpReadWriteTestCase(unittest.TestCase):
             self.assertIsNone(path_expect.write(data=data))
 
 
-class HttpReadWriteWebdavServerTestCase(unittest.TestCase):
+@unittest.skipIf(WsgiDAVApp is None, "WebDAV server can not be created, wsgiDAV package not installed.")
+class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestCase):
     """Test with a real webDAV server, as opposed to mocking responses."""
+
+    scheme = "http"
 
     @classmethod
     def setUpClass(cls):
-        cls.port_number = 65160
-        cls.endpoint = f"http://127.0.0.1:{cls.port_number}"
-        cls.tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
+        cls.webdav_tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
         cls.local_files_to_remove = []
 
         # Launch a local WsgiDAVApp server, if available
-        if WsgiDAVApp is not None:
+        if WsgiDAVApp is None:
+            cls.port_number = 65160
+        else:
             # Get an available port for the server to listen to
             cls.port_number = cls._get_port_number()
-            cls.endpoint = f"http://127.0.0.1:{cls.port_number}"
+
             cls.stop_webdav_server = False
             cls.server_thread = Thread(
                 target=cls._serve_webdav,
-                args=(cls, cls.tmpdir, cls.port_number, lambda: cls.stop_webdav_server),
+                args=(cls, cls.webdav_tmpdir, cls.port_number, lambda: cls.stop_webdav_server),
                 daemon=True,
             )
             cls.server_thread.start()
 
             # Wait for it to start
             time.sleep(1)
+
+        cls.netloc = f"127.0.0.1:{cls.port_number}"
+        cls.endpoint = f"{cls.scheme}://{cls.netloc}"
 
     @classmethod
     def tearDownClass(cls):
@@ -667,22 +673,19 @@ class HttpReadWriteWebdavServerTestCase(unittest.TestCase):
                 os.remove(file)
 
         # Remove temp dir
-        if cls.tmpdir:
-            shutil.rmtree(cls.tmpdir, ignore_errors=True)
+        if cls.webdav_tmpdir:
+            shutil.rmtree(cls.webdav_tmpdir, ignore_errors=True)
 
     def setUp(self):
-        self.root_dir = ResourcePath(self.endpoint)
-
-    def tearDown(self):
-        pass
-
-    def test_with_webdav_server(self):
         # Skip this test if there is no local webDAV server to test against.
         # This is useful in development for testing again real servers
         # other than WsgiDAVApp, running in the local host.
         if not self._is_server_running(port=self.port_number):
             self.skipTest(f"webDAV server not available at {self.endpoint}")
+        self.root_dir = ResourcePath(self.endpoint)
+        super().setUp()
 
+    def test_with_webdav_server(self):
         # Creation of a remote directory  must succeed
         work_dir = self.root_dir.join(self._get_dir_name(), forceDirectory=True)
         self.assertIsNone(work_dir.mkdir())
