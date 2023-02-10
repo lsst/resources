@@ -538,6 +538,10 @@ class HttpResourcePath(ResourcePath):
             if self.exists():
                 raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
 
+        # Ensure the parent directory exists
+        self.parent().mkdir()
+
+        # Upload the data
         with time_this(log, msg="Write to remote %s (%d bytes)", args=(self, len(data))):
             self._put(data=data)
 
