@@ -21,7 +21,6 @@ import string
 import tempfile
 import time
 import unittest
-import urllib
 from threading import Thread
 from typing import Callable, Tuple, cast
 
@@ -43,10 +42,6 @@ from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
 
-# Execution of GenericTestCase against a plain HTTP server cannot succeed:
-# such a server does not support mkdir(), exists() for a directory, remove()
-# for a directory.
-@unittest.skipIf(True, "Skipping testing with plain HTTP server.")
 class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
     scheme = "http"
     netloc = "server.example"
@@ -645,12 +640,23 @@ class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestC
     def setUpClass(cls):
         cls.webdav_tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
         cls.local_files_to_remove = []
+        cls.server_thread = None
 
-        # If a WsgiDAVApp is available, launch a local server to test against
-        if WsgiDAVApp is not None:
-            # Get an available port for the server to listen to
+        # Should we test against a running server?
+        #
+        # This is convenient for testing against real servers in the
+        # developer environment by initializing the environment variable
+        # LSST_RESOURCES_HTTP_TEST_SERVER_URL with the URL of the server, e.g.
+        #    https://dav.example.org:1234/path/to/top/dir
+        if (test_endpoint := os.getenv("LSST_RESOURCES_HTTP_TEST_SERVER_URL")) is not None:
+            uri = ResourcePath(test_endpoint)
+            cls.scheme = uri.scheme
+            cls.netloc = uri.netloc
+            cls.base_path = uri.path
+        elif WsgiDAVApp is not None:
+            # WsgiDAVApp is available, launch a local server in its own
+            # thread to test against.
             cls.port_number = cls._get_port_number()
-
             cls.stop_webdav_server = False
             cls.server_thread = Thread(
                 target=cls._serve_webdav,
@@ -664,18 +670,6 @@ class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestC
 
             # Initialize the server endpoint
             cls.netloc = f"127.0.0.1:{cls.port_number}"
-        elif (test_endpoint := os.getenv("LSST_RESOURCES_HTTP_TEST_SERVER_URL")) is not None:
-            # A test endpoint is configured via the environment. Run this test
-            # case against it.
-            #
-            # This is convenient for testing against real servers in the
-            # developer environment by initializing the environment variable
-            # with the URL of the server, e.g.
-            #    https://dav.example.org:1234/path/to/top/dir
-            u = urllib.parse.urlparse(test_endpoint)
-            cls.scheme = u.scheme
-            cls.netloc = u.netloc
-            cls.base_path = "/" + u.path.strip("/")
         else:
             cls.skipTest(
                 cls,
@@ -699,9 +693,6 @@ class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestC
         # Remove temp dir
         if cls.webdav_tmpdir:
             shutil.rmtree(cls.webdav_tmpdir, ignore_errors=True)
-
-    def setUp(self):
-        super().setUp()
 
     def test_with_webdav_server(self):
         # Creation of a remote directory  must succeed
@@ -835,13 +826,13 @@ class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestC
         # open by persisted connections.
         work_dir._close_sessions()
 
-    @unittest.skip("skipped test_walk() since walk() is not implemented")
+    @unittest.skip("skipped test_walk() since HttpResourcePath.walk() is not implemented")
     def test_walk(self):
         # TODO: remove this test when walk() is implemented so the super
         # class test_walk is executed.
         pass
 
-    @unittest.skip("skipped test_large_walk() since walk() is not implemented")
+    @unittest.skip("skipped test_large_walk() since HttpResourcePath.walk() is not implemented")
     def test_large_walk(self):
         # TODO: remove this test when walk() is implemented so the super
         # class test_large_walk is executed.
@@ -875,6 +866,7 @@ class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestC
             stopped.
         """
         try:
+            # Start the wsgi server in a separate thread
             config = {
                 "host": "127.0.0.1",
                 "port": port,
@@ -882,12 +874,17 @@ class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestC
                 "http_authenticator": {"domain_controller": None},
                 "simple_dc": {"user_mapping": {"*": True}},
                 "verbose": 0,
+                "lock_storage": False,
+                "dir_browser": {
+                    "enable": False,
+                    "ms_sharepoint_support": False,
+                    "libre_office_support": False,
+                    "response_trailer": False,
+                    "davmount_links": False,
+                },
             }
-
-            # Start the wsgi server in a separate thread
             server = wsgi.Server(wsgi_app=WsgiDAVApp(config), bind_addr=(config["host"], config["port"]))
-            server.prepare()
-            t = Thread(target=server.serve, daemon=True)
+            t = Thread(target=server.start, daemon=True)
             t.start()
 
             # Shut down the server when done: stop_webdav_server() returns
@@ -895,7 +892,8 @@ class HttpReadWriteWebdavServerTestCase(GenericReadWriteTestCase, unittest.TestC
             while not stop_webdav_server():
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("Caught Ctrl-C, shutting down...")
+            # Caught Ctrl-C, shut down the server
+            pass
         finally:
             server.stop()
             t.join()
