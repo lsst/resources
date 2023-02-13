@@ -145,13 +145,10 @@ class _GenericTestCase:
         if self.scheme is not None:
             if netloc is None:
                 netloc = self.netloc
-
-            path = path.lstrip("/")
-            if self.base_path is not None:
-                path = self.base_path.strip("/") + "/" + path
             if path.startswith("/"):
                 path = path[1:]
-
+            if self.base_path is not None:
+                path = f"{self.base_path}/{path}"
             return f"{self.scheme}://{netloc}/{path}"
         else:
             return path
@@ -435,7 +432,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
             # so relsymlink gets quite confused.
             self.tmpdir = ResourcePath(makeTestTempDir(self.testdir))
         else:
-            # Create tmp directory relative to the test root.
+            # Create random tmp directory relative to the test root.
             self.tmpdir = self.root_uri.join(
                 "TESTING-" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8)),
                 forceDirectory=True,
