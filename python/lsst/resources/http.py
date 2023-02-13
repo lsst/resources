@@ -20,6 +20,7 @@ import logging
 import os
 import os.path
 import random
+import re
 import stat
 import tempfile
 import xml.etree.ElementTree as eTree
@@ -420,8 +421,9 @@ class HttpResourcePath(ResourcePath):
         )
         resp = self._propfind(request_body)
         if resp.status_code == requests.codes.multi_status:  # 207
+            # Retrieve the status of the first and only element in the response
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            return propfind_resp.status == "HTTP/1.1 200 OK"
+            return propfind_resp.status_code == requests.codes.ok
         elif resp.status_code == requests.codes.not_found:  # 404
             return False
         else:
@@ -463,7 +465,7 @@ class HttpResourcePath(ResourcePath):
             # Parse the response body and retrieve the 'getcontentlength'
             # property
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            if propfind_resp.status == "HTTP/1.1 200 OK":
+            if propfind_resp.status_code == requests.codes.ok:  # 200
                 return propfind_resp.getcontentlength
             else:
                 raise FileNotFoundError(f"Resource {self} does not exist")
@@ -1034,8 +1036,13 @@ class PropfindResponse:
     a single resource.
     """
 
+    # Regular expression to extract the status code and reason from
+    # the 'status' element of a PROPFIND response.
+    _status_rex = re.compile(r"^HTTP/.* +(?P<status_code>\d{3}) +(?P<reason>.*)$", re.IGNORECASE)
+
     def __init__(self, response: Optional[eTree.Element]):
-        self.status: str = ""
+        self.status_code: int = 0
+        self.reason: str = ""
         self.href: str = ""
         self.collection: bool = False
         self.getlastmodified: str = ""
@@ -1049,7 +1056,9 @@ class PropfindResponse:
         if element is not None:
             # We need to use "str(element.text)"" instead of "element.text" to
             # keep mypy happy
-            self.status = str(element.text).strip()
+            if match := self._status_rex.match(str(element.text)):
+                self.status_code = int(match["status_code"])
+                self.reason = match["reason"]
 
         # Parse "href"
         element = response.find("./{DAV:}href")
