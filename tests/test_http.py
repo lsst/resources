@@ -216,7 +216,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertEqual(upload_digest, download_digest)
         os.remove(local_file)
 
-    def test_as_local(self):
+    def test_dav_as_local(self):
         contents = str.encode("12345")
         remote_file = self.work_dir.join(self._get_file_name())
         self.assertIsNone(remote_file.write(data=contents, overwrite=True))
