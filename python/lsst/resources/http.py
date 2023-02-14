@@ -878,18 +878,6 @@ class HttpResourcePath(ResourcePath):
         if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
             raise ValueError(f"Can not write file {self}, status code: {resp.status_code}")
 
-    def _close_sessions(self) -> None:
-        """Close sockets used underlying sessions.
-
-        Notes
-        -----
-        This method is intended exclusively to avoid warning messages when unit
-        testing this class. Don't call it explicitly:  sessions are
-        automatically closed in normal execution conditions.
-        """
-        self.session.close()
-        self.put_session.close()
-
     @contextlib.contextmanager
     def _openImpl(
         self,
