@@ -15,6 +15,8 @@ __all__ = ["GenericTestCase", "GenericReadWriteTestCase"]
 import logging
 import os
 import pathlib
+import random
+import string
 import unittest
 import urllib.parse
 import uuid
@@ -119,6 +121,7 @@ class _GenericTestCase:
 
     scheme: Optional[str] = None
     netloc: Optional[str] = None
+    base_path: Optional[str] = None
     path1 = "test_dir"
     path2 = "file.txt"
 
@@ -144,6 +147,9 @@ class _GenericTestCase:
                 netloc = self.netloc
             if path.startswith("/"):
                 path = path[1:]
+            if self.base_path is not None:
+                path = f"{self.base_path}{path}".lstrip("/")
+
             return f"{self.scheme}://{netloc}/{path}"
         else:
             return path
@@ -427,8 +433,11 @@ class GenericReadWriteTestCase(_GenericTestCase):
             # so relsymlink gets quite confused.
             self.tmpdir = ResourcePath(makeTestTempDir(self.testdir))
         else:
-            # Create tmp directory relative to the test root.
-            self.tmpdir = self.root_uri.join("TESTING/")
+            # Create random tmp directory relative to the test root.
+            self.tmpdir = self.root_uri.join(
+                "TESTING-" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8)),
+                forceDirectory=True,
+            )
             self.tmpdir.mkdir()
 
     def tearDown(self) -> None:
