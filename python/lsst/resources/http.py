@@ -27,6 +27,7 @@ import xml.etree.ElementTree as eTree
 from typing import TYPE_CHECKING, BinaryIO, Iterator, List, Optional, Tuple, Union, cast
 
 import requests
+from astropy import units as u
 from lsst.utils.timer import time_this
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
@@ -682,19 +683,35 @@ class HttpResourcePath(ResourcePath):
         if url is None:
             url = self.geturl()
 
-        for _ in range(max_redirects := 5):
-            resp = self.session.request(
-                method, url, data=body, headers=headers, stream=True, timeout=TIMEOUT, allow_redirects=False
-            )
-            if resp.is_redirect:
-                url = resp.headers["Location"]
-            else:
-                return resp
+        with time_this(
+            log,
+            msg="%s %s",
+            args=(
+                method,
+                url,
+            ),
+            mem_usage=True,
+            mem_unit=u.mebibyte,
+        ):
+            for _ in range(max_redirects := 5):
+                resp = self.session.request(
+                    method,
+                    url,
+                    data=body,
+                    headers=headers,
+                    stream=True,
+                    timeout=TIMEOUT,
+                    allow_redirects=False,
+                )
+                if resp.is_redirect:
+                    url = resp.headers["Location"]
+                else:
+                    return resp
 
-        # We reached the maximum allowed number of redirects. Stop trying.
-        raise ValueError(
-            f"Could not get a response to {method} request for {self} after {max_redirects} redirections"
-        )
+            # We reached the maximum allowed number of redirects. Stop trying.
+            raise ValueError(
+                f"Could not get a response to {method} request for {self} after {max_redirects} redirections"
+            )
 
     def _propfind(self, body: Optional[str] = None, depth: str = "0") -> requests.Response:
         """Send a PROPFIND webDAV request and return the response.
@@ -874,7 +891,9 @@ class HttpResourcePath(ResourcePath):
 
         # Send data to its final destination using the PUT session
         log.debug("Uploading data to %s", url)
-        resp = self.put_session.put(url, data=data, timeout=TIMEOUT, allow_redirects=False, stream=True)
+        with time_this(log, msg="%s %s", args=("PUT", url)):
+            resp = self.put_session.put(url, data=data, timeout=TIMEOUT, allow_redirects=False, stream=True)
+
         if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
             raise ValueError(f"Can not write file {self}, status code: {resp.status_code}")
 
