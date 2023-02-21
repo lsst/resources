@@ -415,12 +415,11 @@ class HttpResourcePath(ResourcePath):
             return resp.status_code == requests.codes.ok  # 200
 
         # The remote endpoint is a webDAV server: send a PROPFIND request
-        # requesting only the 'getlastmodified' property.
+        # to determine if it exists.
         resp = self._propfind()
         if resp.status_code == requests.codes.multi_status:  # 207
-            # Retrieve the status of the first and only element in the response
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            return propfind_resp.collection or propfind_resp.getcontentlength >= 0
+            return propfind_resp.exists
         elif resp.status_code == requests.codes.not_found:  # 404
             return False
         else:
@@ -456,14 +455,16 @@ class HttpResourcePath(ResourcePath):
                 )
 
         # The remote is a webDAV server: send a PROPFIND request to retrieve
-        # the 'getcontentlength' property of the resource.
+        # the size of the resource. Sizes are only meaningful for files.
         resp = self._propfind()
         if resp.status_code == requests.codes.multi_status:  # 207
-            # Parse the response body and retrieve the 'getcontentlength'
-            # property
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            if propfind_resp.getcontentlength >= 0:
-                return propfind_resp.getcontentlength
+            if propfind_resp.is_file:
+                return propfind_resp.size
+            elif propfind_resp.is_directory:
+                raise IsADirectoryError(
+                    f"Resource {self} is reported by server as a directory but has a file path"
+                )
             else:
                 raise FileNotFoundError(f"Resource {self} does not exist")
         elif resp.status_code == requests.codes.not_found:
@@ -487,7 +488,7 @@ class HttpResourcePath(ResourcePath):
         if not self.dirLike:
             raise NotADirectoryError(f"Can not create a 'directory' for file-like URI {self}")
 
-        exists, is_directory = self._is_directory()
+        exists, is_directory = self._exists_and_is_directory()
         if exists:
             if is_directory:
                 return
@@ -920,25 +921,13 @@ class HttpResourcePath(ResourcePath):
             if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
                 raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
 
-    def _is_directory(self) -> Tuple[bool, bool]:
+    def _exists_and_is_directory(self) -> Tuple[bool, bool]:
         """Return a tuple (exists, is_directory) for remote resource."""
 
-        request_body = (
-            """<?xml version="1.0" encoding="utf-8" ?>"""
-            """<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>"""
-        )
-        resp = self._propfind(body=request_body)
-
-        # print(f"status: {resp.status_code}")
-        # print(f"body: {resp.text}")
+        resp = self._propfind()
         if resp.status_code == requests.codes.multi_status:  # 207
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            if propfind_resp.collection:
-                return True, True
-            elif propfind_resp.getcontentlength >= 0:
-                return True, False
-            else:
-                return False, False
+            return propfind_resp.exists, propfind_resp.is_directory
         elif resp.status_code == requests.codes.not_found:
             return False, False
         else:
@@ -1098,10 +1087,10 @@ class PropfindResponse:
     _status_ok_rex = re.compile(r"^HTTP/.* 200 .*$", re.IGNORECASE)
 
     def __init__(self, response: Optional[eTree.Element]):
-        self.href: str = ""
-        self.collection: bool = False
-        self.getlastmodified: str = ""
-        self.getcontentlength: int = 0
+        self._href: str = ""
+        self._collection: bool = False
+        self._getlastmodified: str = ""
+        self._getcontentlength: int = -1
 
         if response is not None:
             self._parse(response)
@@ -1111,7 +1100,7 @@ class PropfindResponse:
         if (element := response.find("./{DAV:}href")) is not None:
             # We need to use "str(element.text)"" instead of "element.text" to
             # keep mypy happy
-            self.href = str(element.text).strip()
+            self._href = str(element.text).strip()
 
         for propstat in response.findall("./{DAV:}propstat"):
             # Only extract properties of interest with status OK
@@ -1122,12 +1111,30 @@ class PropfindResponse:
             for prop in propstat.findall("./{DAV:}prop"):
                 # Parse "collection"
                 if (element := prop.find("./{DAV:}resourcetype/{DAV:}collection")) is not None:
-                    self.collection = True
+                    self._collection = True
 
                 # Parse "getlastmodified"
                 if (element := prop.find("./{DAV:}getlastmodified")) is not None:
-                    self.getlastmodified = str(element.text).strip()
+                    self._getlastmodified = str(element.text).strip()
 
                 # Parse "getcontentlength"
                 if (element := prop.find("./{DAV:}getcontentlength")) is not None:
-                    self.getcontentlength = int(str(element.text).strip())
+                    self._getcontentlength = int(str(element.text).strip())
+
+    @property
+    def exists(self):
+        # It is either a directory or a file with length of at least zero
+        return self._collection or self._getcontentlength >= 0
+
+    @property
+    def is_directory(self):
+        return self._collection
+
+    @property
+    def is_file(self):
+        return self._getcontentlength >= 0
+
+    @property
+    def size(self):
+        # Only valid if is_file is True
+        return self._getcontentlength
