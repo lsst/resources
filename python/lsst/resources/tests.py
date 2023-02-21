@@ -148,7 +148,7 @@ class _GenericTestCase:
             if path.startswith("/"):
                 path = path[1:]
             if self.base_path is not None:
-                path = f"{self.base_path}{path}".lstrip("/")
+                path = f"{self.base_path}/{path}".lstrip("/")
 
             return f"{self.scheme}://{netloc}/{path}"
         else:
