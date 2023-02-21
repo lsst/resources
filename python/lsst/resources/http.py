@@ -495,16 +495,25 @@ class HttpResourcePath(ResourcePath):
         if not self.dirLike:
             raise NotADirectoryError(f"Can not create a 'directory' for file-like URI {self}")
 
-        if not self.exists():
-            # We need to test the absence of the parent directory,
-            # but also if parent URL is different from self URL,
-            # otherwise we could be stuck in a recursive loop
-            # where self == parent.
-            if self.parent().geturl() != self.geturl() and not self.parent().exists():
-                self.parent().mkdir()
+        exists, is_directory = self._is_directory()
+        if exists:
+            if is_directory:
+                return
+            else:
+                # A file exists at this path
+                raise NotADirectoryError(
+                    f"Can not create a directory for {self} because file exists at that path"
+                )
 
-            log.debug("Creating new directory: %s", self.geturl())
-            self._mkcol()
+        # Target directory does not exist. Create it and its ancestors as
+        # needed. We need to test if parent URL is different from self URL,
+        # otherwise we could be stuck in a recursive loop
+        # where self == parent.
+        if self.geturl() != self.parent().geturl():
+            self.parent().mkdir()
+
+        log.debug("Creating new directory: %s", self.geturl())
+        self._mkcol()
 
     def remove(self) -> None:
         """Remove the resource."""
@@ -911,6 +920,28 @@ class HttpResourcePath(ResourcePath):
             resp = self.put_session.put(url, data=data, stream=True, timeout=TIMEOUT, allow_redirects=False)
             if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
                 raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
+
+    def _is_directory(self) -> Tuple[bool, bool]:
+        """Return a tuple (exists, is_directory) for remote resource."""
+
+        request_body = (
+            """<?xml version="1.0" encoding="utf-8" ?>"""
+            """<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>"""
+        )
+        resp = self._propfind(body=request_body)
+        if resp.status_code == requests.codes.multi_status:  # 207
+            propfind_resp = _parse_propfind_response_body(resp.text)[0]
+            if propfind_resp.status_code == requests.codes.ok:  # 200
+                return True, propfind_resp.collection
+            else:
+                return False, False
+        elif resp.status_code == requests.codes.not_found:
+            return False, False
+        else:
+            raise ValueError(
+                f"Unexpected response for PROPFIND request for {self}, status: {resp.status_code} "
+                f"{resp.reason}"
+            )
 
     @contextlib.contextmanager
     def _openImpl(

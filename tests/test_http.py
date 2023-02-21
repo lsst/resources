@@ -191,6 +191,14 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.assertIsNone(subir_not_exists.remove())
 
+        # Creation of a directory at a path where a file exists must raise
+        file = self.work_dir.join(self._get_file_name(), forceDirectory=False)
+        file.write(data=None, overwrite=True)
+
+        existing_file = self.work_dir.join(file.basename(), forceDirectory=True)
+        with self.assertRaises(NotADirectoryError):
+            self.assertIsNone(existing_file.mkdir())
+
     def test_dav_upload_download(self):
         # Test upload a randomly-generated file via write() with and without
         # overwrite
