@@ -228,6 +228,24 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertEqual(ResourcePath(local_path).read(), contents)
         os.remove(local_path)
 
+    def test_dav_size(self):
+        # Size of an inexistent file must raise
+        remote_file = self.tmpdir.join(self._get_file_name())
+        with self.assertRaises(FileNotFoundError):
+            remote_file.size()
+
+        # Retrieving the size of a remote directory using a file-like path must
+        # raise
+        remote_dir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
+        self.assertIsNone(remote_dir.mkdir())
+        exists, is_dir = remote_dir._exists_and_is_directory()
+        self.assertTrue(exists)
+        self.assertTrue(is_dir)
+
+        dir_as_file = ResourcePath(remote_dir.geturl().rstrip("/"), forceDirectory=False)
+        with self.assertRaises(IsADirectoryError):
+            dir_as_file.size()
+
     def test_dav_upload_creates_dir(self):
         # Uploading a file to a non existing directory must ensure its
         # parent directories are automatically created and upload succeeds
