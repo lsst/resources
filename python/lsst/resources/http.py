@@ -424,7 +424,7 @@ class HttpResourcePath(ResourcePath):
         if resp.status_code == requests.codes.multi_status:  # 207
             # Retrieve the status of the first and only element in the response
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            return propfind_resp.status_code == requests.codes.ok
+            return propfind_resp.collection or propfind_resp.getcontentlength >= 0
         elif resp.status_code == requests.codes.not_found:  # 404
             return False
         else:
@@ -470,10 +470,10 @@ class HttpResourcePath(ResourcePath):
             # Parse the response body and retrieve the 'getcontentlength'
             # property
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            if propfind_resp.status_code == requests.codes.ok:  # 200
-                return propfind_resp.getcontentlength
-            else:
+            if propfind_resp.getcontentlength < 0:
                 raise FileNotFoundError(f"Resource {self} does not exist")
+            else:
+                return propfind_resp.getcontentlength
         elif resp.status_code == requests.codes.not_found:
             raise FileNotFoundError(
                 f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
@@ -929,10 +929,15 @@ class HttpResourcePath(ResourcePath):
             """<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>"""
         )
         resp = self._propfind(body=request_body)
+
+        # print(f"status: {resp.status_code}")
+        # print(f"body: {resp.text}")
         if resp.status_code == requests.codes.multi_status:  # 207
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            if propfind_resp.status_code == requests.codes.ok:  # 200
-                return True, propfind_resp.collection
+            if propfind_resp.collection:
+                return True, True
+            elif propfind_resp.getcontentlength >= 0:
+                return True, False
             else:
                 return False, False
         elif resp.status_code == requests.codes.not_found:
@@ -1089,13 +1094,11 @@ class PropfindResponse:
     a single resource.
     """
 
-    # Regular expression to extract the status code and reason from
-    # the 'status' element of a PROPFIND response.
-    _status_rex = re.compile(r"^HTTP/.* +(?P<status_code>\d{3}) +(?P<reason>.*)$", re.IGNORECASE)
+    # Regular expression to compare against the 'status' element of a
+    # PROPFIND response's 'propstat' element.
+    _status_ok_rex = re.compile(r"^HTTP/.* 200 .*$", re.IGNORECASE)
 
     def __init__(self, response: Optional[eTree.Element]):
-        self.status_code: int = 0
-        self.reason: str = ""
         self.href: str = ""
         self.collection: bool = False
         self.getlastmodified: str = ""
@@ -1105,30 +1108,27 @@ class PropfindResponse:
             self._parse(response)
 
     def _parse(self, response: eTree.Element) -> None:
-        element = response.find("./{DAV:}propstat/{DAV:}status")
-        if element is not None:
+        # Extract 'href'
+        if (element := response.find("./{DAV:}href")) is not None:
             # We need to use "str(element.text)"" instead of "element.text" to
             # keep mypy happy
-            if match := self._status_rex.match(str(element.text)):
-                self.status_code = int(match["status_code"])
-                self.reason = match["reason"]
-
-        # Parse "href"
-        element = response.find("./{DAV:}href")
-        if element is not None:
             self.href = str(element.text).strip()
 
-        # Parse "collection"
-        element = response.find("./{DAV:}propstat/{DAV:}prop/{DAV:}resourcetype/{DAV:}collection")
-        if element is not None:
-            self.collection = True
+        for propstat in response.findall("./{DAV:}propstat"):
+            # Only extract properties of interest with status OK
+            status = propstat.find("./{DAV:}status")
+            if status is None or not self._status_ok_rex.match(status.text):
+                continue
 
-        # Parse "getlastmodified"
-        element = response.find("./{DAV:}propstat/{DAV:}prop/{DAV:}getlastmodified")
-        if element is not None:
-            self.getlastmodified = str(element.text).strip()
+            for prop in propstat.findall("./{DAV:}prop"):
+                # Parse "collection"
+                if (element := prop.find("./{DAV:}resourcetype/{DAV:}collection")) is not None:
+                    self.collection = True
 
-        # Parse "getcontentlength"
-        element = response.find("./{DAV:}propstat/{DAV:}prop/{DAV:}getcontentlength")
-        if element is not None:
-            self.getcontentlength = int(str(element.text).strip())
+                # Parse "getlastmodified"
+                if (element := prop.find("./{DAV:}getlastmodified")) is not None:
+                    self.getlastmodified = str(element.text).strip()
+
+                # Parse "getcontentlength"
+                if (element := prop.find("./{DAV:}getcontentlength")) is not None:
+                    self.getcontentlength = int(str(element.text).strip())
