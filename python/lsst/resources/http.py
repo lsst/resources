@@ -646,6 +646,8 @@ class HttpResourcePath(ResourcePath):
                 log,
                 msg="GET %s [length=%s] to local file %s [chunk_size=%d]",
                 args=(self, resp.headers.get("Content-Length"), tmpFile.name, buffering),
+                mem_usage=True,
+                mem_unit=u.mebibyte,
             ):
                 for chunk in resp.iter_content(chunk_size=buffering):
                     tmpFile.write(chunk)
@@ -896,7 +898,7 @@ class HttpResourcePath(ResourcePath):
         url = self.geturl()
 
         log.debug("Sending empty PUT request to %s", url)
-        with time_this(log, msg="PUT (no data) %s", args=(url,)):
+        with time_this(log, msg="PUT (no data) %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
             resp = self.session.request(
                 "PUT", url, data=None, headers=headers, stream=True, timeout=TIMEOUT, allow_redirects=False
             )
@@ -905,7 +907,7 @@ class HttpResourcePath(ResourcePath):
 
         # Upload the data to the final destination using the PUT session
         log.debug("Uploading data to %s", url)
-        with time_this(log, msg="PUT %s", args=(url,)):
+        with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
             resp = self.put_session.put(url, data=data, stream=True, timeout=TIMEOUT, allow_redirects=False)
             if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
                 raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
