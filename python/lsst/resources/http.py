@@ -429,7 +429,8 @@ class HttpResourcePath(ResourcePath):
             return False
         else:
             raise ValueError(
-                f"Unexpected status received for PROPFIND request for {self}: {resp.status_code}"
+                f"Unexpected status received for PROPFIND request for {self}: {resp.status_code} "
+                f"{resp.reason}"
             )
 
     def size(self) -> int:
@@ -449,10 +450,13 @@ class HttpResourcePath(ResourcePath):
                         f"Response to HEAD request to {self} does not contain 'Content-Length' header"
                     )
             elif resp.status_code == requests.codes.not_found:
-                raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
+                raise FileNotFoundError(
+                    f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
+                )
             else:
                 raise ValueError(
-                    f"Unexpected response for HEAD request for {self}, status code: {resp.status_code}"
+                    f"Unexpected response for HEAD request for {self}, status: {resp.status_code} "
+                    f"{resp.reason}"
                 )
 
         # The remote is a webDAV server: send a PROPFIND request to retrieve
@@ -471,10 +475,13 @@ class HttpResourcePath(ResourcePath):
             else:
                 raise FileNotFoundError(f"Resource {self} does not exist")
         elif resp.status_code == requests.codes.not_found:
-            raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
+            raise FileNotFoundError(
+                f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
+            )
         else:
             raise ValueError(
-                f"Unexpected response for PROPFIND request for {self}, status code: {resp.status_code}"
+                f"Unexpected response for PROPFIND request for {self}, status: {resp.status_code} "
+                f"{resp.reason}"
             )
 
     def mkdir(self) -> None:
@@ -493,7 +500,7 @@ class HttpResourcePath(ResourcePath):
             # but also if parent URL is different from self URL,
             # otherwise we could be stuck in a recursive loop
             # where self == parent.
-            if not self.parent().exists() and self.parent().geturl() != self.geturl():
+            if self.parent().geturl() != self.geturl() and not self.parent().exists():
                 self.parent().mkdir()
 
             log.debug("Creating new directory: %s", self.geturl())
@@ -514,11 +521,13 @@ class HttpResourcePath(ResourcePath):
         """
         log.debug("Reading from remote resource: %s", self.geturl())
         stream = True if size > 0 else False
-        with time_this(log, msg="Read from remote resource %s", args=(self,)):
+        with time_this(log, msg="GET %s", args=(self,)):
             resp = self.session.get(self.geturl(), stream=stream, timeout=TIMEOUT)
 
         if resp.status_code != requests.codes.ok:  # 200
-            raise FileNotFoundError(f"Unable to read resource {self}; status code: {resp.status_code}")
+            raise FileNotFoundError(
+                f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
+            )
         if not stream:
             return resp.content
         else:
@@ -545,8 +554,8 @@ class HttpResourcePath(ResourcePath):
         self.parent().mkdir()
 
         # Upload the data
-        with time_this(log, msg="Write to remote %s (%d bytes)", args=(self, len(data))):
-            self._put(data=data)
+        log.debug("Writing data to remote resource: %s", self.geturl())
+        self._put(data=data)
 
     def transfer_from(
         self,
@@ -592,7 +601,7 @@ class HttpResourcePath(ResourcePath):
             )
             return
 
-        if self.exists() and not overwrite:
+        if not overwrite and self.exists():
             raise FileExistsError(f"Destination path {self} already exists.")
 
         if transfer == "auto":
@@ -601,14 +610,13 @@ class HttpResourcePath(ResourcePath):
         # We can use webDAV 'COPY' or 'MOVE' if both the current and source
         # resources are located in the same server.
         if isinstance(src, type(self)) and self.root_uri() == src.root_uri() and self.is_webdav_endpoint:
-            with time_this(log, msg="Transfer from %s to %s directly", args=(src, self)):
-                return self._move(src) if transfer == "move" else self._copy(src)
+            log.debug("Transfer from %s to %s directly", src, self)
+            return self._move(src) if transfer == "move" else self._copy(src)
 
         # For resources of different classes or for plain HTTP resources we can
         # perform the copy or move operation by downloading to a local file
         # and uploading to the destination.
-        with time_this(log, msg="Transfer from %s to %s via local copy", args=(src, self)):
-            self._copy_via_local(src)
+        self._copy_via_local(src)
 
         # This was an explicit move, try to remove the source.
         if transfer == "move":
@@ -626,7 +634,9 @@ class HttpResourcePath(ResourcePath):
         """
         resp = self.session.get(self.geturl(), stream=True, timeout=TIMEOUT)
         if resp.status_code != requests.codes.ok:
-            raise FileNotFoundError(f"Unable to download resource {self}; status code: {resp.status_code}")
+            raise FileNotFoundError(
+                f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
+            )
 
         tmpdir, buffering = _get_temp_dir()
         with tempfile.NamedTemporaryFile(
@@ -634,7 +644,7 @@ class HttpResourcePath(ResourcePath):
         ) as tmpFile:
             with time_this(
                 log,
-                msg="Downloading %s [length=%s] to local file %s [chunk_size=%d]",
+                msg="GET %s [length=%s] to local file %s [chunk_size=%d]",
                 args=(self, resp.headers.get("Content-Length"), tmpFile.name, buffering),
             ):
                 for chunk in resp.iter_content(chunk_size=buffering):
@@ -760,7 +770,7 @@ class HttpResourcePath(ResourcePath):
             # The remote directory already exists
             log.debug("Can not create directory: %s may already exist: skipping.", self.geturl())
         else:
-            raise ValueError(f"Can not create directory {self}, status code: {resp.status_code}")
+            raise ValueError(f"Can not create directory {self}, status: {resp.status_code} {resp.reason}")
 
     def _delete(self) -> None:
         """Send a DELETE webDAV request for this resource."""
@@ -779,13 +789,15 @@ class HttpResourcePath(ResourcePath):
         if resp.status_code in (requests.codes.ok, requests.codes.accepted, requests.codes.no_content):
             return
         elif resp.status_code == requests.codes.not_found:
-            raise FileNotFoundError(f"Resource {self} does not exist, status code: {resp.status_code}")
+            raise FileNotFoundError(
+                f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
+            )
         else:
             # TODO: the response to a DELETE request against a webDAV server
             # may be multistatus. If so, we need to parse the reponse body to
             # determine more precisely the reason of the failure (e.g. a lock)
             # and provide a more helpful error message.
-            raise ValueError(f"Unable to delete resource {self}; status code: {resp.status_code}")
+            raise ValueError(f"Unable to delete resource {self}; status: {resp.status_code} {resp.reason}")
 
     def _copy_via_local(self, src: ResourcePath) -> None:
         """Replace the contents of this resource with the contents of a remote
@@ -797,9 +809,9 @@ class HttpResourcePath(ResourcePath):
             The source of the contents to copy to `self`.
         """
         with src.as_local() as local_uri:
+            log.debug("Transfer from %s to %s via local file %s", src, self, local_uri)
             with open(local_uri.ospath, "rb") as f:
-                with time_this(log, msg="Transfer from %s to %s via local file", args=(src, self)):
-                    self._put(data=f)
+                self._put(data=f)
 
     def _copy_or_move(self, method: str, src: HttpResourcePath) -> None:
         """Send a COPY or MOVE webDAV request to copy or replace the contents
@@ -828,7 +840,7 @@ class HttpResourcePath(ResourcePath):
             raise ValueError(f"{method} returned multistatus reponse with status {status} and error {error}")
         else:
             raise ValueError(
-                f"{method} operation from {src} to {self} failed, status code: {resp.status_code}"
+                f"{method} operation from {src} to {self} failed, status: {resp.status_code} {resp.reason}"
             )
 
     def _copy(self, src: HttpResourcePath) -> None:
@@ -882,20 +894,21 @@ class HttpResourcePath(ResourcePath):
             headers["Expect"] = "100-continue"
 
         url = self.geturl()
+
         log.debug("Sending empty PUT request to %s", url)
-        resp = self.session.request(
-            "PUT", url, data=None, headers=headers, stream=True, timeout=TIMEOUT, allow_redirects=False
-        )
-        if resp.is_redirect:
-            url = resp.headers["Location"]
+        with time_this(log, msg="PUT (no data) %s", args=(url,)):
+            resp = self.session.request(
+                "PUT", url, data=None, headers=headers, stream=True, timeout=TIMEOUT, allow_redirects=False
+            )
+            if resp.is_redirect:
+                url = resp.headers["Location"]
 
-        # Send data to its final destination using the PUT session
+        # Upload the data to the final destination using the PUT session
         log.debug("Uploading data to %s", url)
-        with time_this(log, msg="%s %s", args=("PUT", url)):
-            resp = self.put_session.put(url, data=data, timeout=TIMEOUT, allow_redirects=False, stream=True)
-
-        if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
-            raise ValueError(f"Can not write file {self}, status code: {resp.status_code}")
+        with time_this(log, msg="PUT %s", args=(url,)):
+            resp = self.put_session.put(url, data=data, stream=True, timeout=TIMEOUT, allow_redirects=False)
+            if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
+                raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
 
     @contextlib.contextmanager
     def _openImpl(
