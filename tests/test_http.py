@@ -112,24 +112,16 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         if cls.webdav_tmpdir:
             shutil.rmtree(cls.webdav_tmpdir, ignore_errors=True)
 
-    def setUp(self):
-        # Create a work directory for this test case
-        self.work_dir = ResourcePath(self._make_uri(path=self._get_dir_name()), forceDirectory=True)
-        self.work_dir.mkdir()
-
-        super().setUp()
-
     def tearDown(self):
-        # Remove the work directory
-        if self.work_dir.exists():
-            self.work_dir.remove()
+        if self.tmpdir:
+            self.tmpdir.remove()
 
         super().tearDown()
 
     def test_dav_file_handle(self):
         # Upload a new file with known contents.
         contents = "These are some \n bytes to read"
-        remote_file = self.work_dir.join(self._get_file_name())
+        remote_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(remote_file.write(data=contents, overwrite=True))
 
         # Test that the correct handle is returned.
@@ -172,11 +164,11 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     def test_dav_is_dav_enpoint(self):
         # Ensure the server is a webDAV endpoint
-        self.assertTrue(self.work_dir.is_webdav_endpoint)
+        self.assertTrue(self.tmpdir.is_webdav_endpoint)
 
     def test_dav_mkdir(self):
         # Check creation and deletion of an empty directory
-        subdir = self.work_dir.join(self._get_dir_name(), forceDirectory=True)
+        subdir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
         self.assertIsNone(subdir.mkdir())
         self.assertTrue(subdir.exists())
 
@@ -187,15 +179,16 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertIsNone(subdir.remove())
 
         # Deletion of an non-existing directory must raise
-        subir_not_exists = self.work_dir.join(self._get_dir_name(), forceDirectory=True)
+        subir_not_exists = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
         with self.assertRaises(FileNotFoundError):
             self.assertIsNone(subir_not_exists.remove())
 
         # Creation of a directory at a path where a file exists must raise
-        file = self.work_dir.join(self._get_file_name(), forceDirectory=False)
+        file = self.tmpdir.join(self._get_file_name(), forceDirectory=False)
         file.write(data=None, overwrite=True)
+        self.assertTrue(file.exists())
 
-        existing_file = self.work_dir.join(file.basename(), forceDirectory=True)
+        existing_file = self.tmpdir.join(file.basename(), forceDirectory=True)
         with self.assertRaises(NotADirectoryError):
             self.assertIsNone(existing_file.mkdir())
 
@@ -206,7 +199,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         with open(local_file, "rb") as f:
             data = f.read()
 
-        remote_file = self.work_dir.join(self._get_file_name())
+        remote_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(remote_file.write(data, overwrite=True))
         self.assertTrue(remote_file.exists())
         self.assertEqual(remote_file.size(), file_size)
@@ -226,7 +219,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     def test_dav_as_local(self):
         contents = str.encode("12345")
-        remote_file = self.work_dir.join(self._get_file_name())
+        remote_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(remote_file.write(data=contents, overwrite=True))
 
         local_path, is_temp = remote_file._as_local()
@@ -238,7 +231,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
     def test_dav_upload_creates_dir(self):
         # Uploading a file to a non existing directory must ensure its
         # parent directories are automatically created and upload succeeds
-        non_existing_dir = self.work_dir.join(self._get_dir_name(), forceDirectory=True)
+        non_existing_dir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
         non_existing_dir = non_existing_dir.join(self._get_dir_name(), forceDirectory=True)
         non_existing_dir = non_existing_dir.join(self._get_dir_name(), forceDirectory=True)
         remote_file = non_existing_dir.join(self._get_file_name())
@@ -260,7 +253,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     def test_dav_transfer_from(self):
         # Transfer from local file via "copy", with and without overwrite
-        remote_file = self.work_dir.join(self._get_file_name())
+        remote_file = self.tmpdir.join(self._get_file_name())
         local_file, _ = self._generate_file()
         source_file = ResourcePath(local_file)
         self.assertIsNone(remote_file.transfer_from(source_file, transfer="copy", overwrite=True))
@@ -271,7 +264,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Transfer from remote file via "copy", with and without overwrite
         source_file = remote_file
-        target_file = self.work_dir.join(self._get_file_name())
+        target_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(target_file.transfer_from(source_file, transfer="copy", overwrite=True))
         self.assertTrue(target_file.exists())
         self.assertEqual(target_file.size(), source_file.size())
@@ -283,7 +276,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Test transfer from local file via "move", with and without overwrite
         source_file = ResourcePath(local_file)
         source_size = source_file.size()
-        target_file = self.work_dir.join(self._get_file_name())
+        target_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(target_file.transfer_from(source_file, transfer="move", overwrite=True))
         self.assertTrue(target_file.exists())
         self.assertEqual(target_file.size(), source_size)
@@ -300,7 +293,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # must succeed
         source_file = target_file
         source_size = source_file.size()
-        target_file = self.work_dir.join(self._get_file_name())
+        target_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(target_file.transfer_from(source_file, transfer="move", overwrite=True))
         self.assertTrue(target_file.exists())
         self.assertEqual(target_file.size(), source_size)
@@ -313,7 +306,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     def test_dav_handle(self):
         # Resource handle must succeed
-        target_file = self.work_dir.join(self._get_file_name())
+        target_file = self.tmpdir.join(self._get_file_name())
         data = "abcdefghi"
         self.assertIsNone(target_file.write(data, overwrite=True))
         with target_file.open("rb") as handle:
@@ -326,7 +319,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         with open(local_file, "rb") as f:
             data = f.read()
 
-        remote_file = self.work_dir.join(self._get_file_name())
+        remote_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(remote_file.write(data, overwrite=True))
         self.assertTrue(remote_file.exists())
         self.assertEqual(remote_file.size(), file_size)
@@ -334,17 +327,17 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         os.remove(local_file)
 
         # Deletion of a non-existing remote file must raise
-        non_existing_file = self.work_dir.join(self._get_file_name())
+        non_existing_file = self.tmpdir.join(self._get_file_name())
         with self.assertRaises(FileNotFoundError):
             self.assertIsNone(non_existing_file.remove())
 
         # Deletion of a non-empty remote directory must succeed
-        subdir = self.work_dir.join(self._get_dir_name(), forceDirectory=True)
+        subdir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
         self.assertIsNone(subdir.mkdir())
         self.assertTrue(subdir.exists())
         local_file, _ = self._generate_file()
         source_file = ResourcePath(local_file)
-        target_file = self.work_dir.join(self._get_file_name(), forceDirectory=True)
+        target_file = self.tmpdir.join(self._get_file_name(), forceDirectory=True)
         self.assertIsNone(target_file.transfer_from(source_file, transfer="copy", overwrite=True))
         self.assertIsNone(subdir.remove())
         self.assertFalse(subdir.exists())
