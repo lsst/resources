@@ -416,11 +416,7 @@ class HttpResourcePath(ResourcePath):
 
         # The remote endpoint is a webDAV server: send a PROPFIND request
         # requesting only the 'getlastmodified' property.
-        request_body = (
-            """<?xml version="1.0" encoding="utf-8" ?>"""
-            """<D:propfind xmlns:D="DAV:"><D:prop><D:getlastmodified/></D:prop></D:propfind>"""
-        )
-        resp = self._propfind(request_body)
+        resp = self._propfind()
         if resp.status_code == requests.codes.multi_status:  # 207
             # Retrieve the status of the first and only element in the response
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
@@ -461,19 +457,15 @@ class HttpResourcePath(ResourcePath):
 
         # The remote is a webDAV server: send a PROPFIND request to retrieve
         # the 'getcontentlength' property of the resource.
-        request_body = (
-            """<?xml version="1.0" encoding="utf-8" ?>"""
-            """<D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>"""
-        )
-        resp = self._propfind(body=request_body)
+        resp = self._propfind()
         if resp.status_code == requests.codes.multi_status:  # 207
             # Parse the response body and retrieve the 'getcontentlength'
             # property
             propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            if propfind_resp.getcontentlength < 0:
-                raise FileNotFoundError(f"Resource {self} does not exist")
-            else:
+            if propfind_resp.getcontentlength >= 0:
                 return propfind_resp.getcontentlength
+            else:
+                raise FileNotFoundError(f"Resource {self} does not exist")
         elif resp.status_code == requests.codes.not_found:
             raise FileNotFoundError(
                 f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
@@ -750,13 +742,20 @@ class HttpResourcePath(ResourcePath):
         response : `requests.Response`
             Response to the PROPFIND request.
         """
+        if body is None:
+            # Request only the 3 attributes we are interested in, namely
+            # 'resourcetype', 'getcontentlength' and 'getlastmodified'
+            body = (
+                """<?xml version="1.0" encoding="utf-8" ?>"""
+                """<D:propfind xmlns:D="DAV:"><D:prop>"""
+                """<D:resourcetype/><D:getcontentlength/><D:getlastmodified/>"""
+                """</D:prop></D:propfind>"""
+            )
         headers = {
             "Depth": depth,
+            "Content-Type": 'application/xml; charset="utf-8"',
+            "Content-Length": str(len(body)),
         }
-        if body is not None:
-            headers.update(
-                {"Content-Type": 'application/xml; charset="utf-8"', "Content-Length": str(len(body))}
-            )
         return self._send_webdav_request("PROPFIND", headers=headers, body=body)
 
     def _options(self) -> requests.Response:
