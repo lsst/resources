@@ -1149,7 +1149,7 @@ class DavProperty:
         for propstat in response.findall("./{DAV:}propstat"):
             # Only extract properties of interest with status OK.
             status = propstat.find("./{DAV:}status")
-            if status is None or not self._status_ok_rex.match(status.text):
+            if status is None or not self._status_ok_rex.match(str(status.text)):
                 continue
 
             for prop in propstat.findall("./{DAV:}prop"):
