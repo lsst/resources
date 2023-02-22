@@ -1170,27 +1170,27 @@ class DavProperty:
                     self._displayname = str(element.text).strip()
 
     @property
-    def exists(self):
+    def exists(self) -> bool:
         # It is either a directory or a file with length of at least zero
         return self._collection or self._getcontentlength >= 0
 
     @property
-    def is_directory(self):
+    def is_directory(self) -> bool:
         return self._collection
 
     @property
-    def is_file(self):
+    def is_file(self) -> bool:
         return self._getcontentlength >= 0
 
     @property
-    def size(self):
+    def size(self) -> int:
         # Only valid if is_file is True
         return self._getcontentlength
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._displayname
 
     @property
-    def href(self):
+    def href(self) -> str:
         return self._href
