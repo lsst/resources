@@ -229,7 +229,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         os.remove(local_path)
 
     def test_dav_size(self):
-        # Size of an inexistent file must raise
+        # Size of a non-existent file must raise.
         remote_file = self.tmpdir.join(self._get_file_name())
         with self.assertRaises(FileNotFoundError):
             remote_file.size()
