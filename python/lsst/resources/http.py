@@ -1159,15 +1159,15 @@ class DavProperty:
 
                 # Parse "getlastmodified".
                 if (element := prop.find("./{DAV:}getlastmodified")) is not None:
-                    self._getlastmodified = str(element.text).strip()
+                    self._getlastmodified = str(element.text)
 
                 # Parse "getcontentlength".
                 if (element := prop.find("./{DAV:}getcontentlength")) is not None:
-                    self._getcontentlength = int(str(element.text).strip())
+                    self._getcontentlength = int(str(element.text))
 
                 # Parse "displayname".
                 if (element := prop.find("./{DAV:}displayname")) is not None:
-                    self._displayname = str(element.text).strip()
+                    self._displayname = str(element.text)
 
     @property
     def exists(self) -> bool:
