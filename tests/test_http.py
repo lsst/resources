@@ -238,9 +238,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # raise
         remote_dir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
         self.assertIsNone(remote_dir.mkdir())
-        exists, is_dir = remote_dir._exists_and_is_directory()
-        self.assertTrue(exists)
-        self.assertTrue(is_dir)
+        self.assertTrue(remote_dir.exists())
 
         dir_as_file = ResourcePath(remote_dir.geturl().rstrip("/"), forceDirectory=False)
         with self.assertRaises(IsADirectoryError):
@@ -360,18 +358,6 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertIsNone(subdir.remove())
         self.assertFalse(subdir.exists())
         os.remove(local_file)
-
-    @unittest.skip("skipped test_walk() since HttpResourcePath.walk() is not implemented")
-    def test_walk(self):
-        # TODO: remove this test when walk() is implemented so the super
-        # class test_walk is executed.
-        pass
-
-    @unittest.skip("skipped test_large_walk() since HttpResourcePath.walk() is not implemented")
-    def test_large_walk(self):
-        # TODO: remove this test when walk() is implemented so the super
-        # class test_large_walk is executed.
-        pass
 
     @classmethod
     def _get_port_number(cls) -> int:

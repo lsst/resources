@@ -418,15 +418,10 @@ class HttpResourcePath(ResourcePath):
         # to determine if it exists.
         resp = self._propfind()
         if resp.status_code == requests.codes.multi_status:  # 207
-            propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            return propfind_resp.exists
-        elif resp.status_code == requests.codes.not_found:  # 404
+            prop = _parse_propfind_response_body(resp.text)[0]
+            return prop.exists
+        else:  # 404 Not Found
             return False
-        else:
-            raise ValueError(
-                f"Unexpected status received for PROPFIND request for {self}: {resp.status_code} "
-                f"{resp.reason}"
-            )
 
     def size(self) -> int:
         """Return the size of the remote resource in bytes."""
@@ -458,23 +453,18 @@ class HttpResourcePath(ResourcePath):
         # the size of the resource. Sizes are only meaningful for files.
         resp = self._propfind()
         if resp.status_code == requests.codes.multi_status:  # 207
-            propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            if propfind_resp.is_file:
-                return propfind_resp.size
-            elif propfind_resp.is_directory:
+            prop = _parse_propfind_response_body(resp.text)[0]
+            if prop.is_file:
+                return prop.size
+            elif prop.is_directory:
                 raise IsADirectoryError(
                     f"Resource {self} is reported by server as a directory but has a file path"
                 )
             else:
                 raise FileNotFoundError(f"Resource {self} does not exist")
-        elif resp.status_code == requests.codes.not_found:
+        else:  # 404 Not Found
             raise FileNotFoundError(
                 f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
-            )
-        else:
-            raise ValueError(
-                f"Unexpected response for PROPFIND request for {self}, status: {resp.status_code} "
-                f"{resp.reason}"
             )
 
     def mkdir(self) -> None:
@@ -488,15 +478,18 @@ class HttpResourcePath(ResourcePath):
         if not self.dirLike:
             raise NotADirectoryError(f"Can not create a 'directory' for file-like URI {self}")
 
-        exists, is_directory = self._exists_and_is_directory()
-        if exists:
-            if is_directory:
-                return
-            else:
-                # A file exists at this path
-                raise NotADirectoryError(
-                    f"Can not create a directory for {self} because file exists at that path"
-                )
+        # Check if the target directory already exists.
+        resp = self._propfind()
+        if resp.status_code == requests.codes.multi_status:  # 207
+            prop = _parse_propfind_response_body(resp.text)[0]
+            if prop.exists:
+                if prop.is_directory:
+                    return
+                else:
+                    # A file exists at this path
+                    raise NotADirectoryError(
+                        f"Can not create a directory for {self} because a file already exists at that path"
+                    )
 
         # Target directory does not exist. Create it and its ancestors as
         # needed. We need to test if parent URL is different from self URL,
@@ -552,10 +545,10 @@ class HttpResourcePath(ResourcePath):
             if self.exists():
                 raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
 
-        # Ensure the parent directory exists
+        # Ensure the parent directory exists.
         self.parent().mkdir()
 
-        # Upload the data
+        # Upload the data.
         log.debug("Writing data to remote resource: %s", self.geturl())
         self._put(data=data)
 
@@ -578,7 +571,7 @@ class HttpResourcePath(ResourcePath):
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             Currently unused.
         """
-        # Fail early to prevent delays if remote resources are requested
+        # Fail early to prevent delays if remote resources are requested.
         if transfer not in self.transferModes:
             raise ValueError(f"Transfer mode {transfer} not supported by URI scheme {self.scheme}")
 
@@ -623,6 +616,58 @@ class HttpResourcePath(ResourcePath):
         # This was an explicit move, try to remove the source.
         if transfer == "move":
             src.remove()
+
+    def walk(
+        self, file_filter: Optional[Union[str, re.Pattern]] = None
+    ) -> Iterator[Union[List, Tuple[ResourcePath, List[str], List[str]]]]:
+        """Walk the directory tree returning matching files and directories.
+        Parameters
+        ----------
+        file_filter : `str` or `re.Pattern`, optional
+            Regex to filter out files from the list before it is returned.
+        Yields
+        ------
+        dirpath : `ResourcePath`
+            Current directory being examined.
+        dirnames : `list` of `str`
+            Names of subdirectories within dirpath.
+        filenames : `list` of `str`
+            Names of all the files within dirpath.
+        """
+        if not self.dirLike:
+            raise ValueError("Can not walk a non-directory URI")
+
+        # Walking directories is only available on WebDAV backends.
+        if not self.is_webdav_endpoint:
+            raise NotImplementedError(f"Walking directory {self} is not implemented by plain HTTP servers")
+
+        if isinstance(file_filter, str):
+            file_filter = re.compile(file_filter)
+
+        resp = self._propfind(depth="1")
+        if resp.status_code == requests.codes.multi_status:  # 207
+            files: List[str] = []
+            dirs: List[str] = []
+
+            for prop in _parse_propfind_response_body(resp.text):
+                if prop.is_file:
+                    files.append(prop.name)
+                elif not self.path.endswith(prop.href):
+                    # Only include the names of sub-directories not the
+                    # directory being walked.
+                    dirs.append(prop.name)
+
+            if file_filter is not None:
+                files = [f for f in files if file_filter.search(f)]
+
+            if not dirs and not files:
+                return
+            else:
+                yield type(self)(self, forceAbsolute=False, forceDirectory=True), dirs, files
+
+            for dir in dirs:
+                new_uri = self.join(dir, forceDirectory=True)
+                yield from new_uri.walk(file_filter)
 
     def _as_local(self) -> Tuple[str, bool]:
         """Download object over HTTP and place in temporary directory.
@@ -742,14 +787,20 @@ class HttpResourcePath(ResourcePath):
         -------
         response : `requests.Response`
             Response to the PROPFIND request.
+
+        Notes
+        -----
+        It raises `ValueError` if the status code of the PROPFIND request
+        is different from "207 Multistatus" or "404 Not Found".
         """
         if body is None:
-            # Request only the 3 attributes we are interested in, namely
-            # 'resourcetype', 'getcontentlength' and 'getlastmodified'
+            # Request only the DAV live properties we are explicitly interested
+            # in namely 'resourcetype', 'getcontentlength', 'getlastmodified'
+            # and 'displayname'.
             body = (
                 """<?xml version="1.0" encoding="utf-8" ?>"""
                 """<D:propfind xmlns:D="DAV:"><D:prop>"""
-                """<D:resourcetype/><D:getcontentlength/><D:getlastmodified/>"""
+                """<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:displayname/>"""
                 """</D:prop></D:propfind>"""
             )
         headers = {
@@ -757,7 +808,14 @@ class HttpResourcePath(ResourcePath):
             "Content-Type": 'application/xml; charset="utf-8"',
             "Content-Length": str(len(body)),
         }
-        return self._send_webdav_request("PROPFIND", headers=headers, body=body)
+        resp = self._send_webdav_request("PROPFIND", headers=headers, body=body)
+        if resp.status_code in (requests.codes.multi_status, requests.codes.not_found):
+            return resp
+        else:
+            raise ValueError(
+                f"Unexpected response for PROPFIND request for {self}, status: {resp.status_code} "
+                f"{resp.reason}"
+            )
 
     def _options(self) -> requests.Response:
         """Send a OPTIONS webDAV request for this resource."""
@@ -921,21 +979,6 @@ class HttpResourcePath(ResourcePath):
             if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
                 raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
 
-    def _exists_and_is_directory(self) -> Tuple[bool, bool]:
-        """Return a tuple (exists, is_directory) for remote resource."""
-
-        resp = self._propfind()
-        if resp.status_code == requests.codes.multi_status:  # 207
-            propfind_resp = _parse_propfind_response_body(resp.text)[0]
-            return propfind_resp.exists, propfind_resp.is_directory
-        elif resp.status_code == requests.codes.not_found:
-            return False, False
-        else:
-            raise ValueError(
-                f"Unexpected response for PROPFIND request for {self}, status: {resp.status_code} "
-                f"{resp.reason}"
-            )
-
     @contextlib.contextmanager
     def _openImpl(
         self,
@@ -1014,7 +1057,7 @@ def _is_protected(filepath: str) -> bool:
     return owner_accessible and not group_accessible and not other_accessible
 
 
-def _parse_propfind_response_body(body: str) -> List[PropfindResponse]:
+def _parse_propfind_response_body(body: str) -> List[DavProperty]:
     """Parse the XML-encoded contents of the response body to a webDAV PROPFIND
     request.
 
@@ -1025,7 +1068,7 @@ def _parse_propfind_response_body(body: str) -> List[PropfindResponse]:
 
     Returns
     -------
-    responses : `List[PropfindResponse]`
+    responses : `List[DavProperty]`
 
     Notes
     -----
@@ -1068,18 +1111,18 @@ def _parse_propfind_response_body(body: str) -> List[PropfindResponse]:
     responses = []
     multistatus = eTree.fromstring(body.strip())
     for response in multistatus.findall("./{DAV:}response"):
-        responses.append(PropfindResponse(response))
+        responses.append(DavProperty(response))
 
-    if len(responses) == 0:
+    if responses:
+        return responses
+    else:
         # Could not parse the body
         raise ValueError(f"Unable to parse response for PROPFIND request: {response}")
-    else:
-        return responses
 
 
-class PropfindResponse:
-    """Helper class to contain the parsed response to a PROFIND request for
-    a single resource.
+class DavProperty:
+    """Helper class to encapsulate select live DAV properties of a single
+    resource, as retrieved via a PROPFIND request.
     """
 
     # Regular expression to compare against the 'status' element of a
@@ -1088,6 +1131,7 @@ class PropfindResponse:
 
     def __init__(self, response: Optional[eTree.Element]):
         self._href: str = ""
+        self._displayname: str = ""
         self._collection: bool = False
         self._getlastmodified: str = ""
         self._getcontentlength: int = -1
@@ -1103,23 +1147,27 @@ class PropfindResponse:
             self._href = str(element.text).strip()
 
         for propstat in response.findall("./{DAV:}propstat"):
-            # Only extract properties of interest with status OK
+            # Only extract properties of interest with status OK.
             status = propstat.find("./{DAV:}status")
             if status is None or not self._status_ok_rex.match(status.text):
                 continue
 
             for prop in propstat.findall("./{DAV:}prop"):
-                # Parse "collection"
+                # Parse "collection".
                 if (element := prop.find("./{DAV:}resourcetype/{DAV:}collection")) is not None:
                     self._collection = True
 
-                # Parse "getlastmodified"
+                # Parse "getlastmodified".
                 if (element := prop.find("./{DAV:}getlastmodified")) is not None:
                     self._getlastmodified = str(element.text).strip()
 
-                # Parse "getcontentlength"
+                # Parse "getcontentlength".
                 if (element := prop.find("./{DAV:}getcontentlength")) is not None:
                     self._getcontentlength = int(str(element.text).strip())
+
+                # Parse "displayname".
+                if (element := prop.find("./{DAV:}displayname")) is not None:
+                    self._displayname = str(element.text).strip()
 
     @property
     def exists(self):
@@ -1138,3 +1186,11 @@ class PropfindResponse:
     def size(self):
         # Only valid if is_file is True
         return self._getcontentlength
+
+    @property
+    def name(self):
+        return self._displayname
+
+    @property
+    def href(self):
+        return self._href
