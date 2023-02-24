@@ -707,7 +707,12 @@ class HttpResourcePath(ResourcePath):
             return tmpFile.name, True
 
     def _send_webdav_request(
-        self, method: str, url: Optional[str] = None, headers: dict[str, str] = {}, body: Optional[str] = None
+        self,
+        method: str,
+        url: Optional[str] = None,
+        headers: dict[str, str] = {},
+        body: Optional[str] = None,
+        timeout=TIMEOUT,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
@@ -765,7 +770,7 @@ class HttpResourcePath(ResourcePath):
                         data=body,
                         headers=headers,
                         stream=True,
-                        timeout=TIMEOUT,
+                        timeout=timeout,
                         allow_redirects=False,
                     )
                     if resp.is_redirect:
@@ -862,7 +867,10 @@ class HttpResourcePath(ResourcePath):
                 f"Deletion of directory {self} is not implemented by plain HTTP servers"
             )
 
-        resp = self._send_webdav_request("DELETE")
+        # Deleting non-empty directories may take some time, so increate
+        # the timeout for getting a response from the server.
+        timeout = (TIMEOUT[0], TIMEOUT[1] * 100) if self.dirLike else TIMEOUT
+        resp = self._send_webdav_request("DELETE", timeout=timeout)
         if resp.status_code in (requests.codes.ok, requests.codes.accepted, requests.codes.no_content):
             return
         elif resp.status_code == requests.codes.not_found:
