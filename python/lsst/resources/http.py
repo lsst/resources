@@ -81,7 +81,7 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
     try:
         ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
         verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
-        resp = requests.options(str(path), verify=verify, stream=True)
+        resp = requests.options(str(path), verify=verify, stream=False)
 
         # Check that "1" is part of the value of the "DAV" header. We don't
         # use locks, so a server complying to class 1 is enough for our
@@ -205,8 +205,8 @@ class SessionStore:
 
         persist : `bool`
             if `True`, make the network connection with the front end server
-            of the endpoint  persistent. Connections to the backend servers
-            are persisted.
+            of the endpoint persistent. Connections to the backend servers
+            are not persisted.
 
         Notes
         -----
@@ -264,7 +264,7 @@ class SessionStore:
             # (seconds)
             backoff_factor=5.0 + random.random(),
             # How many times to retry on bad status codes
-            status=3,
+            status=5,
             # HTTP status codes that we should force a retry on
             status_forcelist=[
                 requests.codes.too_many_requests,  # 429
@@ -287,14 +287,15 @@ class SessionStore:
         # Prevent persisting connections to back-end servers which may vary
         # from request to request. Systematically persisting connections to
         # those servers may exhaust their capabilities when there are thousands
-        # of simultaneous clients
+        # of simultaneous clients.
         session.mount(
             f"{rpath.scheme}://",
             HTTPAdapter(pool_connections=1, pool_maxsize=0, pool_block=False, max_retries=retries),
         )
 
-        # If the remote endpoint don't use secure HTTP we dont include bearer
-        # tokens in the requests nor need to authenticate the remove server.
+        # If the remote endpoint doesn't use secure HTTP we don't include
+        # bearer tokens in the requests nor need to authenticate the remote
+        # server.
         if rpath.scheme != "https":
             return session
 
@@ -378,7 +379,7 @@ class HttpResourcePath(ResourcePath):
         if hasattr(self, "_session"):
             return self._session
 
-        self._session: requests.Session = self._sessions_store.get(self)
+        self._session: requests.Session = self._sessions_store.get(self, persist=False)
         return self._session
 
     @property
@@ -387,7 +388,7 @@ class HttpResourcePath(ResourcePath):
         if hasattr(self, "_put_session"):
             return self._put_session
 
-        self._put_session: requests.Session = self._put_sessions_store.get(self)
+        self._put_session: requests.Session = self._put_sessions_store.get(self, persist=False)
         return self._put_session
 
     @property
@@ -411,8 +412,9 @@ class HttpResourcePath(ResourcePath):
             # request, even if the behavior for such a request against a
             # directory is not specified, so it depends on the server
             # implementation.
-            resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=True)
-            return resp.status_code == requests.codes.ok  # 200
+            with self.session as session:
+                resp = session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=False)
+                return resp.status_code == requests.codes.ok  # 200
 
         # The remote endpoint is a webDAV server: send a PROPFIND request
         # to determine if it exists.
@@ -431,23 +433,24 @@ class HttpResourcePath(ResourcePath):
         if not self.is_webdav_endpoint:
             # The remote is a plain HTTP server. Send a HEAD request to
             # retrieve the size of the resource.
-            resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=True)
-            if resp.status_code == requests.codes.ok:  # 200
-                if "Content-Length" in resp.headers:
-                    return int(resp.headers["Content-Length"])
+            with self.session as session:
+                resp = session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=False)
+                if resp.status_code == requests.codes.ok:  # 200
+                    if "Content-Length" in resp.headers:
+                        return int(resp.headers["Content-Length"])
+                    else:
+                        raise ValueError(
+                            f"Response to HEAD request to {self} does not contain 'Content-Length' header"
+                        )
+                elif resp.status_code == requests.codes.not_found:
+                    raise FileNotFoundError(
+                        f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
+                    )
                 else:
                     raise ValueError(
-                        f"Response to HEAD request to {self} does not contain 'Content-Length' header"
+                        f"Unexpected response for HEAD request for {self}, status: {resp.status_code} "
+                        f"{resp.reason}"
                     )
-            elif resp.status_code == requests.codes.not_found:
-                raise FileNotFoundError(
-                    f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
-                )
-            else:
-                raise ValueError(
-                    f"Unexpected response for HEAD request for {self}, status: {resp.status_code} "
-                    f"{resp.reason}"
-                )
 
         # The remote is a webDAV server: send a PROPFIND request to retrieve
         # the size of the resource. Sizes are only meaningful for files.
@@ -516,17 +519,18 @@ class HttpResourcePath(ResourcePath):
         """
         log.debug("Reading from remote resource: %s", self.geturl())
         stream = True if size > 0 else False
-        with time_this(log, msg="GET %s", args=(self,)):
-            resp = self.session.get(self.geturl(), stream=stream, timeout=TIMEOUT)
+        with self.session as session:
+            with time_this(log, msg="GET %s", args=(self,)):
+                resp = session.get(self.geturl(), stream=stream, timeout=TIMEOUT)
 
-        if resp.status_code != requests.codes.ok:  # 200
-            raise FileNotFoundError(
-                f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
-            )
-        if not stream:
-            return resp.content
-        else:
-            return next(resp.iter_content(chunk_size=size))
+            if resp.status_code != requests.codes.ok:  # 200
+                raise FileNotFoundError(
+                    f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
+                )
+            if not stream:
+                return resp.content
+            else:
+                return next(resp.iter_content(chunk_size=size))
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
         """Write the supplied bytes to the new resource.
@@ -679,27 +683,28 @@ class HttpResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-        resp = self.session.get(self.geturl(), stream=True, timeout=TIMEOUT)
-        if resp.status_code != requests.codes.ok:
-            raise FileNotFoundError(
-                f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
-            )
+        with self.session as session:
+            resp = session.get(self.geturl(), stream=True, timeout=TIMEOUT)
+            if resp.status_code != requests.codes.ok:
+                raise FileNotFoundError(
+                    f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
+                )
 
-        tmpdir, buffering = _get_temp_dir()
-        with tempfile.NamedTemporaryFile(
-            suffix=self.getExtension(), buffering=buffering, dir=tmpdir, delete=False
-        ) as tmpFile:
-            with time_this(
-                log,
-                msg="GET %s [length=%s] to local file %s [chunk_size=%d]",
-                args=(self, resp.headers.get("Content-Length"), tmpFile.name, buffering),
-                mem_usage=True,
-                mem_unit=u.mebibyte,
-            ):
-                for chunk in resp.iter_content(chunk_size=buffering):
-                    tmpFile.write(chunk)
+            tmpdir, buffering = _get_temp_dir()
+            with tempfile.NamedTemporaryFile(
+                suffix=self.getExtension(), buffering=buffering, dir=tmpdir, delete=False
+            ) as tmpFile:
+                with time_this(
+                    log,
+                    msg="GET %s [length=%s] to local file %s [chunk_size=%d]",
+                    args=(self, resp.headers.get("Content-Length"), tmpFile.name, buffering),
+                    mem_usage=True,
+                    mem_unit=u.mebibyte,
+                ):
+                    for chunk in resp.iter_content(chunk_size=buffering):
+                        tmpFile.write(chunk)
 
-        return tmpFile.name, True
+            return tmpFile.name, True
 
     def _send_webdav_request(
         self, method: str, url: Optional[str] = None, headers: dict[str, str] = {}, body: Optional[str] = None
@@ -752,25 +757,28 @@ class HttpResourcePath(ResourcePath):
             mem_usage=True,
             mem_unit=u.mebibyte,
         ):
-            for _ in range(max_redirects := 5):
-                resp = self.session.request(
-                    method,
-                    url,
-                    data=body,
-                    headers=headers,
-                    stream=True,
-                    timeout=TIMEOUT,
-                    allow_redirects=False,
-                )
-                if resp.is_redirect:
-                    url = resp.headers["Location"]
-                else:
-                    return resp
+            with self.session as session:
+                for _ in range(max_redirects := 5):
+                    resp = session.request(
+                        method,
+                        url,
+                        data=body,
+                        headers=headers,
+                        stream=True,
+                        timeout=TIMEOUT,
+                        allow_redirects=False,
+                    )
+                    if resp.is_redirect:
+                        url = resp.headers["Location"]
+                    else:
+                        return resp
 
-            # We reached the maximum allowed number of redirects. Stop trying.
-            raise ValueError(
-                f"Could not get a response to {method} request for {self} after {max_redirects} redirections"
-            )
+                # We reached the maximum allowed number of redirects.
+                # Stop trying.
+                raise ValueError(
+                    f"Could not get a response to {method} request for {self} after "
+                    f"{max_redirects} redirections"
+                )
 
     def _propfind(self, body: Optional[str] = None, depth: str = "0") -> requests.Response:
         """Send a PROPFIND webDAV request and return the response.
@@ -965,19 +973,33 @@ class HttpResourcePath(ResourcePath):
         url = self.geturl()
 
         log.debug("Sending empty PUT request to %s", url)
-        with time_this(log, msg="PUT (no data) %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
-            resp = self.session.request(
-                "PUT", url, data=None, headers=headers, stream=True, timeout=TIMEOUT, allow_redirects=False
-            )
-            if resp.is_redirect:
-                url = resp.headers["Location"]
+        with self.session as session:
+            with time_this(log, msg="PUT (no data) %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+                resp = session.request(
+                    "PUT",
+                    url,
+                    data=None,
+                    headers=headers,
+                    stream=True,
+                    timeout=TIMEOUT,
+                    allow_redirects=False,
+                )
+                if resp.is_redirect:
+                    url = resp.headers["Location"]
 
         # Upload the data to the final destination using the PUT session
         log.debug("Uploading data to %s", url)
-        with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
-            resp = self.put_session.put(url, data=data, stream=True, timeout=TIMEOUT, allow_redirects=False)
-            if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
-                raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
+        with self.put_session as session:
+            with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+                resp = session.request(
+                    "PUT", url, data=data, stream=True, timeout=TIMEOUT, allow_redirects=False
+                )
+                if resp.status_code not in (
+                    requests.codes.ok,
+                    requests.codes.created,
+                    requests.codes.no_content,
+                ):
+                    raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
 
     @contextlib.contextmanager
     def _openImpl(
