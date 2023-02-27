@@ -1,3 +1,16 @@
+Resources v25.0.0 2023-02-27
+============================
+
+Miscellaneous Changes of Minor Interest
+---------------------------------------
+
+- For file copies with ``transfer_from()`` an attempt is now made to make the copies atomic by using `os.rename` with a temporary intermediate.
+  Moves now explicitly prefer `os.rename` and will fall back to an atomic copy before deletion if needed.
+  This is useful if multiple processes are trying to copy to the same destination file. (`DM-36412 <https://jira.lsstcorp.org/browse/DM-36412>`_)
+- Added ``allow_redirects=True`` to WebDAV HEAD requests since the default is ``False``.
+  This is needed when interacting with WebDAV storage systems which have a frontend redirecting to backend servers. (`DM-36799 <https://jira.lsstcorp.org/browse/DM-36799>`_)
+
+
 Resources v24.0.0 2022-08-26
 ============================
 
