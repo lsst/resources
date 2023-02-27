@@ -1,3 +1,0 @@
-Added allow_redirects=True to HEAD requests since the default is False. This
-is needed when interacting with WEBDAV storage systems which have a frontend
-redirecting to backend servers.
