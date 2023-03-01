@@ -21,6 +21,7 @@ import string
 import tempfile
 import time
 import unittest
+import warnings
 from threading import Thread
 from typing import Callable, Tuple, cast
 
@@ -57,6 +58,12 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         cls.webdav_tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
         cls.local_files_to_remove = []
         cls.server_thread = None
+
+        # Disable warnings about socket connections left open. We purposedly
+        # keep network connections to the remote server open and have no
+        # means through the API exposed by Requests of actually close the
+        # underlyng sockets to make tests pass without warning.
+        warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWarning)
 
         # Should we test against a running server?
         #
@@ -115,6 +122,14 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
     def tearDown(self):
         if self.tmpdir:
             self.tmpdir.remove()
+
+        # Clear sessions. Some sockets may be left open, because urllib3
+        # doest not close in-flight connections.
+        # See https://urllib3.readthedocs.io > API Reference >
+        #    Pool Manager > clear()
+        # I cannot add the full URL here because it is longer than 79
+        # characters.
+        self.tmpdir._clear_sessions()
 
         super().tearDown()
 
@@ -178,10 +193,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Deletion of an existing directory must succeed
         self.assertIsNone(subdir.remove())
 
-        # Deletion of an non-existing directory must raise
+        # Deletion of an non-existing directory must succeed
         subir_not_exists = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
-        with self.assertRaises(FileNotFoundError):
-            self.assertIsNone(subir_not_exists.remove())
+        self.assertIsNone(subir_not_exists.remove())
 
         # Creation of a directory at a path where a file exists must raise
         file = self.tmpdir.join(self._get_file_name(), forceDirectory=False)
@@ -342,10 +356,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertIsNone(remote_file.remove())
         os.remove(local_file)
 
-        # Deletion of a non-existing remote file must raise
+        # Deletion of a non-existing remote file must succeed
         non_existing_file = self.tmpdir.join(self._get_file_name())
-        with self.assertRaises(FileNotFoundError):
-            self.assertIsNone(non_existing_file.remove())
+        self.assertIsNone(non_existing_file.remove())
 
         # Deletion of a non-empty remote directory must succeed
         subdir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
