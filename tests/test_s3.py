@@ -9,6 +9,7 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import os
 import unittest
 
 from lsst.resources import ResourcePath
@@ -43,6 +44,12 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Enable S3 mocking of tests.
         self.mock_s3.start()
 
+        self.endpoint = None
+
+        if "S3_ENDPOINT_URL" in os.environ:
+            self.endpoint = os.environ["S3_ENDPOINT_URL"]
+            os.environ["S3_ENDPOINT_URL"] = ""
+
         # set up some fake credentials if they do not exist
         # self.usingDummyCredentials = setAwsEnvCredentials()
 
@@ -66,6 +73,9 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         bucket = s3.Bucket(self.netloc)
         bucket.delete()
+
+        if self.endpoint is not None:
+            os.environ["S3_ENDPOINT_URL"] = self.endpoint
 
         # Stop the S3 mock.
         self.mock_s3.stop()
