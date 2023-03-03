@@ -21,6 +21,8 @@
 
 import unittest
 
+from lsst.resources.s3utils import clean_test_environment
+
 try:
     import boto3
     from moto import mock_s3
@@ -54,6 +56,8 @@ class S3UtilsTestCase(unittest.TestCase):
     def setUp(self):
         # set up some fake credentials if they do not exist
         self.usingDummyCredentials = setAwsEnvCredentials()
+
+        clean_test_environment(self)
 
         self.client = getS3Client()
         try:
