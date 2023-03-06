@@ -489,6 +489,110 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 return False
 
 
+class HttpResourcePathConfigTestCase(unittest.TestCase):
+    """Test for the HttpResourcePathConfig class."""
+
+    def test_send_expect_header(self):
+        # Ensure environment variable LSST_HTTP_PUT_SEND_EXPECT_HEADER is
+        # inspected to initialize the HttpResourcePath config class.
+        os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
+        importlib.reload(lsst.resources.http)
+        config = lsst.resources.http.HttpResourcePathConfig()
+        self.assertFalse(config.send_expect_on_put)
+
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "true"}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = lsst.resources.http.HttpResourcePathConfig()
+            self.assertTrue(config.send_expect_on_put)
+
+    def test_timeout(self):
+        # Ensure that when the connect and read timeouts are not specified
+        # the default values are stored in the config.
+        os.environ.pop("LSST_HTTP_TIMEOUT_CONNECT", None)
+        os.environ.pop("LSST_HTTP_TIMEOUT_READ", None)
+        importlib.reload(lsst.resources.http)
+        config = lsst.resources.http.HttpResourcePathConfig()
+        self.assertEqual(
+            config.timeout,
+            (lsst.resources.http.DEFAULT_TIMEOUT_CONNECT, lsst.resources.http.DEFAULT_TIMEOUT_READ),
+        )
+
+        # Ensure that when both the connect and read timeouts are specified
+        # they are stored in the config.
+        connect_timeout, read_timeout = 100, 100
+        with unittest.mock.patch.dict(
+            os.environ,
+            {"LSST_HTTP_TIMEOUT_CONNECT": str(connect_timeout), "LSST_HTTP_TIMEOUT_READ": str(read_timeout)},
+            clear=True,
+        ):
+            # Force module reload.
+            importlib.reload(lsst.resources.http)
+            config = lsst.resources.http.HttpResourcePathConfig()
+            self.assertEqual(config.timeout, (connect_timeout, read_timeout))
+
+    def test_front_end_connections(self):
+        # Ensure that when the number of front end connections is not specified
+        # the default is stored in the config.
+        os.environ.pop("LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", None)
+        importlib.reload(lsst.resources.http)
+        config = lsst.resources.http.HttpResourcePathConfig()
+        self.assertEqual(
+            config.front_end_connections, int(lsst.resources.http.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
+        )
+
+        # Ensure that when the number of front end connections is specified
+        # it is stored in the config.
+        connections = 42
+        with unittest.mock.patch.dict(
+            os.environ, {"LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
+        ):
+            importlib.reload(lsst.resources.http)
+            config = lsst.resources.http.HttpResourcePathConfig()
+            self.assertTrue(config.front_end_connections, connections)
+
+    def test_back_end_connections(self):
+        # Ensure that when the number of back end connections is not specified
+        # the default is stored in the config.
+        os.environ.pop("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", None)
+        importlib.reload(lsst.resources.http)
+        config = lsst.resources.http.HttpResourcePathConfig()
+        self.assertEqual(
+            config.back_end_connections, int(lsst.resources.http.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
+        )
+
+        # Ensure that when the number of back end connections is specified
+        # it is stored in the config.
+        connections = 42
+        with unittest.mock.patch.dict(
+            os.environ, {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
+        ):
+            importlib.reload(lsst.resources.http)
+            config = lsst.resources.http.HttpResourcePathConfig()
+            self.assertTrue(config.back_end_connections, connections)
+
+    def test_digest_algorithm(self):
+        # Ensure that when no digest is specified in the environment, the
+        # configured digest algorithm is the empty string.
+        os.environ.pop("LSST_HTTP_DIGEST", None)
+        importlib.reload(lsst.resources.http)
+        config = lsst.resources.http.HttpResourcePathConfig()
+        self.assertEqual(config.digest_algorithm, "")
+
+        # Ensure that an invalid digest algorithm is ignored.
+        digest = "invalid"
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = lsst.resources.http.HttpResourcePathConfig()
+            self.assertEqual(config.digest_algorithm, "")
+
+        # Ensure that an accepted digest algorithm is stored.
+        for digest in lsst.resources.http.ACCEPTED_DIGESTS:
+            with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
+                importlib.reload(lsst.resources.http)
+                config = lsst.resources.http.HttpResourcePathConfig()
+                self.assertTrue(config.digest_algorithm, digest)
+
+
 class WebdavUtilsTestCase(unittest.TestCase):
     """Test for the Webdav related utilities."""
 
@@ -509,29 +613,6 @@ class WebdavUtilsTestCase(unittest.TestCase):
         plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
         responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
         self.assertFalse(_is_webdav_endpoint(plainHttpEndpoint))
-
-    def test_send_expect_header(self):
-        # Ensure _SEND_EXPECT_HEADER_ON_PUT is correctly initialized from
-        # the environment.
-        os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
-        importlib.reload(lsst.resources.http)
-        self.assertFalse(lsst.resources.http._SEND_EXPECT_HEADER_ON_PUT)
-
-        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "true"}, clear=True):
-            importlib.reload(lsst.resources.http)
-            self.assertTrue(lsst.resources.http._SEND_EXPECT_HEADER_ON_PUT)
-
-    def test_timeout(self):
-        connect_timeout = 100
-        read_timeout = 200
-        with unittest.mock.patch.dict(
-            os.environ,
-            {"LSST_HTTP_TIMEOUT_CONNECT": str(connect_timeout), "LSST_HTTP_TIMEOUT_READ": str(read_timeout)},
-            clear=True,
-        ):
-            # Force module reload to initialize TIMEOUT.
-            importlib.reload(lsst.resources.http)
-            self.assertEqual(lsst.resources.http.TIMEOUT, (connect_timeout, read_timeout))
 
     def test_is_protected(self):
         self.assertFalse(_is_protected("/this-file-does-not-exist"))

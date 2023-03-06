@@ -47,18 +47,97 @@ log = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_CONNECT = 60
 DEFAULT_TIMEOUT_READ = 300
 
-# Allow for network timeouts to be set in the environment.
-TIMEOUT = (
-    int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", DEFAULT_TIMEOUT_CONNECT)),
-    int(os.environ.get("LSST_HTTP_TIMEOUT_READ", DEFAULT_TIMEOUT_READ)),
-)
+# Default number of connections to persist with both the front end and back end
+# servers.
+DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS = "2"
+DEFAULT_BACKEND_PERSISTENT_CONNECTIONS = "1"
 
-# Should we send a "Expect: 100-continue" header on PUT requests?
-# The "Expect: 100-continue" header is used by some servers (e.g. dCache)
-# as an indication that the client knows how to handle redirects to
-# the specific server that will actually receive the data for PUT
-# requests.
-_SEND_EXPECT_HEADER_ON_PUT = "LSST_HTTP_PUT_SEND_EXPECT_HEADER" in os.environ
+# Accepted digest algorithms
+ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
+
+
+class HttpResourcePathConfig:
+    """Configuration class to encapsulate the configurable items used by class
+    HttpResourcePath.
+    """
+
+    @property
+    def front_end_connections(self) -> int:
+        """Number of persistent connections to the front end server."""
+
+        if hasattr(self, "_front_end_connections"):
+            return self._front_end_connections
+
+        self._front_end_connections: int = int(
+            os.environ.get(
+                "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+            )
+        )
+        return self._front_end_connections
+
+    @property
+    def back_end_connections(self) -> int:
+        """Number of persistent connections to the back end servers."""
+
+        if hasattr(self, "_back_end_connections"):
+            return self._back_end_connections
+
+        self._back_end_connections: int = int(
+            os.environ.get("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
+        )
+        return self._back_end_connections
+
+    @property
+    def digest_algorithm(self) -> str:
+        """Algorithm to ask the server to use for computing and recording
+        digests of each file contents in PUT requests.
+
+        Returns
+        -------
+        digest_algorithm: `str`
+            The name of a digest algorithm or the empty string if no algotihm
+            is configured.
+        """
+
+        if hasattr(self, "_digest_algorithm"):
+            return self._digest_algorithm
+
+        digest = os.environ.get("LSST_HTTP_DIGEST", "").lower()
+        if digest not in ACCEPTED_DIGESTS:
+            digest = ""
+
+        self._digest_algorithm: str = digest
+        return self._digest_algorithm
+
+    @property
+    def send_expect_on_put(self) -> bool:
+        """Return True if a "Expect: 100-continue" header is to be sent to
+        the server on each PUT request.
+
+        Some servers (e.g. dCache) uses this information as an indication that
+        the client knows how to handle redirects to the specific server that
+        will actually receive the data for PUT requests.
+        """
+        if hasattr(self, "_send_expect_on_put"):
+            return self._send_expect_on_put
+
+        self._send_expect_on_put: bool = "LSST_HTTP_PUT_SEND_EXPECT_HEADER" in os.environ
+        return self._send_expect_on_put
+
+    @property
+    def timeout(self) -> Tuple[int, int]:
+        """Return a tuple with the values of timeouts for connecting to the
+        server and reading its response, respectively. Both values are in
+        seconds.
+        """
+        if hasattr(self, "_timeout"):
+            return self._timeout
+
+        self._timeout: Tuple[int, int] = (
+            int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", DEFAULT_TIMEOUT_CONNECT)),
+            int(os.environ.get("LSST_HTTP_TIMEOUT_READ", DEFAULT_TIMEOUT_READ)),
+        )
+        return self._timeout
 
 
 @functools.lru_cache
@@ -278,7 +357,7 @@ class SessionStore:
         retries = Retry(
             # Total number of retries to allow. Takes precedence over other
             # counts.
-            total=5,
+            total=6,
             # How many connection-related errors to retry on.
             connect=3,
             # How many times to retry on read errors.
@@ -398,8 +477,8 @@ class HttpResourcePath(ResourcePath):
 
     Notes
     -----
-    In order to configure the behavior of the object, one environment variable
-    is inspected:
+    In order to configure the behavior of instances of this class, the
+    environment variables below are inspected:
 
     - LSST_HTTP_PUT_SEND_EXPECT_HEADER: if set (with any value), a
         "Expect: 100-Continue" header will be added to all HTTP PUT requests.
@@ -407,16 +486,40 @@ class HttpResourcePath(ResourcePath):
         knows how to handle redirections. In case of redirection, the body
         of the PUT request is sent to the redirected location and not to
         the front end server.
+
+    - LSST_HTTP_TIMEOUT_CONNECT and LSST_HTTP_TIMEOUT_READ: if set to a
+        numeric value, they are interpreted as the number of seconds to wait
+        for establishing a connection with the server and for reading its
+        response, respectively.
+
+    - LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS and
+        LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS: contain the maximum number
+        of connections to attempt to persist with both the front end servers
+        and the back end servers.
+        Default values: DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS and
+        DEFAULT_BACKEND_PERSISTENT_CONNECTIONS.
+
+    - LSST_HTTP_DIGEST: case-insensitive name of the digest algorithm to
+        ask the server to compute for every file's content sent to the server
+        via a PUT request. No digest is requested if this variable is not set
+        or is set to an invalid value.
+        Valid values are those in ACCEPTED_DIGESTS.
     """
 
     _is_webdav: Optional[bool] = None
+
+    # Configuration items for this class instances.
+    _config = HttpResourcePathConfig()
 
     # The session for metadata requests is used for interacting with
     # the front end servers for requests such as PROPFIND, HEAD, etc. Those
     # interactions are typically served by the front end servers. We want to
     # keep the connection to the front end servers open, to reduce the cost
     # associated to TCP and TLS handshaking for each new request.
-    _metadata_session_store = SessionStore(num_pools=5, max_persistent_connections=2)
+    _metadata_session_store = SessionStore(
+        num_pools=5,
+        max_persistent_connections=_config.front_end_connections,
+    )
 
     # The data session is used for interaction with the front end servers which
     # typically redirect to the back end servers for serving our PUT and GET
@@ -425,7 +528,10 @@ class HttpResourcePath(ResourcePath):
     # kind of request. Some servers close the connection when redirecting
     # the client to a back end server, for instance when serving a PUT
     # request.
-    _data_session_store = SessionStore(num_pools=25, max_persistent_connections=1)
+    _data_session_store = SessionStore(
+        num_pools=25,
+        max_persistent_connections=_config.back_end_connections,
+    )
 
     # Process ID which created the sessions above. We need to store this
     # to replace sessions created by a parent process and inherited by a
@@ -497,7 +603,7 @@ class HttpResourcePath(ResourcePath):
             # directory is not specified, so it depends on the server
             # implementation.
             resp = self.metadata_session.head(
-                self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=False
+                self.geturl(), timeout=self._config.timeout, allow_redirects=True, stream=False
             )
             return resp.status_code == requests.codes.ok  # 200
 
@@ -519,7 +625,7 @@ class HttpResourcePath(ResourcePath):
             # The remote is a plain HTTP server. Send a HEAD request to
             # retrieve the size of the resource.
             resp = self.metadata_session.head(
-                self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=False
+                self.geturl(), timeout=self._config.timeout, allow_redirects=True, stream=False
             )
             if resp.status_code == requests.codes.ok:  # 200
                 if "Content-Length" in resp.headers:
@@ -611,7 +717,7 @@ class HttpResourcePath(ResourcePath):
         stream = True if size > 0 else False
         with self.data_session as session:
             with time_this(log, msg="GET %s", args=(self,)):
-                resp = session.get(self.geturl(), stream=stream, timeout=TIMEOUT)
+                resp = session.get(self.geturl(), stream=stream, timeout=self._config.timeout)
 
             if resp.status_code != requests.codes.ok:  # 200
                 raise FileNotFoundError(
@@ -778,7 +884,7 @@ class HttpResourcePath(ResourcePath):
         # to both the front end and back end servers are closed after the
         # download operation is finished.
         with self.data_session as session:
-            resp = session.get(self.geturl(), stream=True, timeout=TIMEOUT)
+            resp = session.get(self.geturl(), stream=True, timeout=self._config.timeout)
             if resp.status_code != requests.codes.ok:
                 raise FileNotFoundError(
                     f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
@@ -807,7 +913,7 @@ class HttpResourcePath(ResourcePath):
         headers: dict[str, str] = {},
         body: Optional[str] = None,
         session: Optional[requests.Session] = None,
-        timeout: Tuple[int, int] = TIMEOUT,
+        timeout: Optional[Tuple[int, int]] = None,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
@@ -849,6 +955,9 @@ class HttpResourcePath(ResourcePath):
 
         if session is None:
             session = self.metadata_session
+
+        if timeout is None:
+            timeout = self._config.timeout
 
         with time_this(
             log,
@@ -966,7 +1075,9 @@ class HttpResourcePath(ResourcePath):
 
         # Deleting non-empty directories may take some time, so increase
         # the timeout for getting a response from the server.
-        timeout = (TIMEOUT[0], TIMEOUT[1] * 100) if self.dirLike else TIMEOUT
+        timeout = self._config.timeout
+        if self.dirLike:
+            timeout = (timeout[0], timeout[1] * 100)
         resp = self._send_webdav_request("DELETE", timeout=timeout)
         if resp.status_code in (
             requests.codes.ok,
@@ -1078,7 +1189,7 @@ class HttpResourcePath(ResourcePath):
         # no content. Follow a single server redirection to retrieve the
         # final URL.
         headers = {"Content-Length": "0"}
-        if _SEND_EXPECT_HEADER_ON_PUT:
+        if self._config.send_expect_on_put:
             headers["Expect"] = "100-continue"
 
         url = self.geturl()
@@ -1096,7 +1207,7 @@ class HttpResourcePath(ResourcePath):
                     data=None,
                     headers=headers,
                     stream=False,
-                    timeout=TIMEOUT,
+                    timeout=self._config.timeout,
                     allow_redirects=False,
                 )
                 if resp.is_redirect:
@@ -1105,29 +1216,30 @@ class HttpResourcePath(ResourcePath):
             # Upload the data to the final destination.
             log.debug("Uploading data to %s", url)
 
-            # Ask the server to compute and record a SHA-512 (or a MD5 or
-            # ADLER32) checksum of the uploaded file contents, for later
-            # integrity checks. Since we don't compute the digest ourselves
-            # while uploading the data, we cannot control after the request is
-            # complete that the data we uploaded is identical to the data
-            # recorded by the server, but at least the server has recorded
-            # a digest of the data it stored.
+            # Ask the server to compute and record a checksum of the uploaded
+            # file contents, for later integrity checks. Since we don't compute
+            # the digest ourselves while uploading the data, we cannot control
+            # after the request is complete that the data we uploaded is
+            # identical to the data recorded by the server, but at least the
+            # server has recorded a digest of the data it stored.
             #
             # See RFC-3230 for details and
             # https://www.iana.org/assignments/http-dig-alg/http-dig-alg.xhtml
             # for the list of supported digest algorithhms.
             # In addition, note that not all servers implement this RFC so
             # the checksum may not be computed by the server.
-            headers = {"Want-Digest": "adler32;q=0.1,md5;q=0.2,sha-512"}
+            put_headers: Optional[dict[str, str]] = None
+            if digest := self._config.digest_algorithm:
+                put_headers = {"Want-Digest": digest}
 
             with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
                 resp = session.request(
                     "PUT",
                     url,
                     data=data,
-                    headers=headers,
+                    headers=put_headers,
                     stream=False,
-                    timeout=TIMEOUT,
+                    timeout=self._config.timeout,
                     allow_redirects=False,
                 )
                 if resp.status_code in (
@@ -1151,7 +1263,7 @@ class HttpResourcePath(ResourcePath):
         handle: ResourceHandleProtocol
         if mode in ("rb", "r") and accepts_range:
             handle = HttpReadResourceHandle(
-                mode, log, url=self.geturl(), session=self.data_session, timeout=TIMEOUT
+                mode, log, url=self.geturl(), session=self.data_session, timeout=self._config.timeout
             )
             if mode == "r":
                 # cast because the protocol is compatible, but does not have
