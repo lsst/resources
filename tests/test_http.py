@@ -36,7 +36,13 @@ import requests
 import responses
 from lsst.resources import ResourcePath
 from lsst.resources._resourceHandles._httpResourceHandle import HttpReadResourceHandle
-from lsst.resources.http import BearerTokenAuth, SessionStore, _is_protected, _is_webdav_endpoint
+from lsst.resources.http import (
+    BearerTokenAuth,
+    HttpResourcePathConfig,
+    SessionStore,
+    _is_protected,
+    _is_webdav_endpoint,
+)
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
@@ -497,12 +503,12 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # inspected to initialize the HttpResourcePath config class.
         os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
         importlib.reload(lsst.resources.http)
-        config = lsst.resources.http.HttpResourcePathConfig()
+        config = HttpResourcePathConfig()
         self.assertFalse(config.send_expect_on_put)
 
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "true"}, clear=True):
             importlib.reload(lsst.resources.http)
-            config = lsst.resources.http.HttpResourcePathConfig()
+            config = HttpResourcePathConfig()
             self.assertTrue(config.send_expect_on_put)
 
     def test_timeout(self):
@@ -511,7 +517,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         os.environ.pop("LSST_HTTP_TIMEOUT_CONNECT", None)
         os.environ.pop("LSST_HTTP_TIMEOUT_READ", None)
         importlib.reload(lsst.resources.http)
-        config = lsst.resources.http.HttpResourcePathConfig()
+        config = HttpResourcePathConfig()
         self.assertEqual(
             config.timeout,
             (lsst.resources.http.DEFAULT_TIMEOUT_CONNECT, lsst.resources.http.DEFAULT_TIMEOUT_READ),
@@ -527,7 +533,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         ):
             # Force module reload.
             importlib.reload(lsst.resources.http)
-            config = lsst.resources.http.HttpResourcePathConfig()
+            config = HttpResourcePathConfig()
             self.assertEqual(config.timeout, (connect_timeout, read_timeout))
 
     def test_front_end_connections(self):
@@ -535,7 +541,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # the default is stored in the config.
         os.environ.pop("LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", None)
         importlib.reload(lsst.resources.http)
-        config = lsst.resources.http.HttpResourcePathConfig()
+        config = HttpResourcePathConfig()
         self.assertEqual(
             config.front_end_connections, int(lsst.resources.http.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
         )
@@ -547,7 +553,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             os.environ, {"LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
         ):
             importlib.reload(lsst.resources.http)
-            config = lsst.resources.http.HttpResourcePathConfig()
+            config = HttpResourcePathConfig()
             self.assertTrue(config.front_end_connections, connections)
 
     def test_back_end_connections(self):
@@ -555,7 +561,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # the default is stored in the config.
         os.environ.pop("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", None)
         importlib.reload(lsst.resources.http)
-        config = lsst.resources.http.HttpResourcePathConfig()
+        config = HttpResourcePathConfig()
         self.assertEqual(
             config.back_end_connections, int(lsst.resources.http.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
         )
@@ -567,7 +573,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             os.environ, {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
         ):
             importlib.reload(lsst.resources.http)
-            config = lsst.resources.http.HttpResourcePathConfig()
+            config = HttpResourcePathConfig()
             self.assertTrue(config.back_end_connections, connections)
 
     def test_digest_algorithm(self):
@@ -575,21 +581,21 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # configured digest algorithm is the empty string.
         os.environ.pop("LSST_HTTP_DIGEST", None)
         importlib.reload(lsst.resources.http)
-        config = lsst.resources.http.HttpResourcePathConfig()
+        config = HttpResourcePathConfig()
         self.assertEqual(config.digest_algorithm, "")
 
         # Ensure that an invalid digest algorithm is ignored.
         digest = "invalid"
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
             importlib.reload(lsst.resources.http)
-            config = lsst.resources.http.HttpResourcePathConfig()
+            config = HttpResourcePathConfig()
             self.assertEqual(config.digest_algorithm, "")
 
         # Ensure that an accepted digest algorithm is stored.
         for digest in lsst.resources.http.ACCEPTED_DIGESTS:
             with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
                 importlib.reload(lsst.resources.http)
-                config = lsst.resources.http.HttpResourcePathConfig()
+                config = HttpResourcePathConfig()
                 self.assertTrue(config.digest_algorithm, digest)
 
 
