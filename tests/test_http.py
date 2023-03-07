@@ -245,6 +245,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         local_path, is_temp = remote_file._as_local()
         self.assertTrue(is_temp)
         self.assertTrue(os.path.exists(local_path))
+        self.assertTrue(os.stat(local_path).st_size, len(contents))
         self.assertEqual(ResourcePath(local_path).read(), contents)
         os.remove(local_path)
 

@@ -890,19 +890,30 @@ class HttpResourcePath(ResourcePath):
                     f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
                 )
 
+            content_length = 0
+            expected_length = int(resp.headers.get("Content-Length", "-1"))
             tmpdir, buffering = _get_temp_dir()
+
             with tempfile.NamedTemporaryFile(
                 suffix=self.getExtension(), buffering=buffering, dir=tmpdir, delete=False
             ) as tmpFile:
                 with time_this(
                     log,
-                    msg="GET %s [length=%s] to local file %s [chunk_size=%d]",
-                    args=(self, resp.headers.get("Content-Length"), tmpFile.name, buffering),
+                    msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
+                    args=(self, expected_length, tmpFile.name, buffering),
                     mem_usage=True,
                     mem_unit=u.mebibyte,
                 ):
                     for chunk in resp.iter_content(chunk_size=buffering):
                         tmpFile.write(chunk)
+                        content_length += len(chunk)
+
+            # Check that the expected and actual content lengths match
+            if expected_length >= 0 and expected_length != content_length:
+                raise ValueError(
+                    f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                    f"expecting {expected_length} and got {content_length} bytes"
+                )
 
             return tmpFile.name, True
 
