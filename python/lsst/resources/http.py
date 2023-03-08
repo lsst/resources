@@ -44,8 +44,8 @@ log = logging.getLogger(__name__)
 
 
 # Default timeouts for all HTTP requests, in seconds.
-DEFAULT_TIMEOUT_CONNECT = 60
-DEFAULT_TIMEOUT_READ = 300
+DEFAULT_TIMEOUT_CONNECT = 300
+DEFAULT_TIMEOUT_READ = 1500
 
 # Default number of connections to persist with both the front end and back end
 # servers.
@@ -364,7 +364,7 @@ class SessionStore:
             read=3,
             # Backoff factor to apply between attempts after the second try
             # (seconds)
-            backoff_factor=5.0 + random.random(),
+            backoff_factor=30 * (1 + random.random()),
             # How many times to retry on bad status codes.
             status=5,
             # Set of uppercased HTTP method verbs that we should retry on.
