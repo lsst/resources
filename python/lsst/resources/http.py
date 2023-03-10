@@ -199,10 +199,10 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
 
 # Tuple (path, block_size) pointing to the location of a local directory
 # to save temporary files and the block size of the underlying file system.
-_TMPDIR: Optional[Tuple[str, int]] = None
+_TMPDIR: Optional[tuple[str, int]] = None
 
 
-def _get_temp_dir() -> Tuple[str, int]:
+def _get_temp_dir() -> tuple[str, int]:
     """Return the temporary directory path and block size.
 
     This function caches its results in _TMPDIR.
@@ -277,22 +277,19 @@ class SessionStore:
     """Cache a reusable HTTP client session per endpoint."""
 
     def __init__(self, num_pools: int = 10, max_persistent_connections: int = 1) -> None:
+        # Dictionary to store the session associated to a given URI. The key
+        # of the dictionary is a root URI and the value is the session.
         self._sessions: dict[str, requests.Session] = {}
-        """Dictionary to store the session associated to a given URI. The key
-        of the dictionary is a root URI and the value is the session.
-        """
 
+        # Number of connection pools to keep: there is one pool per remote
+        # host. See documentation of urllib3 PoolManager class:
+        # https://urllib3.readthedocs.io
         self._num_pools = num_pools
-        """Number of connection pools to keep: there is one pool per remote
-        host. See documentation of urllib3 PoolManager class:
-        https://urllib3.readthedocs.io
-        """
 
+        # Maximum number of connections per remote host to persist in each
+        # connection pool. See urllib3 Advanced Usage documentation:
+        # https://urllib3.readthedocs.io/en/stable/advanced-usage.html
         self._max_persistent_connections = max_persistent_connections
-        """Maximum number of connections per remote host to persist in each
-        connection pool. See urllib3 Advance Usage documentation:
-        https://urllib3.readthedocs.io/en/stable/advanced-usage.html
-        """
 
     def clear(self) -> None:
         """Destroy all previously created sessions and attempt to close
@@ -303,8 +300,8 @@ class SessionStore:
         # should be closed as a consequence. We don't have means through
         # the API exposed by Requests to actually force closing the
         # underlying open sockets.
-        for s in self._sessions.values():
-            s.close()
+        for session in self._sessions.values():
+            session.close()
 
         self._sessions.clear()
 
@@ -932,7 +929,7 @@ class HttpResourcePath(ResourcePath):
         headers: dict[str, str] = {},
         body: Optional[str] = None,
         session: Optional[requests.Session] = None,
-        timeout: Optional[Tuple[int, int]] = None,
+        timeout: Optional[tuple[int, int]] = None,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
