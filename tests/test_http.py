@@ -69,7 +69,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # keep network connections to the remote server open and have no
         # means through the API exposed by Requests of actually close the
         # underlyng sockets to make tests pass without warning.
-        warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWarning)
+        warnings.filterwarnings(action="ignore", message=r"unclosed.*socket", category=ResourceWarning)
 
         # Should we test against a running server?
         #
@@ -124,6 +124,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Remove temp dir
         if cls.webdav_tmpdir:
             shutil.rmtree(cls.webdav_tmpdir, ignore_errors=True)
+
+        # Reset the warnings filter.
+        warnings.resetwarnings()
 
     def tearDown(self):
         if self.tmpdir:
