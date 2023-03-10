@@ -44,21 +44,108 @@ log = logging.getLogger(__name__)
 
 
 # Default timeouts for all HTTP requests, in seconds.
-DEFAULT_TIMEOUT_CONNECT = 60
-DEFAULT_TIMEOUT_READ = 300
+DEFAULT_TIMEOUT_CONNECT = 300
+DEFAULT_TIMEOUT_READ = 1500
 
-# Allow for network timeouts to be set in the environment.
-TIMEOUT = (
-    int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", DEFAULT_TIMEOUT_CONNECT)),
-    int(os.environ.get("LSST_HTTP_TIMEOUT_READ", DEFAULT_TIMEOUT_READ)),
-)
+# Default number of connections to persist with both the front end and back end
+# servers.
+DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS = "2"
+DEFAULT_BACKEND_PERSISTENT_CONNECTIONS = "1"
 
-# Should we send a "Expect: 100-continue" header on PUT requests?
-# The "Expect: 100-continue" header is used by some servers (e.g. dCache)
-# as an indication that the client knows how to handle redirects to
-# the specific server that will actually receive the data for PUT
-# requests.
-_SEND_EXPECT_HEADER_ON_PUT = "LSST_HTTP_PUT_SEND_EXPECT_HEADER" in os.environ
+# Accepted digest algorithms
+ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
+
+
+class HttpResourcePathConfig:
+    """Configuration class to encapsulate the configurable items used by class
+    HttpResourcePath.
+    """
+
+    _front_end_connections: Optional[int] = None
+    _back_end_connections: Optional[int] = None
+    _digest_algorithm: Optional[str] = None
+    _send_expect_on_put: Optional[bool] = None
+    _timeout: Optional[tuple[int, int]] = None
+
+    @property
+    def front_end_connections(self) -> int:
+        """Number of persistent connections to the front end server."""
+
+        if self._front_end_connections is not None:
+            return self._front_end_connections
+
+        self._front_end_connections = int(
+            os.environ.get(
+                "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+            )
+        )
+        return self._front_end_connections
+
+    @property
+    def back_end_connections(self) -> int:
+        """Number of persistent connections to the back end servers."""
+
+        if self._back_end_connections is not None:
+            return self._back_end_connections
+
+        self._back_end_connections = int(
+            os.environ.get("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
+        )
+        return self._back_end_connections
+
+    @property
+    def digest_algorithm(self) -> str:
+        """Algorithm to ask the server to use for computing and recording
+        digests of each file contents in PUT requests.
+
+        Returns
+        -------
+        digest_algorithm: `str`
+            The name of a digest algorithm or the empty string if no algotihm
+            is configured.
+        """
+
+        if self._digest_algorithm is not None:
+            return self._digest_algorithm
+
+        digest = os.environ.get("LSST_HTTP_DIGEST", "").lower()
+        if digest not in ACCEPTED_DIGESTS:
+            digest = ""
+
+        self._digest_algorithm = digest
+        return self._digest_algorithm
+
+    @property
+    def send_expect_on_put(self) -> bool:
+        """Return True if a "Expect: 100-continue" header is to be sent to
+        the server on each PUT request.
+
+        Some servers (e.g. dCache) uses this information as an indication that
+        the client knows how to handle redirects to the specific server that
+        will actually receive the data for PUT requests.
+        """
+
+        if self._send_expect_on_put is not None:
+            return self._send_expect_on_put
+
+        self._send_expect_on_put = "LSST_HTTP_PUT_SEND_EXPECT_HEADER" in os.environ
+        return self._send_expect_on_put
+
+    @property
+    def timeout(self) -> tuple[int, int]:
+        """Return a tuple with the values of timeouts for connecting to the
+        server and reading its response, respectively. Both values are in
+        seconds.
+        """
+
+        if self._timeout is not None:
+            return self._timeout
+
+        self._timeout = (
+            int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", DEFAULT_TIMEOUT_CONNECT)),
+            int(os.environ.get("LSST_HTTP_TIMEOUT_READ", DEFAULT_TIMEOUT_READ)),
+        )
+        return self._timeout
 
 
 @functools.lru_cache
@@ -81,7 +168,7 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
     try:
         ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
         verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
-        resp = requests.options(str(path), verify=verify, stream=True)
+        resp = requests.options(str(path), verify=verify, stream=False)
 
         # Check that "1" is part of the value of the "DAV" header. We don't
         # use locks, so a server complying to class 1 is enough for our
@@ -112,10 +199,10 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
 
 # Tuple (path, block_size) pointing to the location of a local directory
 # to save temporary files and the block size of the underlying file system.
-_TMPDIR: Optional[Tuple[str, int]] = None
+_TMPDIR: Optional[tuple[str, int]] = None
 
 
-def _get_temp_dir() -> Tuple[str, int]:
+def _get_temp_dir() -> tuple[str, int]:
     """Return the temporary directory path and block size.
 
     This function caches its results in _TMPDIR.
@@ -187,14 +274,38 @@ class BearerTokenAuth(AuthBase):
 
 
 class SessionStore:
-    """Cache a single reusable HTTP client session per enpoint."""
+    """Cache a reusable HTTP client session per endpoint."""
 
-    def __init__(self) -> None:
-        # The key of the dictionary is a root URI and the value is the
-        # session
+    def __init__(self, num_pools: int = 10, max_persistent_connections: int = 1) -> None:
+        # Dictionary to store the session associated to a given URI. The key
+        # of the dictionary is a root URI and the value is the session.
         self._sessions: dict[str, requests.Session] = {}
 
-    def get(self, rpath: ResourcePath, persist: bool = True) -> requests.Session:
+        # Number of connection pools to keep: there is one pool per remote
+        # host. See documentation of urllib3 PoolManager class:
+        # https://urllib3.readthedocs.io
+        self._num_pools = num_pools
+
+        # Maximum number of connections per remote host to persist in each
+        # connection pool. See urllib3 Advanced Usage documentation:
+        # https://urllib3.readthedocs.io/en/stable/advanced-usage.html
+        self._max_persistent_connections = max_persistent_connections
+
+    def clear(self) -> None:
+        """Destroy all previously created sessions and attempt to close
+        underlying idle network connections.
+        """
+
+        # Close all sessions and empty the store. Idle network connections
+        # should be closed as a consequence. We don't have means through
+        # the API exposed by Requests to actually force closing the
+        # underlying open sockets.
+        for session in self._sessions.values():
+            session.close()
+
+        self._sessions.clear()
+
+    def get(self, rpath: ResourcePath) -> requests.Session:
         """Retrieve a session for accessing the remote resource at rpath.
 
         Parameters
@@ -202,11 +313,6 @@ class SessionStore:
         rpath : `ResourcePath`
             URL to a resource at the remote server for which a session is to
             be retrieved.
-
-        persist : `bool`
-            if `True`, make the network connection with the front end server
-            of the endpoint  persistent. Connections to the backend servers
-            are persisted.
 
         Notes
         -----
@@ -242,59 +348,87 @@ class SessionStore:
         """
         root_uri = str(rpath.root_uri())
         if root_uri not in self._sessions:
-            # We don't have yet a session for this endpoint: create a new one
-            self._sessions[root_uri] = self._make_session(rpath, persist)
+            # We don't have yet a session for this endpoint: create a new one.
+            self._sessions[root_uri] = self._make_session(rpath)
+
         return self._sessions[root_uri]
 
-    def _make_session(self, rpath: ResourcePath, persist: bool) -> requests.Session:
+    def _make_session(self, rpath: ResourcePath) -> requests.Session:
         """Make a new session configured from values from the environment."""
         session = requests.Session()
         root_uri = str(rpath.root_uri())
-        log.debug("Creating new HTTP session for endpoint %s (persist connection=%s)...", root_uri, persist)
+        log.debug("Creating new HTTP session for endpoint %s ...", root_uri)
 
         retries = Retry(
             # Total number of retries to allow. Takes precedence over other
             # counts.
-            total=3,
+            total=6,
             # How many connection-related errors to retry on.
             connect=3,
             # How many times to retry on read errors.
             read=3,
             # Backoff factor to apply between attempts after the second try
             # (seconds)
-            backoff_factor=5.0 + random.random(),
-            # How many times to retry on bad status codes
-            status=3,
-            # HTTP status codes that we should force a retry on
-            status_forcelist=[
-                requests.codes.too_many_requests,  # 429
-                requests.codes.internal_server_error,  # 500
-                requests.codes.bad_gateway,  # 502
-                requests.codes.service_unavailable,  # 503
-                requests.codes.gateway_timeout,  # 504
-            ],
+            backoff_factor=30 * (1 + random.random()),
+            # How many times to retry on bad status codes.
+            status=5,
+            # Set of uppercased HTTP method verbs that we should retry on.
+            # We only automatically retry idempotent requests.
+            allowed_methods=frozenset(
+                [
+                    "COPY",
+                    "DELETE",
+                    "GET",
+                    "HEAD",
+                    "MKCOL",
+                    "OPTIONS",
+                    "PROPFIND",
+                    "PUT",
+                ]
+            ),
+            # HTTP status codes that we should force a retry on.
+            status_forcelist=frozenset(
+                [
+                    requests.codes.too_many_requests,  # 429
+                    requests.codes.internal_server_error,  # 500
+                    requests.codes.bad_gateway,  # 502
+                    requests.codes.service_unavailable,  # 503
+                    requests.codes.gateway_timeout,  # 504
+                ]
+            ),
+            # Whether to respect Retry-After header on status codes defined
+            # above.
+            respect_retry_after_header=True,
         )
 
-        # Persist a single connection to the front end server, if required
-        num_connections = 1 if persist else 0
+        # Persist the specified number of connections to the front end server.
         session.mount(
             root_uri,
             HTTPAdapter(
-                pool_connections=1, pool_maxsize=num_connections, pool_block=False, max_retries=retries
+                pool_connections=self._num_pools,
+                pool_maxsize=self._max_persistent_connections,
+                pool_block=False,
+                max_retries=retries,
             ),
         )
 
-        # Prevent persisting connections to back-end servers which may vary
+        # Do not persist the connections to back end servers which may vary
         # from request to request. Systematically persisting connections to
         # those servers may exhaust their capabilities when there are thousands
-        # of simultaneous clients
+        # of simultaneous clients.
         session.mount(
             f"{rpath.scheme}://",
-            HTTPAdapter(pool_connections=1, pool_maxsize=0, pool_block=False, max_retries=retries),
+            HTTPAdapter(
+                pool_connections=self._num_pools,
+                pool_maxsize=0,
+                pool_block=False,
+                max_retries=retries,
+            ),
         )
 
-        # If the remote endpoint don't use secure HTTP we dont include bearer
-        # tokens in the requests nor need to authenticate the remove server.
+        # If the remote endpoint doesn't use secure HTTP we don't include
+        # bearer tokens in the requests nor need to authenticate the remote
+        # server.
         if rpath.scheme != "https":
             return session
 
@@ -348,8 +482,8 @@ class HttpResourcePath(ResourcePath):
 
     Notes
     -----
-    In order to configure the behavior of the object, one environment variable
-    is inspected:
+    In order to configure the behavior of instances of this class, the
+    environment variables below are inspected:
 
     - LSST_HTTP_PUT_SEND_EXPECT_HEADER: if set (with any value), a
         "Expect: 100-Continue" header will be added to all HTTP PUT requests.
@@ -357,38 +491,100 @@ class HttpResourcePath(ResourcePath):
         knows how to handle redirections. In case of redirection, the body
         of the PUT request is sent to the redirected location and not to
         the front end server.
+
+    - LSST_HTTP_TIMEOUT_CONNECT and LSST_HTTP_TIMEOUT_READ: if set to a
+        numeric value, they are interpreted as the number of seconds to wait
+        for establishing a connection with the server and for reading its
+        response, respectively.
+
+    - LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS and
+        LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS: contain the maximum number
+        of connections to attempt to persist with both the front end servers
+        and the back end servers.
+        Default values: DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS and
+        DEFAULT_BACKEND_PERSISTENT_CONNECTIONS.
+
+    - LSST_HTTP_DIGEST: case-insensitive name of the digest algorithm to
+        ask the server to compute for every file's content sent to the server
+        via a PUT request. No digest is requested if this variable is not set
+        or is set to an invalid value.
+        Valid values are those in ACCEPTED_DIGESTS.
     """
 
     _is_webdav: Optional[bool] = None
-    _sessions_store = SessionStore()
-    _put_sessions_store = SessionStore()
 
-    # Use a session exclusively for PUT requests and another session for
-    # all other requests. PUT requests may be redirected and in that case
-    # the server may close the persisted connection. If that is the case
-    # only the connection persisted for PUT requests will be closed and
-    # the other persisted connection will be kept alive and reused for
-    # other requests.
+    # Configuration items for this class instances.
+    _config = HttpResourcePathConfig()
+
+    # The session for metadata requests is used for interacting with
+    # the front end servers for requests such as PROPFIND, HEAD, etc. Those
+    # interactions are typically served by the front end servers. We want to
+    # keep the connection to the front end servers open, to reduce the cost
+    # associated to TCP and TLS handshaking for each new request.
+    _metadata_session_store = SessionStore(
+        num_pools=5,
+        max_persistent_connections=_config.front_end_connections,
+    )
+
+    # The data session is used for interaction with the front end servers which
+    # typically redirect to the back end servers for serving our PUT and GET
+    # requests. We attempt to keep a single connection open with the front end
+    # server, if possible. This depends on how the server behaves and the
+    # kind of request. Some servers close the connection when redirecting
+    # the client to a back end server, for instance when serving a PUT
+    # request.
+    _data_session_store = SessionStore(
+        num_pools=25,
+        max_persistent_connections=_config.back_end_connections,
+    )
+
+    # Process ID which created the sessions above. We need to store this
+    # to replace sessions created by a parent process and inherited by a
+    # child process after a fork, to avoid confusing the SSL layer.
+    _pid: int = -1
 
     @property
-    def session(self) -> requests.Session:
-        """Client session to address remote resource for all HTTP methods but
-        PUT.
+    def metadata_session(self) -> requests.Session:
+        """Client session to send requests which do not require upload or
+        download of data, i.e. mostly metadata requests.
         """
-        if hasattr(self, "_session"):
-            return self._session
 
-        self._session: requests.Session = self._sessions_store.get(self)
-        return self._session
+        if hasattr(self, "_metadata_session") and self._pid == os.getpid():
+            return self._metadata_session
+
+        # Reset the store in case it was created by another process and
+        # retrieve a session.
+        self._metadata_session_store.clear()
+        self._pid = os.getpid()
+        self._metadata_session: requests.Session = self._metadata_session_store.get(self)
+        return self._metadata_session
 
     @property
-    def put_session(self) -> requests.Session:
-        """Client session for uploading data to the remote resource."""
-        if hasattr(self, "_put_session"):
-            return self._put_session
+    def data_session(self) -> requests.Session:
+        """Client session for uploading and downloading data."""
 
-        self._put_session: requests.Session = self._put_sessions_store.get(self)
-        return self._put_session
+        if hasattr(self, "_data_session") and self._pid == os.getpid():
+            return self._data_session
+
+        # Reset the store in case it was created by another process and
+        # retrieve a session.
+        self._data_session_store.clear()
+        self._pid = os.getpid()
+        self._data_session: requests.Session = self._data_session_store.get(self)
+        return self._data_session
+
+    def _clear_sessions(self) -> None:
+        """Internal method to close the socket connections still open. Used
+        only in test suites to avoid warnings.
+        """
+        self._metadata_session_store.clear()
+        self._data_session_store.clear()
+
+        if hasattr(self, "_metadata_session"):
+            delattr(self, "_metadata_session")
+
+        if hasattr(self, "_data_session"):
+            delattr(self, "_data_session")
 
     @property
     def is_webdav_endpoint(self) -> bool:
@@ -411,7 +607,9 @@ class HttpResourcePath(ResourcePath):
             # request, even if the behavior for such a request against a
             # directory is not specified, so it depends on the server
             # implementation.
-            resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=True)
+            resp = self.metadata_session.head(
+                self.geturl(), timeout=self._config.timeout, allow_redirects=True, stream=False
+            )
             return resp.status_code == requests.codes.ok  # 200
 
         # The remote endpoint is a webDAV server: send a PROPFIND request
@@ -431,7 +629,9 @@ class HttpResourcePath(ResourcePath):
         if not self.is_webdav_endpoint:
             # The remote is a plain HTTP server. Send a HEAD request to
             # retrieve the size of the resource.
-            resp = self.session.head(self.geturl(), timeout=TIMEOUT, allow_redirects=True, stream=True)
+            resp = self.metadata_session.head(
+                self.geturl(), timeout=self._config.timeout, allow_redirects=True, stream=False
+            )
             if resp.status_code == requests.codes.ok:  # 200
                 if "Content-Length" in resp.headers:
                     return int(resp.headers["Content-Length"])
@@ -469,7 +669,7 @@ class HttpResourcePath(ResourcePath):
 
     def mkdir(self) -> None:
         """Create the directory resource if it does not already exist."""
-        # Creating directories is only available on WebDAV backends.
+        # Creating directories is only available on WebDAV back ends.
         if not self.is_webdav_endpoint:
             raise NotImplementedError(
                 f"Creation of directory {self} is not implemented by plain HTTP servers"
@@ -514,19 +714,24 @@ class HttpResourcePath(ResourcePath):
             The number of bytes to read. Negative or omitted indicates
             that all data should be read.
         """
+
+        # Use the data session as a context manager to ensure that the
+        # network connections to both the front end and back end servers are
+        # closed after downloading the data.
         log.debug("Reading from remote resource: %s", self.geturl())
         stream = True if size > 0 else False
-        with time_this(log, msg="GET %s", args=(self,)):
-            resp = self.session.get(self.geturl(), stream=stream, timeout=TIMEOUT)
+        with self.data_session as session:
+            with time_this(log, msg="GET %s", args=(self,)):
+                resp = session.get(self.geturl(), stream=stream, timeout=self._config.timeout)
 
-        if resp.status_code != requests.codes.ok:  # 200
-            raise FileNotFoundError(
-                f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
-            )
-        if not stream:
-            return resp.content
-        else:
-            return next(resp.iter_content(chunk_size=size))
+            if resp.status_code != requests.codes.ok:  # 200
+                raise FileNotFoundError(
+                    f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
+                )
+            if not stream:
+                return resp.content
+            else:
+                return next(resp.iter_content(chunk_size=size))
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
         """Write the supplied bytes to the new resource.
@@ -637,7 +842,7 @@ class HttpResourcePath(ResourcePath):
         if not self.dirLike:
             raise ValueError("Can not walk a non-directory URI")
 
-        # Walking directories is only available on WebDAV backends.
+        # Walking directories is only available on WebDAV back ends.
         if not self.is_webdav_endpoint:
             raise NotImplementedError(f"Walking directory {self} is not implemented by plain HTTP servers")
 
@@ -679,30 +884,52 @@ class HttpResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-        resp = self.session.get(self.geturl(), stream=True, timeout=TIMEOUT)
-        if resp.status_code != requests.codes.ok:
-            raise FileNotFoundError(
-                f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
-            )
 
-        tmpdir, buffering = _get_temp_dir()
-        with tempfile.NamedTemporaryFile(
-            suffix=self.getExtension(), buffering=buffering, dir=tmpdir, delete=False
-        ) as tmpFile:
-            with time_this(
-                log,
-                msg="GET %s [length=%s] to local file %s [chunk_size=%d]",
-                args=(self, resp.headers.get("Content-Length"), tmpFile.name, buffering),
-                mem_usage=True,
-                mem_unit=u.mebibyte,
-            ):
-                for chunk in resp.iter_content(chunk_size=buffering):
-                    tmpFile.write(chunk)
+        # Use the session as a context manager to ensure that connections
+        # to both the front end and back end servers are closed after the
+        # download operation is finished.
+        with self.data_session as session:
+            resp = session.get(self.geturl(), stream=True, timeout=self._config.timeout)
+            if resp.status_code != requests.codes.ok:
+                raise FileNotFoundError(
+                    f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
+                )
 
-        return tmpFile.name, True
+            content_length = 0
+            expected_length = int(resp.headers.get("Content-Length", "-1"))
+            tmpdir, buffering = _get_temp_dir()
+
+            with tempfile.NamedTemporaryFile(
+                suffix=self.getExtension(), buffering=buffering, dir=tmpdir, delete=False
+            ) as tmpFile:
+                with time_this(
+                    log,
+                    msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
+                    args=(self, expected_length, tmpFile.name, buffering),
+                    mem_usage=True,
+                    mem_unit=u.mebibyte,
+                ):
+                    for chunk in resp.iter_content(chunk_size=buffering):
+                        tmpFile.write(chunk)
+                        content_length += len(chunk)
+
+            # Check that the expected and actual content lengths match
+            if expected_length >= 0 and expected_length != content_length:
+                raise ValueError(
+                    f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                    f"expecting {expected_length} and got {content_length} bytes"
+                )
+
+            return tmpFile.name, True
 
     def _send_webdav_request(
-        self, method: str, url: Optional[str] = None, headers: dict[str, str] = {}, body: Optional[str] = None
+        self,
+        method: str,
+        url: Optional[str] = None,
+        headers: dict[str, str] = {},
+        body: Optional[str] = None,
+        session: Optional[requests.Session] = None,
+        timeout: Optional[tuple[int, int]] = None,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
@@ -742,6 +969,12 @@ class HttpResourcePath(ResourcePath):
         if url is None:
             url = self.geturl()
 
+        if session is None:
+            session = self.metadata_session
+
+        if timeout is None:
+            timeout = self._config.timeout
+
         with time_this(
             log,
             msg="%s %s",
@@ -753,13 +986,13 @@ class HttpResourcePath(ResourcePath):
             mem_unit=u.mebibyte,
         ):
             for _ in range(max_redirects := 5):
-                resp = self.session.request(
+                resp = session.request(
                     method,
                     url,
                     data=body,
                     headers=headers,
-                    stream=True,
-                    timeout=TIMEOUT,
+                    stream=False,
+                    timeout=timeout,
                     allow_redirects=False,
                 )
                 if resp.is_redirect:
@@ -767,9 +1000,11 @@ class HttpResourcePath(ResourcePath):
                 else:
                     return resp
 
-            # We reached the maximum allowed number of redirects. Stop trying.
+            # We reached the maximum allowed number of redirects.
+            # Stop trying.
             raise ValueError(
-                f"Could not get a response to {method} request for {self} after {max_redirects} redirections"
+                f"Could not get a response to {method} request for {self} after "
+                f"{max_redirects} redirections"
             )
 
     def _propfind(self, body: Optional[str] = None, depth: str = "0") -> requests.Response:
@@ -854,13 +1089,24 @@ class HttpResourcePath(ResourcePath):
                 f"Deletion of directory {self} is not implemented by plain HTTP servers"
             )
 
-        resp = self._send_webdav_request("DELETE")
-        if resp.status_code in (requests.codes.ok, requests.codes.accepted, requests.codes.no_content):
+        # Deleting non-empty directories may take some time, so increase
+        # the timeout for getting a response from the server.
+        timeout = self._config.timeout
+        if self.dirLike:
+            timeout = (timeout[0], timeout[1] * 100)
+        resp = self._send_webdav_request("DELETE", timeout=timeout)
+        if resp.status_code in (
+            requests.codes.ok,
+            requests.codes.accepted,
+            requests.codes.no_content,
+            requests.codes.not_found,
+        ):
+            # We can get a "404 Not Found" error when the file or directory
+            # does not exist or when the DELETE request was retried several
+            # times and a previous attempt actually deleted the resource.
+            # Therefore we consider that a "Not Found" response is not an
+            # error since we reached the state desired by the user.
             return
-        elif resp.status_code == requests.codes.not_found:
-            raise FileNotFoundError(
-                f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
-            )
         else:
             # TODO: the response to a DELETE request against a webDAV server
             # may be multistatus. If so, we need to parse the reponse body to
@@ -897,7 +1143,7 @@ class HttpResourcePath(ResourcePath):
             The source of the contents to move to `self`.
         """
         headers = {"Destination": self.geturl()}
-        resp = self._send_webdav_request(method, url=src.geturl(), headers=headers)
+        resp = self._send_webdav_request(method, url=src.geturl(), headers=headers, session=self.data_session)
         if resp.status_code in (requests.codes.created, requests.codes.no_content):
             return
 
@@ -959,25 +1205,67 @@ class HttpResourcePath(ResourcePath):
         # no content. Follow a single server redirection to retrieve the
         # final URL.
         headers = {"Content-Length": "0"}
-        if _SEND_EXPECT_HEADER_ON_PUT:
+        if self._config.send_expect_on_put:
             headers["Expect"] = "100-continue"
 
         url = self.geturl()
 
-        log.debug("Sending empty PUT request to %s", url)
-        with time_this(log, msg="PUT (no data) %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
-            resp = self.session.request(
-                "PUT", url, data=None, headers=headers, stream=True, timeout=TIMEOUT, allow_redirects=False
-            )
-            if resp.is_redirect:
-                url = resp.headers["Location"]
+        # Use the session as a context manager to ensure the underlying
+        # connections are closed after finishing uploading the data.
+        with self.data_session as session:
+            # Send an empty PUT request to get redirected to the final
+            # destination.
+            log.debug("Sending empty PUT request to %s", url)
+            with time_this(log, msg="PUT (no data) %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+                resp = session.request(
+                    "PUT",
+                    url,
+                    data=None,
+                    headers=headers,
+                    stream=False,
+                    timeout=self._config.timeout,
+                    allow_redirects=False,
+                )
+                if resp.is_redirect:
+                    url = resp.headers["Location"]
 
-        # Upload the data to the final destination using the PUT session
-        log.debug("Uploading data to %s", url)
-        with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
-            resp = self.put_session.put(url, data=data, stream=True, timeout=TIMEOUT, allow_redirects=False)
-            if resp.status_code not in (requests.codes.ok, requests.codes.created, requests.codes.no_content):
-                raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
+            # Upload the data to the final destination.
+            log.debug("Uploading data to %s", url)
+
+            # Ask the server to compute and record a checksum of the uploaded
+            # file contents, for later integrity checks. Since we don't compute
+            # the digest ourselves while uploading the data, we cannot control
+            # after the request is complete that the data we uploaded is
+            # identical to the data recorded by the server, but at least the
+            # server has recorded a digest of the data it stored.
+            #
+            # See RFC-3230 for details and
+            # https://www.iana.org/assignments/http-dig-alg/http-dig-alg.xhtml
+            # for the list of supported digest algorithhms.
+            # In addition, note that not all servers implement this RFC so
+            # the checksum may not be computed by the server.
+            put_headers: Optional[dict[str, str]] = None
+            if digest := self._config.digest_algorithm:
+                put_headers = {"Want-Digest": digest}
+
+            with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+                resp = session.request(
+                    "PUT",
+                    url,
+                    data=data,
+                    headers=put_headers,
+                    stream=False,
+                    timeout=self._config.timeout,
+                    allow_redirects=False,
+                )
+                if resp.status_code in (
+                    requests.codes.ok,
+                    requests.codes.created,
+                    requests.codes.no_content,
+                ):
+                    return
+                else:
+                    raise ValueError(f"Can not write file {self}, status: {resp.status_code} {resp.reason}")
 
     @contextlib.contextmanager
     def _openImpl(
@@ -991,7 +1279,7 @@ class HttpResourcePath(ResourcePath):
         handle: ResourceHandleProtocol
         if mode in ("rb", "r") and accepts_range:
             handle = HttpReadResourceHandle(
-                mode, log, url=self.geturl(), session=self.session, timeout=TIMEOUT
+                mode, log, url=self.geturl(), session=self.data_session, timeout=self._config.timeout
             )
             if mode == "r":
                 # cast because the protocol is compatible, but does not have

@@ -21,6 +21,7 @@ import string
 import tempfile
 import time
 import unittest
+import warnings
 from threading import Thread
 from typing import Callable, Tuple, cast
 
@@ -35,7 +36,13 @@ import requests
 import responses
 from lsst.resources import ResourcePath
 from lsst.resources._resourceHandles._httpResourceHandle import HttpReadResourceHandle
-from lsst.resources.http import BearerTokenAuth, SessionStore, _is_protected, _is_webdav_endpoint
+from lsst.resources.http import (
+    BearerTokenAuth,
+    HttpResourcePathConfig,
+    SessionStore,
+    _is_protected,
+    _is_webdav_endpoint,
+)
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
@@ -57,6 +64,12 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         cls.webdav_tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
         cls.local_files_to_remove = []
         cls.server_thread = None
+
+        # Disable warnings about socket connections left open. We purposedly
+        # keep network connections to the remote server open and have no
+        # means through the API exposed by Requests of actually close the
+        # underlyng sockets to make tests pass without warning.
+        warnings.filterwarnings(action="ignore", message=r"unclosed.*socket", category=ResourceWarning)
 
         # Should we test against a running server?
         #
@@ -112,9 +125,20 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         if cls.webdav_tmpdir:
             shutil.rmtree(cls.webdav_tmpdir, ignore_errors=True)
 
+        # Reset the warnings filter.
+        warnings.resetwarnings()
+
     def tearDown(self):
         if self.tmpdir:
             self.tmpdir.remove()
+
+        # Clear sessions. Some sockets may be left open, because urllib3
+        # doest not close in-flight connections.
+        # See https://urllib3.readthedocs.io > API Reference >
+        #    Pool Manager > clear()
+        # I cannot add the full URL here because it is longer than 79
+        # characters.
+        self.tmpdir._clear_sessions()
 
         super().tearDown()
 
@@ -178,10 +202,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Deletion of an existing directory must succeed
         self.assertIsNone(subdir.remove())
 
-        # Deletion of an non-existing directory must raise
+        # Deletion of an non-existing directory must succeed
         subir_not_exists = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
-        with self.assertRaises(FileNotFoundError):
-            self.assertIsNone(subir_not_exists.remove())
+        self.assertIsNone(subir_not_exists.remove())
 
         # Creation of a directory at a path where a file exists must raise
         file = self.tmpdir.join(self._get_file_name(), forceDirectory=False)
@@ -225,6 +248,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         local_path, is_temp = remote_file._as_local()
         self.assertTrue(is_temp)
         self.assertTrue(os.path.exists(local_path))
+        self.assertTrue(os.stat(local_path).st_size, len(contents))
         self.assertEqual(ResourcePath(local_path).read(), contents)
         os.remove(local_path)
 
@@ -342,10 +366,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertIsNone(remote_file.remove())
         os.remove(local_file)
 
-        # Deletion of a non-existing remote file must raise
+        # Deletion of a non-existing remote file must succeed
         non_existing_file = self.tmpdir.join(self._get_file_name())
-        with self.assertRaises(FileNotFoundError):
-            self.assertIsNone(non_existing_file.remove())
+        self.assertIsNone(non_existing_file.remove())
 
         # Deletion of a non-empty remote directory must succeed
         subdir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
@@ -476,6 +499,109 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 return False
 
 
+class HttpResourcePathConfigTestCase(unittest.TestCase):
+    """Test for the HttpResourcePathConfig class."""
+
+    def test_send_expect_header(self):
+        # Ensure environment variable LSST_HTTP_PUT_SEND_EXPECT_HEADER is
+        # inspected to initialize the HttpResourcePath config class.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertFalse(config.send_expect_on_put)
+
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "true"}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertTrue(config.send_expect_on_put)
+
+    def test_timeout(self):
+        # Ensure that when the connect and read timeouts are not specified
+        # the default values are stored in the config.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertEqual(
+                config.timeout,
+                (lsst.resources.http.DEFAULT_TIMEOUT_CONNECT, lsst.resources.http.DEFAULT_TIMEOUT_READ),
+            )
+
+        # Ensure that when both the connect and read timeouts are specified
+        # they are stored in the config.
+        connect_timeout, read_timeout = 100, 100
+        with unittest.mock.patch.dict(
+            os.environ,
+            {"LSST_HTTP_TIMEOUT_CONNECT": str(connect_timeout), "LSST_HTTP_TIMEOUT_READ": str(read_timeout)},
+            clear=True,
+        ):
+            # Force module reload.
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertEqual(config.timeout, (connect_timeout, read_timeout))
+
+    def test_front_end_connections(self):
+        # Ensure that when the number of front end connections is not specified
+        # the default is stored in the config.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertEqual(
+                config.front_end_connections, int(lsst.resources.http.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
+            )
+
+        # Ensure that when the number of front end connections is specified
+        # it is stored in the config.
+        connections = 42
+        with unittest.mock.patch.dict(
+            os.environ, {"LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
+        ):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertTrue(config.front_end_connections, connections)
+
+    def test_back_end_connections(self):
+        # Ensure that when the number of back end connections is not specified
+        # the default is stored in the config.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertEqual(
+                config.back_end_connections, int(lsst.resources.http.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
+            )
+
+        # Ensure that when the number of back end connections is specified
+        # it is stored in the config.
+        connections = 42
+        with unittest.mock.patch.dict(
+            os.environ, {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
+        ):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertTrue(config.back_end_connections, connections)
+
+    def test_digest_algorithm(self):
+        # Ensure that when no digest is specified in the environment, the
+        # configured digest algorithm is the empty string.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertEqual(config.digest_algorithm, "")
+
+        # Ensure that an invalid digest algorithm is ignored.
+        digest = "invalid"
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertEqual(config.digest_algorithm, "")
+
+        # Ensure that an accepted digest algorithm is stored.
+        for digest in lsst.resources.http.ACCEPTED_DIGESTS:
+            with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
+                importlib.reload(lsst.resources.http)
+                config = HttpResourcePathConfig()
+                self.assertTrue(config.digest_algorithm, digest)
+
+
 class WebdavUtilsTestCase(unittest.TestCase):
     """Test for the Webdav related utilities."""
 
@@ -496,29 +622,6 @@ class WebdavUtilsTestCase(unittest.TestCase):
         plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
         responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
         self.assertFalse(_is_webdav_endpoint(plainHttpEndpoint))
-
-    def test_send_expect_header(self):
-        # Ensure _SEND_EXPECT_HEADER_ON_PUT is correctly initialized from
-        # the environment.
-        os.environ.pop("LSST_HTTP_PUT_SEND_EXPECT_HEADER", None)
-        importlib.reload(lsst.resources.http)
-        self.assertFalse(lsst.resources.http._SEND_EXPECT_HEADER_ON_PUT)
-
-        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "true"}, clear=True):
-            importlib.reload(lsst.resources.http)
-            self.assertTrue(lsst.resources.http._SEND_EXPECT_HEADER_ON_PUT)
-
-    def test_timeout(self):
-        connect_timeout = 100
-        read_timeout = 200
-        with unittest.mock.patch.dict(
-            os.environ,
-            {"LSST_HTTP_TIMEOUT_CONNECT": str(connect_timeout), "LSST_HTTP_TIMEOUT_READ": str(read_timeout)},
-            clear=True,
-        ):
-            # Force module reload to initialize TIMEOUT.
-            importlib.reload(lsst.resources.http)
-            self.assertEqual(lsst.resources.http.TIMEOUT, (connect_timeout, read_timeout))
 
     def test_is_protected(self):
         self.assertFalse(_is_protected("/this-file-does-not-exist"))
