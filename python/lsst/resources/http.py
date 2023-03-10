@@ -61,14 +61,20 @@ class HttpResourcePathConfig:
     HttpResourcePath.
     """
 
+    _front_end_connections: Optional[int] = None
+    _back_end_connections: Optional[int] = None
+    _digest_algorithm: Optional[str] = None
+    _send_expect_on_put: Optional[bool] = None
+    _timeout: Optional[tuple[int, int]] = None
+
     @property
     def front_end_connections(self) -> int:
         """Number of persistent connections to the front end server."""
 
-        if hasattr(self, "_front_end_connections"):
+        if self._front_end_connections is not None:
             return self._front_end_connections
 
-        self._front_end_connections: int = int(
+        self._front_end_connections = int(
             os.environ.get(
                 "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
             )
@@ -79,10 +85,10 @@ class HttpResourcePathConfig:
     def back_end_connections(self) -> int:
         """Number of persistent connections to the back end servers."""
 
-        if hasattr(self, "_back_end_connections"):
+        if self._back_end_connections is not None:
             return self._back_end_connections
 
-        self._back_end_connections: int = int(
+        self._back_end_connections = int(
             os.environ.get("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
         )
         return self._back_end_connections
@@ -99,14 +105,14 @@ class HttpResourcePathConfig:
             is configured.
         """
 
-        if hasattr(self, "_digest_algorithm"):
+        if self._digest_algorithm is not None:
             return self._digest_algorithm
 
         digest = os.environ.get("LSST_HTTP_DIGEST", "").lower()
         if digest not in ACCEPTED_DIGESTS:
             digest = ""
 
-        self._digest_algorithm: str = digest
+        self._digest_algorithm = digest
         return self._digest_algorithm
 
     @property
@@ -118,22 +124,24 @@ class HttpResourcePathConfig:
         the client knows how to handle redirects to the specific server that
         will actually receive the data for PUT requests.
         """
-        if hasattr(self, "_send_expect_on_put"):
+
+        if self._send_expect_on_put is not None:
             return self._send_expect_on_put
 
-        self._send_expect_on_put: bool = "LSST_HTTP_PUT_SEND_EXPECT_HEADER" in os.environ
+        self._send_expect_on_put = "LSST_HTTP_PUT_SEND_EXPECT_HEADER" in os.environ
         return self._send_expect_on_put
 
     @property
-    def timeout(self) -> Tuple[int, int]:
+    def timeout(self) -> tuple[int, int]:
         """Return a tuple with the values of timeouts for connecting to the
         server and reading its response, respectively. Both values are in
         seconds.
         """
-        if hasattr(self, "_timeout"):
+
+        if self._timeout is not None:
             return self._timeout
 
-        self._timeout: Tuple[int, int] = (
+        self._timeout = (
             int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", DEFAULT_TIMEOUT_CONNECT)),
             int(os.environ.get("LSST_HTTP_TIMEOUT_READ", DEFAULT_TIMEOUT_READ)),
         )
