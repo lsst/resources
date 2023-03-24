@@ -12,6 +12,7 @@
 import unittest
 
 from lsst.resources import ResourcePath
+from lsst.resources.s3utils import clean_test_environment
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 try:
@@ -42,6 +43,8 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     def setUp(self):
         # Enable S3 mocking of tests.
         self.mock_s3.start()
+
+        clean_test_environment(self)
 
         # set up some fake credentials if they do not exist
         # self.usingDummyCredentials = setAwsEnvCredentials()

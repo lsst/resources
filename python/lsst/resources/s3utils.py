@@ -11,7 +11,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from unittest import TestCase
+
 __all__ = (
+    "clean_test_environment",
     "getS3Client",
     "s3CheckFileExists",
     "bucketExists",
@@ -106,6 +112,27 @@ retryable_client_errors = (
 # are not included.
 all_retryable_errors = retryable_io_errors
 max_retry_time = 60
+
+
+def clean_test_environment(testcase: TestCase) -> None:
+    """Clear S3_ENDPOINT_URL then restore it at the end of a test.
+
+    Parameters
+    ----------
+    testcase: `unittest.TestCase`
+        Reference to the test being run; used to add a cleanup function.
+    """
+    endpoint = os.environ.get("S3_ENDPOINT_URL")
+
+    if not endpoint:
+        return
+    os.environ["S3_ENDPOINT_URL"] = ""
+
+    def cleanup() -> None:
+        if endpoint is not None:
+            os.environ["S3_ENDPOINT_URL"] = endpoint
+
+    testcase.addCleanup(cleanup)
 
 
 def getS3Client() -> boto3.client:
