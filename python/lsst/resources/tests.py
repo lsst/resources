@@ -389,8 +389,9 @@ class GenericTestCase(_GenericTestCase):
         )
         self.assertEqual(joined, ResourcePath(f"{self.root}hsc/payload/test.qgraph"))
 
-        with self.assertRaises(ValueError):
-            ResourcePath(f"{self.root}hsc/payload/").join(ResourcePath("test.qgraph"))
+        qgraph = ResourcePath("test.qgraph")  # Absolute URI
+        joined = ResourcePath(f"{self.root}hsc/payload/").join(qgraph)
+        self.assertEqual(joined, qgraph)
 
     def test_quoting(self) -> None:
         """Check that quoting works."""

@@ -85,11 +85,14 @@ class ResourcePath:
     root : `str` or `ResourcePath`, optional
         When fixing up a relative path in a ``file`` scheme or if scheme-less,
         use this as the root. Must be absolute.  If `None` the current
-        working directory will be used. Can be a file URI.
+        working directory will be used. Can be a file URI. Not used if
+        ``forceAbsolute`` is `False`.
     forceAbsolute : `bool`, optional
         If `True`, scheme-less relative URI will be converted to an absolute
         path using a ``file`` scheme. If `False` scheme-less URI will remain
-        scheme-less and will not be updated to ``file`` or absolute path.
+        scheme-less and will not be updated to ``file`` or absolute path unless
+        it is already an absolute path, in which case it will be updated to
+        a ``file`` scheme.
     forceDirectory: `bool`, optional
         If `True` forces the URI to end with a separator, otherwise given URI
         is interpreted as is.

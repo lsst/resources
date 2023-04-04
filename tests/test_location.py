@@ -38,9 +38,9 @@ class LocationTestCase(unittest.TestCase):
         # 1) no determinable schemes (ensures schema and netloc are not set)
         osRelFilePath = os.path.join(testRoot, "relative/file.ext")
         uriStrings = [
-            ("relative/file.ext", True, False, "", "", osRelFilePath),
+            ("relative/file.ext", True, False, "file", "", osRelFilePath),
             ("relative/file.ext", False, False, "", "", "relative/file.ext"),
-            ("test/../relative/file.ext", True, False, "", "", osRelFilePath),
+            ("test/../relative/file.ext", True, False, "file", "", osRelFilePath),
             ("test/../relative/file.ext", False, False, "", "", "relative/file.ext"),
             ("relative/dir", False, True, "", "", "relative/dir/"),
         ]
@@ -106,10 +106,11 @@ class LocationTestCase(unittest.TestCase):
         # test root becomes abspath(".") when not specified, note specific
         # file:// scheme case
         uriStrings = (
+            # URI, forceAbsolute, forceDirectory, scheme, netloc, path
             ("file://relative/file.ext", True, False, "file", "relative", "/file.ext"),
             ("file:relative/file.ext", False, False, "file", "", os.path.abspath("relative/file.ext")),
             ("file:relative/dir/", True, True, "file", "", os.path.abspath("relative/dir") + "/"),
-            ("relative/file.ext", True, False, "", "", os.path.abspath("relative/file.ext")),
+            ("relative/file.ext", True, False, "file", "", os.path.abspath("relative/file.ext")),
         )
 
         for uriInfo in uriStrings:
@@ -133,12 +134,12 @@ class LocationTestCase(unittest.TestCase):
             with self.subTest(uri=uriInfo[0]):
                 self.assertEqual(uri.path, uriInfo[2])
 
-        # Check that schemeless can become file scheme
+        # Check that schemeless can become file scheme.
         schemeless = ResourcePath("relative/path.ext")
         filescheme = ResourcePath("/absolute/path.ext")
-        self.assertFalse(schemeless.scheme)
+        self.assertEqual(schemeless.scheme, "file")
         self.assertEqual(filescheme.scheme, "file")
-        self.assertNotEqual(type(schemeless), type(filescheme))
+        self.assertEqual(type(schemeless), type(filescheme))
 
         # Copy constructor
         uri = ResourcePath("s3://amazon/datastore", forceDirectory=True)

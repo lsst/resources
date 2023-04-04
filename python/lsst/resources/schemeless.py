@@ -205,8 +205,12 @@ class SchemelessResourcePath(FileResourcePath):
                 # so we trust the user.
                 root_str = os.path.abspath(root.ospath)
 
-            # This can stay in OS path form, do not change to file
-            # scheme.
+            # Convert to "file" scheme to make it consistent with the above
+            # decision. It makes no sense for sometimes an absolute path
+            # to be a file URI and sometimes for it not to be.
+            replacements["scheme"] = "file"
+
+            # Keep in OS form for now.
             replacements["path"] = os.path.normpath(os.path.join(root_str, expandedPath))
         else:
             # No change needed for relative local path staying relative

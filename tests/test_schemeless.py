@@ -27,34 +27,34 @@ class SchemelessTestCase(unittest.TestCase):
         self.assertFalse(relative_uri.isabs())
         self.assertEqual(relative_uri.ospath, relative)
 
-        # This will be a schemeless absolute URI.
-        # It is not converted to a file URI (but maybe should be).
+        # Converted to a file URI.
         abs_uri = ResourcePath(relative, forceAbsolute=True)
-        self.assertFalse(abs_uri.scheme)
+        self.assertEqual(abs_uri.scheme, "file")
         self.assertTrue(abs_uri.isabs())
 
-        # For historical reasons an absolute path is converted
-        # to a file URI.
+        # An absolute path is converted to a file URI.
         file_uri = ResourcePath(abspath)
         self.assertEqual(file_uri.scheme, "file")
         self.assertTrue(file_uri.isabs())
 
         # Use a prefix root.
-        # This will remain schemeless.
         prefix = "/a/b/"
         abs_uri = ResourcePath(relative, root=prefix)
         self.assertEqual(abs_uri.ospath, f"{prefix}{relative}")
-        self.assertEqual(abs_uri.scheme, "")
+        self.assertEqual(abs_uri.scheme, "file")
 
-        # Only the path is used.
+        # Use a file prefix.
         prefix = "file://localhost/a/b/"
         prefix_uri = ResourcePath(prefix)
         file_uri = ResourcePath(relative, root=prefix_uri)
-        self.assertEqual(str(file_uri), f"{prefix_uri.ospath}{relative}")
+        self.assertEqual(str(file_uri), f"file://{prefix_uri.ospath}{relative}")
 
         # Fragments should be fine.
         relative_uri = ResourcePath(relative + "#frag", forceAbsolute=False)
         self.assertEqual(str(relative_uri), f"{relative}#frag")
+
+        file_uri = ResourcePath(relative + "#frag", root=prefix_uri)
+        self.assertEqual(str(file_uri), f"file://{prefix_uri.ospath}{relative}#frag")
 
         # For historical reasons a a root can not be anything other
         # than a file. This does not really make sense in the general
