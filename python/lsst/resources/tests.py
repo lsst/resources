@@ -247,23 +247,25 @@ class GenericTestCase(_GenericTestCase):
 
         # Test with different netloc
         child = ResourcePath(self._make_uri("a/b/c.txt", netloc="my.host"))
-        parent = ResourcePath(self._make_uri("a", netloc="other"))
+        parent = ResourcePath(self._make_uri("a", netloc="other"), forceDirectory=True)
         self.assertIsNone(child.relative_to(parent), f"{child}.relative_to({parent})")
 
-        # Schemeless absolute child.
-        # Schemeless absolute URI is constructed using root= parameter.
-        # For now the root parameter can not be anything other than a file.
-        if self.scheme == "file":
-            parent = ResourcePath("/a/b/c", root=self.root_uri)
-            child = ResourcePath("d/e.txt", root=parent)
-            self.assertEqual(child.relative_to(parent), "d/e.txt", f"{child}.relative_to({parent})")
+        # This is an absolute path so will *always* return a file URI and
+        # ignore the root parameter.
+        parent = ResourcePath("/a/b/c", root=self.root_uri, forceDirectory=True)
+        self.assertEqual(parent.geturl(), "file:///a/b/c/")
 
-            parent = ResourcePath("c/", root="/a/b/")
-            self.assertEqual(child.relative_to(parent), "d/e.txt", f"{child}.relative_to({parent})")
+        parent = ResourcePath(self._make_uri("/a/b/c"), forceDirectory=True)
+        child = ResourcePath("d/e.txt", root=parent)
+        self.assertEqual(child.relative_to(parent), "d/e.txt", f"{child}.relative_to({parent})")
 
-            # Absolute schemeless child with relative parent will always fail.
-            parent = ResourcePath("d/e.txt", forceAbsolute=False)
-            self.assertIsNone(child.relative_to(parent), f"{child}.relative_to({parent})")
+        parent = ResourcePath("c/", root=ResourcePath(self._make_uri("/a/b/")))
+        self.assertEqual(child.relative_to(parent), "d/e.txt", f"{child}.relative_to({parent})")
+
+        # Absolute schemeless child with relative parent will always fail.
+        child = ResourcePath("d/e.txt", root="/a/b/c")
+        parent = ResourcePath("d/e.txt", forceAbsolute=False)
+        self.assertIsNone(child.relative_to(parent), f"{child}.relative_to({parent})")
 
     def test_parents(self) -> None:
         """Test of splitting and parent walking."""

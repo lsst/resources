@@ -19,7 +19,7 @@ import urllib.parse
 __all__ = ("SchemelessResourcePath",)
 
 from pathlib import PurePath
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 from ._resourcePath import ResourcePath
 from .file import FileResourcePath
@@ -133,7 +133,7 @@ class SchemelessResourcePath(FileResourcePath):
     def _fixupPathUri(
         cls,
         parsed: urllib.parse.ParseResult,
-        root: Optional[Union[str, ResourcePath]] = None,
+        root: Optional[ResourcePath] = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
     ) -> Tuple[urllib.parse.ParseResult, bool]:
@@ -143,10 +143,11 @@ class SchemelessResourcePath(FileResourcePath):
         ----------
         parsed : `~urllib.parse.ParseResult`
             The result from parsing a URI using `urllib.parse`.
-        root : `str` or `ResourcePath`, optional
+        root : `ResourcePath`, optional
             Path to use as root when converting relative to absolute.
-            If `None`, it will be the current working directory. This
-            is a local file system path, or a file URI.
+            If `None`, it will be the current working directory. Will be
+            ignored if the supplied path is already absolute or if
+            ``forceAbsolute`` is `False`.
         forceAbsolute : `bool`, optional
             If `True`, scheme-less relative URI will be converted to an
             absolute path using a ``file`` scheme. If `False` scheme-less URI
@@ -180,13 +181,6 @@ class SchemelessResourcePath(FileResourcePath):
         # Replacement values for the URI
         replacements = {}
 
-        if root is None:
-            root = os.path.abspath(os.path.curdir)
-        elif isinstance(root, ResourcePath):
-            if root.scheme and root.scheme != "file":
-                raise ValueError(f"The override root must be a file URI not {root.scheme}")
-            root = os.path.abspath(root.ospath)
-
         # this is a local OS file path which can support tilde expansion.
         # we quoted it in the constructor so unquote here
         expandedPath = os.path.expanduser(urllib.parse.unquote(parsed.path))
@@ -201,9 +195,19 @@ class SchemelessResourcePath(FileResourcePath):
             # Keep in OS form for now to simplify later logic
             replacements["path"] = os.path.normpath(expandedPath)
         elif forceAbsolute:
+            # Need to know the root that should be prepended.
+            if root is None:
+                root_str = os.path.abspath(os.path.curdir)
+            else:
+                if root.scheme and root.scheme != "file":
+                    raise ValueError(f"The override root must be a file URI not {root.scheme}")
+                # os.path does not care whether something is dirLike or not
+                # so we trust the user.
+                root_str = os.path.abspath(root.ospath)
+
             # This can stay in OS path form, do not change to file
             # scheme.
-            replacements["path"] = os.path.normpath(os.path.join(root, expandedPath))
+            replacements["path"] = os.path.normpath(os.path.join(root_str, expandedPath))
         else:
             # No change needed for relative local path staying relative
             # except normalization
