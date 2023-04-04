@@ -857,9 +857,9 @@ class HttpResourcePath(ResourcePath):
             for prop in _parse_propfind_response_body(resp.text):
                 if prop.is_file:
                     files.append(prop.name)
-                elif not self.path.endswith(prop.href):
-                    # Only include the names of sub-directories not the
-                    # directory being walked.
+                elif not prop.href.rstrip("/").endswith(self.path.rstrip("/")):
+                    # Only include the names of sub-directories not the name of
+                    # the directory being walked.
                     dirs.append(prop.name)
 
             if file_filter is not None:
@@ -1428,11 +1428,16 @@ class DavProperty:
             self._parse(response)
 
     def _parse(self, response: eTree.Element) -> None:
-        # Extract 'href'
+        # Extract 'href'.
         if (element := response.find("./{DAV:}href")) is not None:
             # We need to use "str(element.text)"" instead of "element.text" to
-            # keep mypy happy
+            # keep mypy happy.
             self._href = str(element.text).strip()
+        else:
+            raise ValueError(
+                f"Property 'href' expected but not found in PROPFIND response: "
+                f"{eTree.tostring(response, encoding='unicode')}"
+            )
 
         for propstat in response.findall("./{DAV:}propstat"):
             # Only extract properties of interest with status OK.
@@ -1457,6 +1462,16 @@ class DavProperty:
                 if (element := prop.find("./{DAV:}displayname")) is not None:
                     self._displayname = str(element.text)
 
+        # Some webDAV servers don't include the 'displayname' property in the
+        # response so try to infer it from the value of the 'href' property.
+        # Depending on the server the href value may end with '/'.
+        if not self._displayname:
+            self._displayname = os.path.basename(self._href.rstrip("/"))
+
+        # Force a size of 0 for collections.
+        if self._collection:
+            self._getcontentlength = 0
+
     @property
     def exists(self) -> bool:
         # It is either a directory or a file with length of at least zero
@@ -1468,11 +1483,10 @@ class DavProperty:
 
     @property
     def is_file(self) -> bool:
-        return self._getcontentlength >= 0
+        return not self._collection
 
     @property
     def size(self) -> int:
-        # Only valid if is_file is True
         return self._getcontentlength
 
     @property
