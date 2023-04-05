@@ -100,6 +100,11 @@ class ResourcePath:
         If `True` indicates that this URI points to a temporary resource.
         The default is `False`, unless ``uri`` is already a `ResourcePath`
         instance and ``uri.isTemporary is True``.
+
+    Notes
+    -----
+    A non-standard URI of the form ``file:dir/file.txt`` is always converted
+    to an absolute ``file`` URI.
     """
 
     _pathLib: Type[PurePath] = PurePosixPath
