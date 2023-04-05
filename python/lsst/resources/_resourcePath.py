@@ -266,6 +266,10 @@ class ResourcePath:
                     # fragments since join() will drop them.
                     parsed = parsed._replace(scheme=joined.scheme, path=joined.path, netloc=joined.netloc)
                     subclass = type(joined)
+
+                    # Clear the root parameter to indicate that it has
+                    # been applied already.
+                    root_uri = None
                 else:
                     from .schemeless import SchemelessResourcePath
 
