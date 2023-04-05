@@ -84,6 +84,15 @@ def _check_open(
         # Read the file we created and check the contents.
         with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
             test_case.assertEqual(read_buffer.read(), content)
+        # Check that we can read bytes in a loop and get EOF
+        with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
+            size = len(bytes_content) * 3
+            bytes_read = read_buffer.read(size)
+            test_case.assertEqual(bytes_read, content)
+            bytes_read = read_buffer.read(size)
+            test_case.assertEqual(len(bytes_read), 0)
+            bytes_read = read_buffer.read(size)
+            test_case.assertEqual(len(bytes_read), 0)
         # Write two copies of the content, overwriting the single copy there.
         with uri.open("w" + mode_suffix, **kwargs) as write_buffer:
             write_buffer.write(double_content)
