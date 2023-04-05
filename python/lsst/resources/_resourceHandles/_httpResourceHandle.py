@@ -140,7 +140,8 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
         if (code := resp.status_code) not in (200, 206):
             raise FileNotFoundError(
-                f"Unable to read resource {self._url}, or bytes are out of range; status code: {code}"
+                f"Unable to read resource {self._url}, or byte request {self._current_position}-{end_pos}"
+                f" is out of range; status code: {code}"
             )
 
         # verify this is not actually the whole file and the server did not lie
