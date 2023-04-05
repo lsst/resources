@@ -748,7 +748,9 @@ class ResourcePath:
             return None
         if self.netloc != other.netloc:
             # Special case for localhost vs empty string.
-            if {self.netloc, other.netloc} != {"", "localhost"}:
+            # There can be many variants of localhost.
+            local_netlocs = {"", "localhost", "localhost.localdomain", "127.0.0.1"}
+            if not {self.netloc, other.netloc}.issubset(local_netlocs):
                 return None
 
         enclosed_path = self._pathLib(self.relativeToPathRoot)
