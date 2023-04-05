@@ -66,6 +66,7 @@ class HttpResourcePathConfig:
     _digest_algorithm: Optional[str] = None
     _send_expect_on_put: Optional[bool] = None
     _timeout: Optional[tuple[int, int]] = None
+    _collect_memory_usage: Optional[bool] = None
 
     @property
     def front_end_connections(self) -> int:
@@ -147,6 +148,19 @@ class HttpResourcePathConfig:
         )
         return self._timeout
 
+    @property
+    def collect_memory_usage(self) -> bool:
+        """Return true if we want to collect memory usage when timing
+        operations against the remote server via the `lsst.utils.time_this`
+        context manager.
+        """
+
+        if self._collect_memory_usage is not None:
+            return self._collect_memory_usage
+
+        self._collect_memory_usage = "LSST_HTTP_COLLECT_MEMORY_USAGE" in os.environ
+        return self._collect_memory_usage
+
 
 @functools.lru_cache
 def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
@@ -169,6 +183,11 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
         ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
         verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
         resp = requests.options(str(path), verify=verify, stream=False)
+        if resp.status_code not in (requests.codes.ok, requests.codes.created):
+            raise ValueError(
+                f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} "
+                f"{resp.reason}"
+            )
 
         # Check that "1" is part of the value of the "DAV" header. We don't
         # use locks, so a server complying to class 1 is enough for our
@@ -906,7 +925,7 @@ class HttpResourcePath(ResourcePath):
                     log,
                     msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
                     args=(self, expected_length, tmpFile.name, buffering),
-                    mem_usage=True,
+                    mem_usage=self._config.collect_memory_usage,
                     mem_unit=u.mebibyte,
                 ):
                     for chunk in resp.iter_content(chunk_size=buffering):
@@ -982,7 +1001,7 @@ class HttpResourcePath(ResourcePath):
                 method,
                 url,
             ),
-            mem_usage=True,
+            mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
             for _ in range(max_redirects := 5):
@@ -1054,8 +1073,13 @@ class HttpResourcePath(ResourcePath):
 
     def _options(self) -> requests.Response:
         """Send a OPTIONS webDAV request for this resource."""
+        resp = self._send_webdav_request("OPTIONS")
+        if resp.status_code in (requests.codes.ok, requests.codes.created):
+            return resp
 
-        return self._send_webdav_request("OPTIONS")
+        raise ValueError(
+            f"Unexpected response to OPTIONS request for {self}, status: {resp.status_code} " f"{resp.reason}"
+        )
 
     def _head(self) -> requests.Response:
         """Send a HEAD webDAV request for this resource."""
@@ -1216,7 +1240,13 @@ class HttpResourcePath(ResourcePath):
             # Send an empty PUT request to get redirected to the final
             # destination.
             log.debug("Sending empty PUT request to %s", url)
-            with time_this(log, msg="PUT (no data) %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+            with time_this(
+                log,
+                msg="PUT (no data) %s",
+                args=(url,),
+                mem_usage=self._config.collect_memory_usage,
+                mem_unit=u.mebibyte,
+            ):
                 resp = session.request(
                     "PUT",
                     url,
@@ -1248,7 +1278,13 @@ class HttpResourcePath(ResourcePath):
             if digest := self._config.digest_algorithm:
                 put_headers = {"Want-Digest": digest}
 
-            with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+            with time_this(
+                log,
+                msg="PUT %s",
+                args=(url,),
+                mem_usage=self._config.collect_memory_usage,
+                mem_unit=u.mebibyte,
+            ):
                 resp = session.request(
                     "PUT",
                     url,
