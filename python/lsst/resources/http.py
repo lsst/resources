@@ -186,7 +186,7 @@ class HttpResourcePathConfig:
     @property
     def backoff_min(self) -> float:
         """Lower bound of the interval from which a backoff factor is randomly
-        selected when retrying requests (seconds.)
+        selected when retrying requests (seconds).
         """
 
         if self._backoff_min is not None:
@@ -205,7 +205,7 @@ class HttpResourcePathConfig:
     @property
     def backoff_max(self) -> float:
         """Upper bound of the interval from which a backoff factor is randomly
-        selected when retrying requests (seconds.)
+        selected when retrying requests (seconds).
         """
 
         if self._backoff_max is not None:
