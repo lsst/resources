@@ -504,7 +504,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
 
     def test_send_expect_header(self):
         # Ensure environment variable LSST_HTTP_PUT_SEND_EXPECT_HEADER is
-        # inspected to initialize the HttpResourcePath config class.
+        # inspected to initialize the HttpResourcePathConfig config class.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
@@ -515,6 +515,19 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             config = HttpResourcePathConfig()
             self.assertTrue(config.send_expect_on_put)
 
+    def test_collect_memory_usage(self):
+        # Ensure environment variable LSST_HTTP_COLLECT_MEMORY_USAGE is
+        # inspected to initialize the HttpResourcePathConfig class.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertFalse(config.collect_memory_usage)
+
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_COLLECT_MEMORY_USAGE": "true"}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertTrue(config.collect_memory_usage)
+
     def test_timeout(self):
         # Ensure that when the connect and read timeouts are not specified
         # the default values are stored in the config.
@@ -523,7 +536,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             config = HttpResourcePathConfig()
             self.assertEqual(
                 config.timeout,
-                (lsst.resources.http.DEFAULT_TIMEOUT_CONNECT, lsst.resources.http.DEFAULT_TIMEOUT_READ),
+                (config.DEFAULT_TIMEOUT_CONNECT, config.DEFAULT_TIMEOUT_READ),
             )
 
         # Ensure that when both the connect and read timeouts are specified
@@ -545,9 +558,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
-            self.assertEqual(
-                config.front_end_connections, int(lsst.resources.http.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
-            )
+            self.assertEqual(config.front_end_connections, config.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
 
         # Ensure that when the number of front end connections is specified
         # it is stored in the config.
@@ -565,9 +576,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
-            self.assertEqual(
-                config.back_end_connections, int(lsst.resources.http.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
-            )
+            self.assertEqual(config.back_end_connections, config.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
 
         # Ensure that when the number of back end connections is specified
         # it is stored in the config.
@@ -595,11 +604,51 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             self.assertEqual(config.digest_algorithm, "")
 
         # Ensure that an accepted digest algorithm is stored.
-        for digest in lsst.resources.http.ACCEPTED_DIGESTS:
+        for digest in HttpResourcePathConfig().ACCEPTED_DIGESTS:
             with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
                 importlib.reload(lsst.resources.http)
                 config = HttpResourcePathConfig()
                 self.assertTrue(config.digest_algorithm, digest)
+
+    def test_backoff_interval(self):
+        # Ensure that when no backoff interval is defined, the default values
+        # are used.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertAlmostEqual(config.backoff_min, config.DEFAULT_BACKOFF_MIN)
+            self.assertAlmostEqual(config.backoff_max, config.DEFAULT_BACKOFF_MAX)
+
+        # Ensure that an invalid value for backoff interval is ignored and
+        # the default value is used.
+        with unittest.mock.patch.dict(
+            os.environ, {"LSST_HTTP_BACKOFF_MIN": "XXX", "LSST_HTTP_BACKOFF_MAX": "YYY"}, clear=True
+        ):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertAlmostEqual(config.backoff_min, config.DEFAULT_BACKOFF_MIN)
+            self.assertAlmostEqual(config.backoff_max, config.DEFAULT_BACKOFF_MAX)
+
+        # Ensure that NaN values are ignored and the defaults values are used.
+        with unittest.mock.patch.dict(
+            os.environ, {"LSST_HTTP_BACKOFF_MIN": "NaN", "LSST_HTTP_BACKOFF_MAX": "NaN"}, clear=True
+        ):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertAlmostEqual(config.backoff_min, config.DEFAULT_BACKOFF_MIN)
+            self.assertAlmostEqual(config.backoff_max, config.DEFAULT_BACKOFF_MAX)
+
+        # Ensure that when specified, valid limits backoff interval are used.
+        backoff_min, backoff_max = 3.0, 8.0
+        with unittest.mock.patch.dict(
+            os.environ,
+            {"LSST_HTTP_BACKOFF_MIN": str(backoff_min), "LSST_HTTP_BACKOFF_MAX": str(backoff_max)},
+            clear=True,
+        ):
+            importlib.reload(lsst.resources.http)
+            config = HttpResourcePathConfig()
+            self.assertAlmostEqual(config.backoff_min, backoff_min)
+            self.assertAlmostEqual(config.backoff_max, backoff_max)
 
 
 class WebdavUtilsTestCase(unittest.TestCase):

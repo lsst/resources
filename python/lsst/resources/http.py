@@ -17,6 +17,7 @@ import contextlib
 import functools
 import io
 import logging
+import math
 import os
 import os.path
 import random
@@ -43,23 +44,28 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-# Default timeouts for all HTTP requests, in seconds.
-DEFAULT_TIMEOUT_CONNECT = 300
-DEFAULT_TIMEOUT_READ = 1500
-
-# Default number of connections to persist with both the front end and back end
-# servers.
-DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS = "2"
-DEFAULT_BACKEND_PERSISTENT_CONNECTIONS = "1"
-
-# Accepted digest algorithms
-ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
-
-
 class HttpResourcePathConfig:
     """Configuration class to encapsulate the configurable items used by class
     HttpResourcePath.
     """
+
+    # Default timeouts for all HTTP requests (seconds).
+    DEFAULT_TIMEOUT_CONNECT = 30
+    DEFAULT_TIMEOUT_READ = 1_500
+
+    # Default lower and upper bounds for the backoff interval (seconds).
+    # A value in this interval is randomly selected as the backoff factor when
+    # requests need to be retried.
+    DEFAULT_BACKOFF_MIN = 1.0
+    DEFAULT_BACKOFF_MAX = 3.0
+
+    # Default number of connections to persist with both the front end and
+    # back end servers.
+    DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS = 2
+    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS = 1
+
+    # Accepted digest algorithms
+    ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
 
     _front_end_connections: Optional[int] = None
     _back_end_connections: Optional[int] = None
@@ -67,6 +73,8 @@ class HttpResourcePathConfig:
     _send_expect_on_put: Optional[bool] = None
     _timeout: Optional[tuple[int, int]] = None
     _collect_memory_usage: Optional[bool] = None
+    _backoff_min: Optional[float] = None
+    _backoff_max: Optional[float] = None
 
     @property
     def front_end_connections(self) -> int:
@@ -75,11 +83,15 @@ class HttpResourcePathConfig:
         if self._front_end_connections is not None:
             return self._front_end_connections
 
-        self._front_end_connections = int(
-            os.environ.get(
-                "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+        try:
+            self._front_end_connections = int(
+                os.environ.get(
+                    "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+                )
             )
-        )
+        except ValueError:
+            self._front_end_connections = self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+
         return self._front_end_connections
 
     @property
@@ -89,9 +101,15 @@ class HttpResourcePathConfig:
         if self._back_end_connections is not None:
             return self._back_end_connections
 
-        self._back_end_connections = int(
-            os.environ.get("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
-        )
+        try:
+            self._back_end_connections = int(
+                os.environ.get(
+                    "LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
+                )
+            )
+        except ValueError:
+            self._back_end_connections = self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
+
         return self._back_end_connections
 
     @property
@@ -110,7 +128,7 @@ class HttpResourcePathConfig:
             return self._digest_algorithm
 
         digest = os.environ.get("LSST_HTTP_DIGEST", "").lower()
-        if digest not in ACCEPTED_DIGESTS:
+        if digest not in self.ACCEPTED_DIGESTS:
             digest = ""
 
         self._digest_algorithm = digest
@@ -142,10 +160,14 @@ class HttpResourcePathConfig:
         if self._timeout is not None:
             return self._timeout
 
-        self._timeout = (
-            int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", DEFAULT_TIMEOUT_CONNECT)),
-            int(os.environ.get("LSST_HTTP_TIMEOUT_READ", DEFAULT_TIMEOUT_READ)),
-        )
+        try:
+            self._timeout = (
+                int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", self.DEFAULT_TIMEOUT_CONNECT)),
+                int(os.environ.get("LSST_HTTP_TIMEOUT_READ", self.DEFAULT_TIMEOUT_READ)),
+            )
+        except ValueError:
+            self._timeout = (self.DEFAULT_TIMEOUT_CONNECT, self.DEFAULT_TIMEOUT_READ)
+
         return self._timeout
 
     @property
@@ -160,6 +182,44 @@ class HttpResourcePathConfig:
 
         self._collect_memory_usage = "LSST_HTTP_COLLECT_MEMORY_USAGE" in os.environ
         return self._collect_memory_usage
+
+    @property
+    def backoff_min(self) -> float:
+        """Lower bound of the interval from which a backoff factor is randomly
+        selected when retrying requests (seconds.)
+        """
+
+        if self._backoff_min is not None:
+            return self._backoff_min
+
+        self._backoff_min = self.DEFAULT_BACKOFF_MIN
+        try:
+            value = float(os.environ.get("LSST_HTTP_BACKOFF_MIN", self.DEFAULT_BACKOFF_MIN))
+            if not math.isnan(value):
+                self._backoff_min = value
+        except ValueError:
+            pass
+
+        return self._backoff_min
+
+    @property
+    def backoff_max(self) -> float:
+        """Upper bound of the interval from which a backoff factor is randomly
+        selected when retrying requests (seconds.)
+        """
+
+        if self._backoff_max is not None:
+            return self._backoff_max
+
+        self._backoff_max = self.DEFAULT_BACKOFF_MAX
+        try:
+            value = float(os.environ.get("LSST_HTTP_BACKOFF_MAX", self.DEFAULT_BACKOFF_MAX))
+            if not math.isnan(value):
+                self._backoff_max = value
+        except ValueError:
+            pass
+
+        return self._backoff_max
 
 
 @functools.lru_cache
@@ -295,7 +355,13 @@ class BearerTokenAuth(AuthBase):
 class SessionStore:
     """Cache a reusable HTTP client session per endpoint."""
 
-    def __init__(self, num_pools: int = 10, max_persistent_connections: int = 1) -> None:
+    def __init__(
+        self,
+        num_pools: int = 10,
+        max_persistent_connections: int = 1,
+        backoff_min: float = 1.0,
+        backoff_max: float = 3.0,
+    ) -> None:
         # Dictionary to store the session associated to a given URI. The key
         # of the dictionary is a root URI and the value is the session.
         self._sessions: dict[str, requests.Session] = {}
@@ -303,12 +369,17 @@ class SessionStore:
         # Number of connection pools to keep: there is one pool per remote
         # host. See documentation of urllib3 PoolManager class:
         # https://urllib3.readthedocs.io
-        self._num_pools = num_pools
+        self._num_pools: int = num_pools
 
         # Maximum number of connections per remote host to persist in each
         # connection pool. See urllib3 Advanced Usage documentation:
         # https://urllib3.readthedocs.io/en/stable/advanced-usage.html
-        self._max_persistent_connections = max_persistent_connections
+        self._max_persistent_connections: int = max_persistent_connections
+
+        # Minimum and maximum values of the inverval to compute the exponential
+        # backoff factor when retrying requests (seconds).
+        self._backoff_min: float = backoff_min
+        self._backoff_max: float = backoff_max if backoff_max > backoff_min else backoff_min + 1.0
 
     def clear(self) -> None:
         """Destroy all previously created sessions and attempt to close
@@ -377,7 +448,6 @@ class SessionStore:
         session = requests.Session()
         root_uri = str(rpath.root_uri())
         log.debug("Creating new HTTP session for endpoint %s ...", root_uri)
-
         retries = Retry(
             # Total number of retries to allow. Takes precedence over other
             # counts.
@@ -387,8 +457,9 @@ class SessionStore:
             # How many times to retry on read errors.
             read=3,
             # Backoff factor to apply between attempts after the second try
-            # (seconds)
-            backoff_factor=30 * (1 + random.random()),
+            # (seconds). Compute a random jitter to prevent all the clients
+            # to overwhelm the server by sending requests at the same time.
+            backoff_factor=self._backoff_min + (self._backoff_max - self._backoff_min) * random.random(),
             # How many times to retry on bad status codes.
             status=5,
             # Set of uppercased HTTP method verbs that we should retry on.
@@ -543,6 +614,8 @@ class HttpResourcePath(ResourcePath):
     _metadata_session_store = SessionStore(
         num_pools=5,
         max_persistent_connections=_config.front_end_connections,
+        backoff_min=_config.backoff_min,
+        backoff_max=_config.backoff_max,
     )
 
     # The data session is used for interaction with the front end servers which
@@ -555,6 +628,8 @@ class HttpResourcePath(ResourcePath):
     _data_session_store = SessionStore(
         num_pools=25,
         max_persistent_connections=_config.back_end_connections,
+        backoff_min=_config.backoff_min,
+        backoff_max=_config.backoff_max,
     )
 
     # Process ID which created the sessions above. We need to store this
