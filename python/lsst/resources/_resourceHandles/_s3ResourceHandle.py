@@ -18,6 +18,7 @@ from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO, UnsupportedOperation
 from logging import Logger
 from typing import TYPE_CHECKING, Iterable, Mapping, Optional
 
+from botocore.exceptions import ClientError
 from lsst.utils.timer import time_this
 
 from ..s3utils import all_retryable_errors, backoff, max_retry_time
@@ -83,6 +84,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         self._last_flush_position: Optional[int] = None
         self._warned = False
         self._readable = bool({"r", "+"} & set(self._mode))
+        self._max_size: int | None = None
+        self._recursing = False
         if {"w", "a", "x", "+"} & set(self._mode):
             self._writable = True
             self._multiPartUpload = client.create_multipart_upload(Bucket=bucket, Key=key)
@@ -260,16 +263,33 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             self._buffer.seek(self._position)
             return self._buffer.read(size)
         # otherwise fetch the appropriate bytes from the remote resource
+        if self._max_size is not None and self._position >= self._max_size:
+            return b""
         if size > 0:
             stop = f"{self._position + size - 1}"
         else:
             stop = ""
         args = {"Range": f"bytes={self._position}-{stop}"}
-        response = self._client.get_object(Bucket=self._bucket, Key=self._key, **args)
-        contents = response["Body"].read()
-        response["Body"].close()
-        self._position = len(contents)
-        return contents
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=self._key, **args)
+            contents = response["Body"].read()
+            response["Body"].close()
+            self._position = len(contents)
+            return contents
+        except ClientError as exc:
+            if exc.response["ResponseMetadata"]["HTTPStatusCode"] == 416:
+                if self._recursing:
+                    # This means the function has attempted to read the whole
+                    # byte range and failed again, meaning the previous byte
+                    # was the last byte
+                    return b""
+                self._recursing = True
+                result = self.read()
+                self._max_size = self._position
+                self._recursing = False
+                return result
+            else:
+                raise
 
     def write(self, b: bytes) -> int:
         if self.writable():

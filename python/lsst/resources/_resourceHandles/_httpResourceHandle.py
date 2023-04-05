@@ -50,6 +50,8 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
         self._closed = CloseStatus.OPEN
         self._current_position = 0
+        self._maximumSize: int | None = None
+        self._recursing = False
 
     def close(self) -> None:
         self._closed = CloseStatus.CLOSED
@@ -129,6 +131,9 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
             return self._completeBuffer.getbuffer().tobytes()
 
+        if self._maximumSize is not None and self._current_position >= self._maximumSize:
+            return b""
+
         # a partial read is required, either because a size has been specified,
         # or a read has previously been done.
 
@@ -138,19 +143,30 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
             resp = self._session.get(self._url, stream=False, timeout=self._timeout, headers=headers)
 
-        if (code := resp.status_code) not in (200, 206):
-            raise FileNotFoundError(
-                f"Unable to read resource {self._url}, or byte request {self._current_position}-{end_pos}"
-                f" is out of range; status code: {code}"
-            )
+        match (code := resp.status_code):
+            case 206 | 200:
+                # verify this is not actually the whole file and the server
+                # did not lie about supporting ranges
+                if len(resp.content) > size or code != 206:
+                    self._completeBuffer = io.BytesIO()
+                    self._completeBuffer.write(resp.content)
+                    self._completeBuffer.seek(0)
+                    return self.read(size=size)
 
-        # verify this is not actually the whole file and the server did not lie
-        # about supporting ranges
-        if len(resp.content) > size or code != 206:
-            self._completeBuffer = io.BytesIO()
-            self._completeBuffer.write(resp.content)
-            self._completeBuffer.seek(0)
-            return self.read(size=size)
+                self._current_position += size
+                result = resp.content
+            case 416:
+                if self._recursing:
+                    # The function has already tried to read the whole range
+                    # and failed a second time, which means the maximum position
+                    # is where the file already is
+                    return b""
+                # Read the rest of the file
+                self._recursing = True
+                result = self.read()
+                self._maximumSize = self._current_position
+                self._recursing = False
+            case _:
+                raise BufferError(f"There was a problem reading the buffer with code {code}")
 
-        self._current_position += len(resp.content)
-        return resp.content
+        return result
