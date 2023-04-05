@@ -152,5 +152,5 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             self._completeBuffer.seek(0)
             return self.read(size=size)
 
-        self._current_position += size
+        self._current_position += len(resp.content)
         return resp.content
