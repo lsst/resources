@@ -80,13 +80,13 @@ class ResourcePath:
     Parameters
     ----------
     uri : `str`, `Path`, `urllib.parse.ParseResult`, or `ResourcePath`.
-        URI in string form.  Can be scheme-less if referring to a local
-        filesystem path.
+        URI in string form.  Can be scheme-less if referring to a relative
+        path or an absolute path on the local file system.
     root : `str` or `ResourcePath`, optional
         When fixing up a relative path in a ``file`` scheme or if scheme-less,
         use this as the root. Must be absolute.  If `None` the current
-        working directory will be used. Can be a file URI. Not used if
-        ``forceAbsolute`` is `False`.
+        working directory will be used. Can be any supported URI scheme.
+        Not used if ``forceAbsolute`` is `False`.
     forceAbsolute : `bool`, optional
         If `True`, scheme-less relative URI will be converted to an absolute
         path using a ``file`` scheme. If `False` scheme-less URI will remain
