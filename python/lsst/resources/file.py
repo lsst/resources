@@ -386,7 +386,7 @@ class FileResourcePath(ResourcePath):
     def _fixupPathUri(
         cls,
         parsed: urllib.parse.ParseResult,
-        root: Optional[Union[str, ResourcePath]] = None,
+        root: Optional[ResourcePath] = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
     ) -> Tuple[urllib.parse.ParseResult, bool]:
@@ -396,11 +396,10 @@ class FileResourcePath(ResourcePath):
         ----------
         parsed : `~urllib.parse.ParseResult`
             The result from parsing a URI using `urllib.parse`.
-        root : `str` or `ResourcePath`, optional
+        root : `ResourcePath`, optional
             Path to use as root when converting relative to absolute.
-            If `None`, it will be the current working directory. This
-            is a local file system path, or a file URI.  It is only used if
-            a file-scheme is used incorrectly with a relative path.
+            If `None`, it will be the current working directory. It is only
+            used if a file-scheme is used incorrectly with a relative path.
         forceAbsolute : `bool`, ignored
             Has no effect for this subclass. ``file`` URIs are always
             absolute.
@@ -455,13 +454,13 @@ class FileResourcePath(ResourcePath):
         replacements = {}
 
         if root is None:
-            root = os.path.abspath(os.path.curdir)
-        elif isinstance(root, ResourcePath):
+            root_str = os.path.abspath(os.path.curdir)
+        else:
             if root.scheme and root.scheme != "file":
                 raise RuntimeError(f"The override root must be a file URI not {root.scheme}")
-            root = os.path.abspath(root.ospath)
+            root_str = os.path.abspath(root.ospath)
 
-        replacements["path"] = posixpath.normpath(posixpath.join(os2posix(root), parsed.path))
+        replacements["path"] = posixpath.normpath(posixpath.join(os2posix(root_str), parsed.path))
 
         # normpath strips trailing "/" so put it back if necessary
         # Acknowledge that trailing separator exists.

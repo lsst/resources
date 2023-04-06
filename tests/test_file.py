@@ -65,12 +65,6 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
         via_root = ResourcePath("b.txt", root=root)
         self.assertEqual(via_root.ospath, "/root/b.txt")
 
-        with self.assertRaises(ValueError):
-            # Scheme-less URIs are not allowed to support non-file roots
-            # at the present time. This may change in the future to become
-            # equivalent to ResourcePath.join()
-            ResourcePath("a/b.txt", root=ResourcePath("s3://bucket/a/b/"))
-
 
 class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     scheme = "file"

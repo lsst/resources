@@ -80,16 +80,19 @@ class ResourcePath:
     Parameters
     ----------
     uri : `str`, `Path`, `urllib.parse.ParseResult`, or `ResourcePath`.
-        URI in string form.  Can be scheme-less if referring to a local
-        filesystem path.
+        URI in string form.  Can be scheme-less if referring to a relative
+        path or an absolute path on the local file system.
     root : `str` or `ResourcePath`, optional
         When fixing up a relative path in a ``file`` scheme or if scheme-less,
         use this as the root. Must be absolute.  If `None` the current
-        working directory will be used. Can be a file URI.
+        working directory will be used. Can be any supported URI scheme.
+        Not used if ``forceAbsolute`` is `False`.
     forceAbsolute : `bool`, optional
         If `True`, scheme-less relative URI will be converted to an absolute
         path using a ``file`` scheme. If `False` scheme-less URI will remain
-        scheme-less and will not be updated to ``file`` or absolute path.
+        scheme-less and will not be updated to ``file`` or absolute path unless
+        it is already an absolute path, in which case it will be updated to
+        a ``file`` scheme.
     forceDirectory: `bool`, optional
         If `True` forces the URI to end with a separator, otherwise given URI
         is interpreted as is.
@@ -97,6 +100,11 @@ class ResourcePath:
         If `True` indicates that this URI points to a temporary resource.
         The default is `False`, unless ``uri`` is already a `ResourcePath`
         instance and ``uri.isTemporary is True``.
+
+    Notes
+    -----
+    A non-standard URI of the form ``file:dir/file.txt`` is always converted
+    to an absolute ``file`` URI.
     """
 
     _pathLib: Type[PurePath] = PurePosixPath
@@ -150,6 +158,15 @@ class ResourcePath:
         parsed: urllib.parse.ParseResult
         dirLike: bool = False
         subclass: Optional[Type[ResourcePath]] = None
+
+        # Force root to be a ResourcePath -- this simplifies downstream
+        # code.
+        if root is None:
+            root_uri = None
+        elif isinstance(root, str):
+            root_uri = ResourcePath(root, forceDirectory=True, forceAbsolute=True)
+        else:
+            root_uri = root
 
         if isinstance(uri, os.PathLike):
             uri = str(uri)
@@ -224,9 +241,39 @@ class ResourcePath:
         if subclass is None:
             # Work out the subclass from the URI scheme
             if not parsed.scheme:
-                from .schemeless import SchemelessResourcePath
+                # Root may be specified as a ResourcePath that overrides
+                # the schemeless determination.
+                if (
+                    root_uri is not None
+                    and root_uri.scheme != "file"  # file scheme has different code path
+                    and not parsed.path.startswith("/")  # Not already absolute path
+                ):
+                    if not root_uri.dirLike:
+                        raise ValueError(
+                            f"Root URI ({root}) was not a directory so can not be joined with"
+                            f" path {parsed.path!r}"
+                        )
+                    # If root is temporary or this schemeless is temporary we
+                    # assume this URI is temporary.
+                    isTemporary = isTemporary or root_uri.isTemporary
+                    joined = root_uri.join(
+                        parsed.path, forceDirectory=forceDirectory, isTemporary=isTemporary
+                    )
 
-                subclass = SchemelessResourcePath
+                    # Rather than returning this new ResourcePath directly we
+                    # instead extract the path and the scheme and adjust the
+                    # URI we were given -- we need to do this to preserve
+                    # fragments since join() will drop them.
+                    parsed = parsed._replace(scheme=joined.scheme, path=joined.path, netloc=joined.netloc)
+                    subclass = type(joined)
+
+                    # Clear the root parameter to indicate that it has
+                    # been applied already.
+                    root_uri = None
+                else:
+                    from .schemeless import SchemelessResourcePath
+
+                    subclass = SchemelessResourcePath
             elif parsed.scheme == "file":
                 from .file import FileResourcePath
 
@@ -259,7 +306,7 @@ class ResourcePath:
                 )
 
             parsed, dirLike = subclass._fixupPathUri(
-                parsed, root=root, forceAbsolute=forceAbsolute, forceDirectory=forceDirectory
+                parsed, root=root_uri, forceAbsolute=forceAbsolute, forceDirectory=forceDirectory
             )
 
             # It is possible for the class to change from schemeless
@@ -697,8 +744,14 @@ class ResourcePath:
             other = other.abspath()
 
         # Scheme-less self is handled elsewhere.
-        if self.scheme != other.scheme or self.netloc != other.netloc:
+        if self.scheme != other.scheme:
             return None
+        if self.netloc != other.netloc:
+            # Special case for localhost vs empty string.
+            # There can be many variants of localhost.
+            local_netlocs = {"", "localhost", "localhost.localdomain", "127.0.0.1"}
+            if not {self.netloc, other.netloc}.issubset(local_netlocs):
+                return None
 
         enclosed_path = self._pathLib(self.relativeToPathRoot)
         parent_path = other.relativeToPathRoot
@@ -1027,7 +1080,7 @@ class ResourcePath:
     def _fixupPathUri(
         cls,
         parsed: urllib.parse.ParseResult,
-        root: Optional[Union[str, ResourcePath]] = None,
+        root: Optional[ResourcePath] = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
     ) -> Tuple[urllib.parse.ParseResult, bool]:
@@ -1037,7 +1090,7 @@ class ResourcePath:
         ----------
         parsed : `~urllib.parse.ParseResult`
             The result from parsing a URI using `urllib.parse`.
-        root : `str` or `ResourcePath`, ignored
+        root : `ResourcePath`, ignored
             Not used by the this implementation since all URIs are
             absolute except for those representing the local file system.
         forceAbsolute : `bool`, ignored.
