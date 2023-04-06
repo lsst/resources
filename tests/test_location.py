@@ -98,7 +98,7 @@ class LocationTestCase(unittest.TestCase):
 
         for uriInfo in uriStrings:
             uri = ResourcePath(uriInfo[0], root=testRoot, forceAbsolute=uriInfo[1], forceDirectory=uriInfo[2])
-            with self.subTest(uri=uriInfo[0]):
+            with self.subTest(in_uri=uriInfo[0], out_uri=uri):
                 self.assertEqual(uri.scheme, uriInfo[3], "test scheme")
                 self.assertEqual(uri.netloc, uriInfo[4], "test netloc")
                 self.assertEqual(uri.path, uriInfo[5], "test path")
@@ -115,10 +115,12 @@ class LocationTestCase(unittest.TestCase):
 
         for uriInfo in uriStrings:
             uri = ResourcePath(uriInfo[0], forceAbsolute=uriInfo[1], forceDirectory=uriInfo[2])
-            with self.subTest(uri=uriInfo[0]):
+            with self.subTest(in_uri=uriInfo[0], out_uri=uri):
                 self.assertEqual(uri.scheme, uriInfo[3], "test scheme")
                 self.assertEqual(uri.netloc, uriInfo[4], "test netloc")
-                self.assertEqual(uri.path, uriInfo[5], "test path")
+                # Use ospath here to ensure that we have unquoted any
+                # special characters in the parent directories.
+                self.assertEqual(uri.ospath, uriInfo[5], "test path")
 
         # File replacement
         uriStrings = (
@@ -131,7 +133,7 @@ class LocationTestCase(unittest.TestCase):
 
         for uriInfo in uriStrings:
             uri = ResourcePath(uriInfo[0], forceAbsolute=False).updatedFile(uriInfo[1])
-            with self.subTest(uri=uriInfo[0]):
+            with self.subTest(in_uri=uriInfo[0], out_uri=uri):
                 self.assertEqual(uri.path, uriInfo[2])
 
         # Check that schemeless can become file scheme.
