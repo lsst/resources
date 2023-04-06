@@ -118,7 +118,9 @@ class LocationTestCase(unittest.TestCase):
             with self.subTest(in_uri=uriInfo[0], out_uri=uri):
                 self.assertEqual(uri.scheme, uriInfo[3], "test scheme")
                 self.assertEqual(uri.netloc, uriInfo[4], "test netloc")
-                self.assertEqual(uri.path, uriInfo[5], "test path")
+                # Use ospath here to ensure that we have unquoted any
+                # special characters in the parent directories.
+                self.assertEqual(uri.ospath, uriInfo[5], "test path")
 
         # File replacement
         uriStrings = (
