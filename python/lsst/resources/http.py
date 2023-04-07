@@ -1521,7 +1521,7 @@ def _parse_propfind_response_body(body: str) -> List[DavProperty]:
         return responses
     else:
         # Could not parse the body
-        raise ValueError(f"Unable to parse response for PROPFIND request: {response}")
+        raise ValueError(f"Unable to parse response for PROPFIND request: {body}")
 
 
 class DavProperty:
