@@ -71,7 +71,7 @@ class HttpResourcePathConfig:
     _back_end_connections: Optional[int] = None
     _digest_algorithm: Optional[str] = None
     _send_expect_on_put: Optional[bool] = None
-    _timeout: Optional[tuple[int, int]] = None
+    _timeout: Optional[tuple[float, float]] = None
     _collect_memory_usage: Optional[bool] = None
     _backoff_min: Optional[float] = None
     _backoff_max: Optional[float] = None
@@ -151,7 +151,7 @@ class HttpResourcePathConfig:
         return self._send_expect_on_put
 
     @property
-    def timeout(self) -> tuple[int, int]:
+    def timeout(self) -> tuple[float, float]:
         """Return a tuple with the values of timeouts for connecting to the
         server and reading its response, respectively. Both values are in
         seconds.
@@ -1026,7 +1026,7 @@ class HttpResourcePath(ResourcePath):
         headers: dict[str, str] = {},
         body: Optional[str] = None,
         session: Optional[requests.Session] = None,
-        timeout: Optional[tuple[int, int]] = None,
+        timeout: Optional[tuple[float, float]] = None,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
