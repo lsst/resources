@@ -50,8 +50,8 @@ class HttpResourcePathConfig:
     """
 
     # Default timeouts for all HTTP requests (seconds).
-    DEFAULT_TIMEOUT_CONNECT = 30
-    DEFAULT_TIMEOUT_READ = 1_500
+    DEFAULT_TIMEOUT_CONNECT = 30.0
+    DEFAULT_TIMEOUT_READ = 1_500.0
 
     # Default lower and upper bounds for the backoff interval (seconds).
     # A value in this interval is randomly selected as the backoff factor when
@@ -160,13 +160,16 @@ class HttpResourcePathConfig:
         if self._timeout is not None:
             return self._timeout
 
+        self._timeout = (self.DEFAULT_TIMEOUT_CONNECT, self.DEFAULT_TIMEOUT_READ)
         try:
-            self._timeout = (
-                int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", self.DEFAULT_TIMEOUT_CONNECT)),
-                int(os.environ.get("LSST_HTTP_TIMEOUT_READ", self.DEFAULT_TIMEOUT_READ)),
+            timeout = (
+                float(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", self.DEFAULT_TIMEOUT_CONNECT)),
+                float(os.environ.get("LSST_HTTP_TIMEOUT_READ", self.DEFAULT_TIMEOUT_READ)),
             )
+            if not math.isnan(timeout[0]) and not math.isnan(timeout[1]):
+                self._timeout = timeout
         except ValueError:
-            self._timeout = (self.DEFAULT_TIMEOUT_CONNECT, self.DEFAULT_TIMEOUT_READ)
+            pass
 
         return self._timeout
 
@@ -194,9 +197,9 @@ class HttpResourcePathConfig:
 
         self._backoff_min = self.DEFAULT_BACKOFF_MIN
         try:
-            value = float(os.environ.get("LSST_HTTP_BACKOFF_MIN", self.DEFAULT_BACKOFF_MIN))
-            if not math.isnan(value):
-                self._backoff_min = value
+            backoff_min = float(os.environ.get("LSST_HTTP_BACKOFF_MIN", self.DEFAULT_BACKOFF_MIN))
+            if not math.isnan(backoff_min):
+                self._backoff_min = backoff_min
         except ValueError:
             pass
 
@@ -213,9 +216,9 @@ class HttpResourcePathConfig:
 
         self._backoff_max = self.DEFAULT_BACKOFF_MAX
         try:
-            value = float(os.environ.get("LSST_HTTP_BACKOFF_MAX", self.DEFAULT_BACKOFF_MAX))
-            if not math.isnan(value):
-                self._backoff_max = value
+            backoff_max = float(os.environ.get("LSST_HTTP_BACKOFF_MAX", self.DEFAULT_BACKOFF_MAX))
+            if not math.isnan(backoff_max):
+                self._backoff_max = backoff_max
         except ValueError:
             pass
 
