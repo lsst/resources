@@ -17,6 +17,7 @@ import contextlib
 import functools
 import io
 import logging
+import math
 import os
 import os.path
 import random
@@ -43,29 +44,37 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-# Default timeouts for all HTTP requests, in seconds.
-DEFAULT_TIMEOUT_CONNECT = 300
-DEFAULT_TIMEOUT_READ = 1500
-
-# Default number of connections to persist with both the front end and back end
-# servers.
-DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS = "2"
-DEFAULT_BACKEND_PERSISTENT_CONNECTIONS = "1"
-
-# Accepted digest algorithms
-ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
-
-
 class HttpResourcePathConfig:
     """Configuration class to encapsulate the configurable items used by class
     HttpResourcePath.
     """
 
+    # Default timeouts for all HTTP requests (seconds).
+    DEFAULT_TIMEOUT_CONNECT = 30.0
+    DEFAULT_TIMEOUT_READ = 1_500.0
+
+    # Default lower and upper bounds for the backoff interval (seconds).
+    # A value in this interval is randomly selected as the backoff factor when
+    # requests need to be retried.
+    DEFAULT_BACKOFF_MIN = 1.0
+    DEFAULT_BACKOFF_MAX = 3.0
+
+    # Default number of connections to persist with both the front end and
+    # back end servers.
+    DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS = 2
+    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS = 1
+
+    # Accepted digest algorithms
+    ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
+
     _front_end_connections: Optional[int] = None
     _back_end_connections: Optional[int] = None
     _digest_algorithm: Optional[str] = None
     _send_expect_on_put: Optional[bool] = None
-    _timeout: Optional[tuple[int, int]] = None
+    _timeout: Optional[tuple[float, float]] = None
+    _collect_memory_usage: Optional[bool] = None
+    _backoff_min: Optional[float] = None
+    _backoff_max: Optional[float] = None
 
     @property
     def front_end_connections(self) -> int:
@@ -74,11 +83,15 @@ class HttpResourcePathConfig:
         if self._front_end_connections is not None:
             return self._front_end_connections
 
-        self._front_end_connections = int(
-            os.environ.get(
-                "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+        try:
+            self._front_end_connections = int(
+                os.environ.get(
+                    "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+                )
             )
-        )
+        except ValueError:
+            self._front_end_connections = self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+
         return self._front_end_connections
 
     @property
@@ -88,9 +101,15 @@ class HttpResourcePathConfig:
         if self._back_end_connections is not None:
             return self._back_end_connections
 
-        self._back_end_connections = int(
-            os.environ.get("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
-        )
+        try:
+            self._back_end_connections = int(
+                os.environ.get(
+                    "LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
+                )
+            )
+        except ValueError:
+            self._back_end_connections = self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
+
         return self._back_end_connections
 
     @property
@@ -109,7 +128,7 @@ class HttpResourcePathConfig:
             return self._digest_algorithm
 
         digest = os.environ.get("LSST_HTTP_DIGEST", "").lower()
-        if digest not in ACCEPTED_DIGESTS:
+        if digest not in self.ACCEPTED_DIGESTS:
             digest = ""
 
         self._digest_algorithm = digest
@@ -132,7 +151,7 @@ class HttpResourcePathConfig:
         return self._send_expect_on_put
 
     @property
-    def timeout(self) -> tuple[int, int]:
+    def timeout(self) -> tuple[float, float]:
         """Return a tuple with the values of timeouts for connecting to the
         server and reading its response, respectively. Both values are in
         seconds.
@@ -141,11 +160,69 @@ class HttpResourcePathConfig:
         if self._timeout is not None:
             return self._timeout
 
-        self._timeout = (
-            int(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", DEFAULT_TIMEOUT_CONNECT)),
-            int(os.environ.get("LSST_HTTP_TIMEOUT_READ", DEFAULT_TIMEOUT_READ)),
-        )
+        self._timeout = (self.DEFAULT_TIMEOUT_CONNECT, self.DEFAULT_TIMEOUT_READ)
+        try:
+            timeout = (
+                float(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", self.DEFAULT_TIMEOUT_CONNECT)),
+                float(os.environ.get("LSST_HTTP_TIMEOUT_READ", self.DEFAULT_TIMEOUT_READ)),
+            )
+            if not math.isnan(timeout[0]) and not math.isnan(timeout[1]):
+                self._timeout = timeout
+        except ValueError:
+            pass
+
         return self._timeout
+
+    @property
+    def collect_memory_usage(self) -> bool:
+        """Return true if we want to collect memory usage when timing
+        operations against the remote server via the `lsst.utils.time_this`
+        context manager.
+        """
+
+        if self._collect_memory_usage is not None:
+            return self._collect_memory_usage
+
+        self._collect_memory_usage = "LSST_HTTP_COLLECT_MEMORY_USAGE" in os.environ
+        return self._collect_memory_usage
+
+    @property
+    def backoff_min(self) -> float:
+        """Lower bound of the interval from which a backoff factor is randomly
+        selected when retrying requests (seconds).
+        """
+
+        if self._backoff_min is not None:
+            return self._backoff_min
+
+        self._backoff_min = self.DEFAULT_BACKOFF_MIN
+        try:
+            backoff_min = float(os.environ.get("LSST_HTTP_BACKOFF_MIN", self.DEFAULT_BACKOFF_MIN))
+            if not math.isnan(backoff_min):
+                self._backoff_min = backoff_min
+        except ValueError:
+            pass
+
+        return self._backoff_min
+
+    @property
+    def backoff_max(self) -> float:
+        """Upper bound of the interval from which a backoff factor is randomly
+        selected when retrying requests (seconds).
+        """
+
+        if self._backoff_max is not None:
+            return self._backoff_max
+
+        self._backoff_max = self.DEFAULT_BACKOFF_MAX
+        try:
+            backoff_max = float(os.environ.get("LSST_HTTP_BACKOFF_MAX", self.DEFAULT_BACKOFF_MAX))
+            if not math.isnan(backoff_max):
+                self._backoff_max = backoff_max
+        except ValueError:
+            pass
+
+        return self._backoff_max
 
 
 @functools.lru_cache
@@ -169,6 +246,11 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
         ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
         verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
         resp = requests.options(str(path), verify=verify, stream=False)
+        if resp.status_code not in (requests.codes.ok, requests.codes.created):
+            raise ValueError(
+                f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} "
+                f"{resp.reason}"
+            )
 
         # Check that "1" is part of the value of the "DAV" header. We don't
         # use locks, so a server complying to class 1 is enough for our
@@ -276,7 +358,13 @@ class BearerTokenAuth(AuthBase):
 class SessionStore:
     """Cache a reusable HTTP client session per endpoint."""
 
-    def __init__(self, num_pools: int = 10, max_persistent_connections: int = 1) -> None:
+    def __init__(
+        self,
+        num_pools: int = 10,
+        max_persistent_connections: int = 1,
+        backoff_min: float = 1.0,
+        backoff_max: float = 3.0,
+    ) -> None:
         # Dictionary to store the session associated to a given URI. The key
         # of the dictionary is a root URI and the value is the session.
         self._sessions: dict[str, requests.Session] = {}
@@ -284,12 +372,17 @@ class SessionStore:
         # Number of connection pools to keep: there is one pool per remote
         # host. See documentation of urllib3 PoolManager class:
         # https://urllib3.readthedocs.io
-        self._num_pools = num_pools
+        self._num_pools: int = num_pools
 
         # Maximum number of connections per remote host to persist in each
         # connection pool. See urllib3 Advanced Usage documentation:
         # https://urllib3.readthedocs.io/en/stable/advanced-usage.html
-        self._max_persistent_connections = max_persistent_connections
+        self._max_persistent_connections: int = max_persistent_connections
+
+        # Minimum and maximum values of the inverval to compute the exponential
+        # backoff factor when retrying requests (seconds).
+        self._backoff_min: float = backoff_min
+        self._backoff_max: float = backoff_max if backoff_max > backoff_min else backoff_min + 1.0
 
     def clear(self) -> None:
         """Destroy all previously created sessions and attempt to close
@@ -358,7 +451,6 @@ class SessionStore:
         session = requests.Session()
         root_uri = str(rpath.root_uri())
         log.debug("Creating new HTTP session for endpoint %s ...", root_uri)
-
         retries = Retry(
             # Total number of retries to allow. Takes precedence over other
             # counts.
@@ -368,8 +460,9 @@ class SessionStore:
             # How many times to retry on read errors.
             read=3,
             # Backoff factor to apply between attempts after the second try
-            # (seconds)
-            backoff_factor=30 * (1 + random.random()),
+            # (seconds). Compute a random jitter to prevent all the clients
+            # to overwhelm the server by sending requests at the same time.
+            backoff_factor=self._backoff_min + (self._backoff_max - self._backoff_min) * random.random(),
             # How many times to retry on bad status codes.
             status=5,
             # Set of uppercased HTTP method verbs that we should retry on.
@@ -524,6 +617,8 @@ class HttpResourcePath(ResourcePath):
     _metadata_session_store = SessionStore(
         num_pools=5,
         max_persistent_connections=_config.front_end_connections,
+        backoff_min=_config.backoff_min,
+        backoff_max=_config.backoff_max,
     )
 
     # The data session is used for interaction with the front end servers which
@@ -536,6 +631,8 @@ class HttpResourcePath(ResourcePath):
     _data_session_store = SessionStore(
         num_pools=25,
         max_persistent_connections=_config.back_end_connections,
+        backoff_min=_config.backoff_min,
+        backoff_max=_config.backoff_max,
     )
 
     # Process ID which created the sessions above. We need to store this
@@ -857,9 +954,9 @@ class HttpResourcePath(ResourcePath):
             for prop in _parse_propfind_response_body(resp.text):
                 if prop.is_file:
                     files.append(prop.name)
-                elif not self.path.endswith(prop.href):
-                    # Only include the names of sub-directories not the
-                    # directory being walked.
+                elif not prop.href.rstrip("/").endswith(self.path.rstrip("/")):
+                    # Only include the names of sub-directories not the name of
+                    # the directory being walked.
                     dirs.append(prop.name)
 
             if file_filter is not None:
@@ -906,7 +1003,7 @@ class HttpResourcePath(ResourcePath):
                     log,
                     msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
                     args=(self, expected_length, tmpFile.name, buffering),
-                    mem_usage=True,
+                    mem_usage=self._config.collect_memory_usage,
                     mem_unit=u.mebibyte,
                 ):
                     for chunk in resp.iter_content(chunk_size=buffering):
@@ -929,7 +1026,7 @@ class HttpResourcePath(ResourcePath):
         headers: dict[str, str] = {},
         body: Optional[str] = None,
         session: Optional[requests.Session] = None,
-        timeout: Optional[tuple[int, int]] = None,
+        timeout: Optional[tuple[float, float]] = None,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
@@ -982,7 +1079,7 @@ class HttpResourcePath(ResourcePath):
                 method,
                 url,
             ),
-            mem_usage=True,
+            mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
             for _ in range(max_redirects := 5):
@@ -1054,8 +1151,13 @@ class HttpResourcePath(ResourcePath):
 
     def _options(self) -> requests.Response:
         """Send a OPTIONS webDAV request for this resource."""
+        resp = self._send_webdav_request("OPTIONS")
+        if resp.status_code in (requests.codes.ok, requests.codes.created):
+            return resp
 
-        return self._send_webdav_request("OPTIONS")
+        raise ValueError(
+            f"Unexpected response to OPTIONS request for {self}, status: {resp.status_code} " f"{resp.reason}"
+        )
 
     def _head(self) -> requests.Response:
         """Send a HEAD webDAV request for this resource."""
@@ -1216,7 +1318,13 @@ class HttpResourcePath(ResourcePath):
             # Send an empty PUT request to get redirected to the final
             # destination.
             log.debug("Sending empty PUT request to %s", url)
-            with time_this(log, msg="PUT (no data) %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+            with time_this(
+                log,
+                msg="PUT (no data) %s",
+                args=(url,),
+                mem_usage=self._config.collect_memory_usage,
+                mem_unit=u.mebibyte,
+            ):
                 resp = session.request(
                     "PUT",
                     url,
@@ -1248,7 +1356,13 @@ class HttpResourcePath(ResourcePath):
             if digest := self._config.digest_algorithm:
                 put_headers = {"Want-Digest": digest}
 
-            with time_this(log, msg="PUT %s", args=(url,), mem_usage=True, mem_unit=u.mebibyte):
+            with time_this(
+                log,
+                msg="PUT %s",
+                args=(url,),
+                mem_usage=self._config.collect_memory_usage,
+                mem_unit=u.mebibyte,
+            ):
                 resp = session.request(
                     "PUT",
                     url,
@@ -1428,11 +1542,16 @@ class DavProperty:
             self._parse(response)
 
     def _parse(self, response: eTree.Element) -> None:
-        # Extract 'href'
+        # Extract 'href'.
         if (element := response.find("./{DAV:}href")) is not None:
             # We need to use "str(element.text)"" instead of "element.text" to
-            # keep mypy happy
+            # keep mypy happy.
             self._href = str(element.text).strip()
+        else:
+            raise ValueError(
+                f"Property 'href' expected but not found in PROPFIND response: "
+                f"{eTree.tostring(response, encoding='unicode')}"
+            )
 
         for propstat in response.findall("./{DAV:}propstat"):
             # Only extract properties of interest with status OK.
@@ -1457,6 +1576,16 @@ class DavProperty:
                 if (element := prop.find("./{DAV:}displayname")) is not None:
                     self._displayname = str(element.text)
 
+        # Some webDAV servers don't include the 'displayname' property in the
+        # response so try to infer it from the value of the 'href' property.
+        # Depending on the server the href value may end with '/'.
+        if not self._displayname:
+            self._displayname = os.path.basename(self._href.rstrip("/"))
+
+        # Force a size of 0 for collections.
+        if self._collection:
+            self._getcontentlength = 0
+
     @property
     def exists(self) -> bool:
         # It is either a directory or a file with length of at least zero
@@ -1468,11 +1597,10 @@ class DavProperty:
 
     @property
     def is_file(self) -> bool:
-        return self._getcontentlength >= 0
+        return not self._collection
 
     @property
     def size(self) -> int:
-        # Only valid if is_file is True
         return self._getcontentlength
 
     @property
