@@ -133,13 +133,20 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
             return self._completeBuffer.getbuffer().tobytes()
 
-        # a partial read is required, either because a size has been specified,
-        # or a read has previously been done.
+        # A partial read is required, either because a size has been specified,
+        # or a read has previously been done. Any time we specify a byte range
+        # we must disable the gzip compression on the server since we want
+        # to address ranges in the uncompressed file. If we send ranges that
+        # are interpreted by the server as offsets into the compressed file
+        # then that is at least confusing and also there is no guarantee that
+        # the bytes can be uncompressed.
 
         end_pos = self._current_position + (size - 1) if size >= 0 else ""
-        headers = {"Range": f"bytes={self._current_position}-{end_pos}"}
+        headers = {"Range": f"bytes={self._current_position}-{end_pos}", "Accept-Encoding": ""}
 
-        with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
+        with time_this(
+            self._log, msg="Read from remote resource %s using headers %s", args=(self._url, headers)
+        ):
             resp = self._session.get(self._url, stream=False, timeout=self._timeout, headers=headers)
 
         if (code := resp.status_code) not in (200, 206):
