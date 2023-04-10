@@ -93,6 +93,9 @@ def _check_open(
             test_case.assertEqual(len(bytes_read), 0)
             bytes_read = read_buffer.read(size)
             test_case.assertEqual(len(bytes_read), 0)
+            read_buffer.seek(0)
+            bytes_read = read_buffer.read(size)
+            test_case.assertEqual(bytes_read, content)
         # Write two copies of the content, overwriting the single copy there.
         with uri.open("w" + mode_suffix, **kwargs) as write_buffer:
             write_buffer.write(double_content)
