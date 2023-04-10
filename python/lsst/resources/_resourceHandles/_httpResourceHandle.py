@@ -131,7 +131,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             self._completeBuffer = io.BytesIO()
             with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
                 resp = self._session.get(self._url, stream=False, timeout=self._timeout)
-            if (code := resp.status_code) not in (200, 206):
+            if (code := resp.status_code) not in (requests.codes.ok, requests.codes.partial):
                 raise FileNotFoundError(f"Unable to read resource {self._url}; status code: {code}")
             self._completeBuffer.write(resp.content)
             self._current_position = self._completeBuffer.tell()
@@ -154,14 +154,14 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         ):
             resp = self._session.get(self._url, stream=False, timeout=self._timeout, headers=headers)
 
-        if resp.status_code == 416:
+        if resp.status_code == requests.codes.range_not_satisfiable:
             # Must have run off the end of the file. A standard file handle
             # will treat this as EOF so be consistent with that. Do not change
             # the current position.
             self._eof = True
             return b""
 
-        if (code := resp.status_code) not in (200, 206):
+        if (code := resp.status_code) not in (requests.codes.ok, requests.codes.partial):
             raise FileNotFoundError(
                 f"Unable to read resource {self._url}, or bytes are out of range; status code: {code}"
             )
@@ -170,7 +170,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
         # verify this is not actually the whole file and the server did not lie
         # about supporting ranges
-        if len_content > size or code != 206:
+        if len_content > size or code != requests.codes.partial:
             self._completeBuffer = io.BytesIO()
             self._completeBuffer.write(resp.content)
             self._completeBuffer.seek(0)
