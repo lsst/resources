@@ -63,7 +63,11 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         raise io.UnsupportedOperation("HttpReadResourceHandle does not have a file number")
 
     def flush(self) -> None:
-        raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
+        modes = set(self._mode.split())
+        if {"w", "x", "a", "+"} & modes:
+            raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
+        if self._completeBuffer is not None:
+            self._completeBuffer.flush()
 
     @property
     def isatty(self) -> Union[bool, Callable[[], bool]]:
