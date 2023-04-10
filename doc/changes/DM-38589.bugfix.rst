@@ -1,0 +1,2 @@
+* Fix EOF detection with S3 and HTTP resource handles when using repeated ``read()``.
+* Ensure that HTTP reads with resource handles using byte ranges correctly disable remote compression.
