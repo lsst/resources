@@ -50,10 +50,12 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
         self._closed = CloseStatus.OPEN
         self._current_position = 0
+        self._eof = False
 
     def close(self) -> None:
         self._closed = CloseStatus.CLOSED
         self._completeBuffer = None
+        self._eof = True
 
     @property
     def closed(self) -> bool:
@@ -83,6 +85,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        self._eof = False
         if whence == io.SEEK_CUR and (self._current_position + offset) >= 0:
             self._current_position += offset
         elif whence == io.SEEK_SET and offset >= 0:
@@ -114,6 +117,10 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
 
     def read(self, size: int = -1) -> bytes:
+        if self._eof:
+            # At EOF so always return an empty byte string.
+            return b""
+
         # branch for if the complete file has been read before
         if self._completeBuffer is not None:
             result = self._completeBuffer.read(size)
@@ -149,19 +156,48 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         ):
             resp = self._session.get(self._url, stream=False, timeout=self._timeout, headers=headers)
 
+        if resp.status_code == 416:
+            # Must have run off the end of the file. A standard file handle
+            # will treat this as EOF so be consistent with that.
+            self._current_position = int(end_pos)
+            self._eof = True
+            return b""
+
         if (code := resp.status_code) not in (200, 206):
             raise FileNotFoundError(
                 f"Unable to read resource {self._url}, or byte request {self._current_position}-{end_pos}"
                 f" is out of range; status code: {code}"
             )
 
+        len_content = len(resp.content)
+
         # verify this is not actually the whole file and the server did not lie
         # about supporting ranges
-        if len(resp.content) > size or code != 206:
+        if len_content > size or code != 206:
             self._completeBuffer = io.BytesIO()
             self._completeBuffer.write(resp.content)
             self._completeBuffer.seek(0)
             return self.read(size=size)
 
-        self._current_position += len(resp.content)
+        # The response header should tell us the total number of bytes
+        # in the file and also the current position we have got to in the
+        # server.
+        if "Content-Range" in resp.headers:
+            content_range = resp.headers["Content-Range"]
+            _, range_string = content_range.split(" ")
+            range, total = range_string.split("/")
+            if "-" in range:
+                _, end = range.split("-")
+                end_pos = int(end)
+                if total != "*":
+                    if end_pos == int(total) - 1:
+                        self._eof = True
+
+        # Try to guess that we overran the end. This will not help if we
+        # read exactly the number of bytes to get us to the end and so we
+        # will need to do one more read and get a 416.
+        if len_content < size:
+            self._eof = True
+
+        self._current_position += len_content
         return resp.content
