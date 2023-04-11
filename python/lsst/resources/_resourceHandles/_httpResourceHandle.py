@@ -181,14 +181,17 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         # server.
         if "Content-Range" in resp.headers:
             content_range = resp.headers["Content-Range"]
-            _, range_string = content_range.split(" ")
-            range, total = range_string.split("/")
-            if "-" in range:
-                _, end = range.split("-")
-                end_pos = int(end)
-                if total != "*":
-                    if end_pos == int(total) - 1:
-                        self._eof = True
+            units, range_string = content_range.split(" ")
+            if units == "bytes":
+                range, total = range_string.split("/")
+                if "-" in range:
+                    _, end = range.split("-")
+                    end_pos = int(end)
+                    if total != "*":
+                        if end_pos == int(total) - 1:
+                            self._eof = True
+            else:
+                self._log.warning("Requested byte range from server but instead got: %s", content_range)
 
         # Try to guess that we overran the end. This will not help if we
         # read exactly the number of bytes to get us to the end and so we
