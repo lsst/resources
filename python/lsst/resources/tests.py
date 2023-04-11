@@ -471,7 +471,7 @@ class GenericTestCase(_GenericTestCase):
 class GenericReadWriteTestCase(_GenericTestCase):
     """Test schemes that can read and write using concrete resources."""
 
-    transfer_modes = ("copy", "move")
+    transfer_modes: tuple[str, ...] = ("copy", "move")
     testdir: Optional[str] = None
 
     def setUp(self) -> None:
