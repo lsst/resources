@@ -50,10 +50,12 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
         self._closed = CloseStatus.OPEN
         self._current_position = 0
+        self._eof = False
 
     def close(self) -> None:
         self._closed = CloseStatus.CLOSED
         self._completeBuffer = None
+        self._eof = True
 
     @property
     def closed(self) -> bool:
@@ -63,7 +65,9 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         raise io.UnsupportedOperation("HttpReadResourceHandle does not have a file number")
 
     def flush(self) -> None:
-        raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
+        modes = set(self._mode)
+        if {"w", "x", "a", "+"} & modes:
+            raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
 
     @property
     def isatty(self) -> Union[bool, Callable[[], bool]]:
@@ -79,6 +83,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        self._eof = False
         if whence == io.SEEK_CUR and (self._current_position + offset) >= 0:
             self._current_position += offset
         elif whence == io.SEEK_SET and offset >= 0:
@@ -110,6 +115,10 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
 
     def read(self, size: int = -1) -> bytes:
+        if self._eof:
+            # At EOF so always return an empty byte string.
+            return b""
+
         # branch for if the complete file has been read before
         if self._completeBuffer is not None:
             result = self._completeBuffer.read(size)
@@ -122,34 +131,73 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             self._completeBuffer = io.BytesIO()
             with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
                 resp = self._session.get(self._url, stream=False, timeout=self._timeout)
-            if (code := resp.status_code) not in (200, 206):
+            if (code := resp.status_code) not in (requests.codes.ok, requests.codes.partial):
                 raise FileNotFoundError(f"Unable to read resource {self._url}; status code: {code}")
             self._completeBuffer.write(resp.content)
             self._current_position = self._completeBuffer.tell()
 
             return self._completeBuffer.getbuffer().tobytes()
 
-        # a partial read is required, either because a size has been specified,
-        # or a read has previously been done.
+        # A partial read is required, either because a size has been specified,
+        # or a read has previously been done. Any time we specify a byte range
+        # we must disable the gzip compression on the server since we want
+        # to address ranges in the uncompressed file. If we send ranges that
+        # are interpreted by the server as offsets into the compressed file
+        # then that is at least confusing and also there is no guarantee that
+        # the bytes can be uncompressed.
 
         end_pos = self._current_position + (size - 1) if size >= 0 else ""
-        headers = {"Range": f"bytes={self._current_position}-{end_pos}"}
+        headers = {"Range": f"bytes={self._current_position}-{end_pos}", "Accept-Encoding": "identity"}
 
-        with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
+        with time_this(
+            self._log, msg="Read from remote resource %s using headers %s", args=(self._url, headers)
+        ):
             resp = self._session.get(self._url, stream=False, timeout=self._timeout, headers=headers)
 
-        if (code := resp.status_code) not in (200, 206):
+        if resp.status_code == requests.codes.range_not_satisfiable:
+            # Must have run off the end of the file. A standard file handle
+            # will treat this as EOF so be consistent with that. Do not change
+            # the current position.
+            self._eof = True
+            return b""
+
+        if (code := resp.status_code) not in (requests.codes.ok, requests.codes.partial):
             raise FileNotFoundError(
                 f"Unable to read resource {self._url}, or bytes are out of range; status code: {code}"
             )
 
+        len_content = len(resp.content)
+
         # verify this is not actually the whole file and the server did not lie
         # about supporting ranges
-        if len(resp.content) > size or code != 206:
+        if len_content > size or code != requests.codes.partial:
             self._completeBuffer = io.BytesIO()
             self._completeBuffer.write(resp.content)
             self._completeBuffer.seek(0)
             return self.read(size=size)
 
-        self._current_position += size
+        # The response header should tell us the total number of bytes
+        # in the file and also the current position we have got to in the
+        # server.
+        if "Content-Range" in resp.headers:
+            content_range = resp.headers["Content-Range"]
+            units, range_string = content_range.split(" ")
+            if units == "bytes":
+                range, total = range_string.split("/")
+                if "-" in range:
+                    _, end = range.split("-")
+                    end_pos = int(end)
+                    if total != "*":
+                        if end_pos >= int(total) - 1:
+                            self._eof = True
+            else:
+                self._log.warning("Requested byte range from server but instead got: %s", content_range)
+
+        # Try to guess that we overran the end. This will not help if we
+        # read exactly the number of bytes to get us to the end and so we
+        # will need to do one more read and get a 416.
+        if len_content < size:
+            self._eof = True
+
+        self._current_position += len_content
         return resp.content

@@ -171,6 +171,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertIsNotNone(handle._completeBuffer)
             self.assertEqual(result, contents)
 
+            # Check that flush works on read-only handle.
+            handle.flush()
+
         # Verify reading as a string handle works as expected.
         with remote_file.open("r") as handle:
             self.assertIsInstance(handle, io.TextIOWrapper)
@@ -181,6 +184,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
             # Check if string methods work.
             result = handle.read()
             self.assertEqual(result, contents)
+
+            # Check that flush works on read-only handle.
+            handle.flush()
 
         # Verify that write modes invoke the default base method
         with remote_file.open("w") as handle:
