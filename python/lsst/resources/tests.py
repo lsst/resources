@@ -52,7 +52,7 @@ def _check_open(
     **kwargs
         Additional keyword arguments to forward to all calls to `open`.
     """
-    text_content = "wxyz🙂"
+    text_content = "abcdefghijklmnopqrstuvwxyz🙂"
     bytes_content = uuid.uuid4().bytes
     content_by_mode_suffix = {
         "": text_content,
@@ -86,16 +86,53 @@ def _check_open(
             test_case.assertEqual(read_buffer.read(), content)
         # Check that we can read bytes in a loop and get EOF
         with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
-            size = len(bytes_content) * 3
-            bytes_read = read_buffer.read(size)
-            test_case.assertEqual(bytes_read, content)
-            bytes_read = read_buffer.read(size)
-            test_case.assertEqual(len(bytes_read), 0)
-            bytes_read = read_buffer.read(size)
-            test_case.assertEqual(len(bytes_read), 0)
+            # Seek off the end of the file and should read empty back.
+            read_buffer.seek(1024)
+            test_case.assertEqual(read_buffer.tell(), 1024)
+            content_read = read_buffer.read()  # Read as much as we can.
+            test_case.assertEqual(len(content_read), 0, f"Read: {content_read!r}, expected empty.")
+
+            # First read more than the content.
             read_buffer.seek(0)
-            bytes_read = read_buffer.read(size)
-            test_case.assertEqual(bytes_read, content)
+            size = len(content) * 3
+            chunk_read = read_buffer.read(size)
+            test_case.assertEqual(chunk_read, content)
+
+            # Repeated reads should always return empty string.
+            chunk_read = read_buffer.read(size)
+            test_case.assertEqual(len(chunk_read), 0)
+            chunk_read = read_buffer.read(size)
+            test_case.assertEqual(len(chunk_read), 0)
+
+            # Go back to start of file and read in smaller chunks.
+            read_buffer.seek(0)
+            size = len(content) // 3
+
+            content_read = empty_content_by_mode_suffix[mode_suffix]
+            n_reads = 0
+            while chunk_read := read_buffer.read(size):
+                content_read += chunk_read
+                n_reads += 1
+                if n_reads > 10:  # In case EOF never hits because of bug.
+                    raise AssertionError(
+                        f"Failed to stop reading from file after {n_reads} loops. "
+                        f"Read {len(content_read)} bytes/characters. Expected {len(content)}."
+                    )
+            test_case.assertEqual(content_read, content)
+
+            # Go back to start of file and read the entire thing.
+            read_buffer.seek(0)
+            content_read = read_buffer.read()
+            test_case.assertEqual(content_read, content)
+
+            # Seek off the end of the file and should read empty back.
+            # We run this check twice since in some cases the handle will
+            # cache knowledge of the file size.
+            read_buffer.seek(1024)
+            test_case.assertEqual(read_buffer.tell(), 1024)
+            content_read = read_buffer.read()
+            test_case.assertEqual(len(content_read), 0, f"Read: {content_read!r}, expected empty.")
+
         # Write two copies of the content, overwriting the single copy there.
         with uri.open("w" + mode_suffix, **kwargs) as write_buffer:
             write_buffer.write(double_content)
