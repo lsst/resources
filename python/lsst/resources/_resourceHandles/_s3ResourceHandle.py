@@ -274,7 +274,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             response = self._client.get_object(Bucket=self._bucket, Key=self._key, **args)
             contents = response["Body"].read()
             response["Body"].close()
-            self._position = len(contents)
+            self._position += len(contents)
             return contents
         except ClientError as exc:
             if exc.response["ResponseMetadata"]["HTTPStatusCode"] == 416:
