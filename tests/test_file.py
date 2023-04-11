@@ -13,11 +13,26 @@ import os
 import pathlib
 import unittest
 import unittest.mock
+import urllib.parse
 
-from lsst.resources import ResourcePath
+from lsst.resources import ResourcePath, ResourcePathExpression
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
+
+
+class SimpleTestCase(unittest.TestCase):
+    def test_instance(self):
+        for example in (
+            "xxx",
+            ResourcePath("xxx"),
+            pathlib.Path("xxx"),
+            urllib.parse.urlparse("file:///xxx"),
+        ):
+            self.assertIsInstance(example, ResourcePathExpression)
+
+        for example in ({1, 2, 3}, 42, self):
+            self.assertNotIsInstance(example, ResourcePathExpression)
 
 
 class FileTestCase(GenericTestCase, unittest.TestCase):
