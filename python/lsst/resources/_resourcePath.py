@@ -63,11 +63,6 @@ ESCAPED_HASH = urllib.parse.quote("#")
 MAX_WORKERS = 10
 
 
-ResourcePathExpression = Union[str, urllib.parse.ParseResult, "ResourcePath", Path]
-"""Type-annotation alias for objects that can be coerced to ResourcePath.
-"""
-
-
 class ResourcePath:
     """Convenience wrapper around URI parsers.
 
@@ -1404,3 +1399,8 @@ class ResourcePath:
             out_bytes = str_buffer.getvalue().encode(encoding)
         if "r" not in mode or "+" in mode:
             self.write(out_bytes, overwrite=("x" not in mode))
+
+
+ResourcePathExpression = Union[str, urllib.parse.ParseResult, ResourcePath, Path]
+"""Type-annotation alias for objects that can be coerced to ResourcePath.
+"""

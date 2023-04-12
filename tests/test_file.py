@@ -11,13 +11,34 @@
 
 import os
 import pathlib
+import sys
 import unittest
 import unittest.mock
+import urllib.parse
 
-from lsst.resources import ResourcePath
+from lsst.resources import ResourcePath, ResourcePathExpression
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
+
+_OLD_PYTHON = False
+if sys.version_info < (3, 10, 0):
+    _OLD_PYTHON = True
+
+
+class SimpleTestCase(unittest.TestCase):
+    @unittest.skipIf(_OLD_PYTHON, "isinstance() with unions is not supported.")
+    def test_instance(self):
+        for example in (
+            "xxx",
+            ResourcePath("xxx"),
+            pathlib.Path("xxx"),
+            urllib.parse.urlparse("file:///xxx"),
+        ):
+            self.assertIsInstance(example, ResourcePathExpression)
+
+        for example in ({1, 2, 3}, 42, self):
+            self.assertNotIsInstance(example, ResourcePathExpression)
 
 
 class FileTestCase(GenericTestCase, unittest.TestCase):
