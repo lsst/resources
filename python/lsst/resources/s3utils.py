@@ -33,11 +33,13 @@ __all__ = (
 
 import functools
 import os
+import re
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
 from typing import Any, Callable, Optional, Tuple, Union, cast
 
 from botocore.exceptions import ClientError
+from botocore.handlers import validate_bucket_name
 from urllib3.exceptions import HTTPError, RequestError
 
 try:
@@ -147,6 +149,12 @@ def getS3Client() -> boto3.client:
     -----
     The endpoint URL is from the environment variable S3_ENDPOINT_URL.
     If none is specified, the default AWS one is used.
+
+    If the environment variable LSST_DISABLE_BUCKET_VALIDATION exists
+    and has a value that is not empty, "0", "f", "n", or "false"
+    (case-insensitive), then bucket name validation is disabled.  This
+    disabling allows Ceph multi-tenancy colon separators to appear in
+    bucket names.
     """
     if boto3 is None:
         raise ModuleNotFoundError("Could not find boto3. Are you sure it is installed?")
@@ -156,16 +164,21 @@ def getS3Client() -> boto3.client:
     endpoint = os.environ.get("S3_ENDPOINT_URL", None)
     if not endpoint:
         endpoint = None  # Handle ""
+    disable_value = os.environ.get("LSST_DISABLE_BUCKET_VALIDATION", "0")
+    skip_validation = not re.search(r"^(0|f|n|false)?$", disable_value, re.I)
 
-    return _get_s3_client(endpoint)
+    return _get_s3_client(endpoint, skip_validation)
 
 
 @functools.lru_cache()
-def _get_s3_client(endpoint: str) -> boto3.client:
+def _get_s3_client(endpoint: str, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
     config = botocore.config.Config(read_timeout=180, retries={"mode": "adaptive", "max_attempts": 10})
 
-    return boto3.client("s3", endpoint_url=endpoint, config=config)
+    client = boto3.client("s3", endpoint_url=endpoint, config=config)
+    if skip_validation:
+        client.meta.events.unregister("before-parameter-build.s3", validate_bucket_name)
+    return client
 
 
 def s3CheckFileExists(

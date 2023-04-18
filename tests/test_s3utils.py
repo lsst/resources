@@ -86,14 +86,15 @@ class S3UtilsTestCase(unittest.TestCase):
         self.assertFalse(bucketExists(f"{self.bucketName}_no_exist"))
 
     def testCephBucket(self):
-        with self.assertRaises(ParamValidationError):
-            bucketExists("foo:bar")
-
-    @mock.patch.dict(os.environ, {"LSST_CEPH_BUCKETS": "1"})
-    def testCephBucketSuccess(self):
-        self.assertEqual(os.environ["LSST_CEPH_BUCKETS"], "1")
-        local_client = getS3Client()
-        self.assertFalse(bucketExists("foo:bar"), local_client)
+        with mock.patch.dict(os.environ, {"LSST_DISABLE_BUCKET_VALIDATION": "N"}):
+            self.assertEqual(os.environ["LSST_DISABLE_BUCKET_VALIDATION"], "N")
+            local_client = getS3Client()
+            with self.assertRaises(ParamValidationError):
+                bucketExists("foo:bar", local_client)
+        with mock.patch.dict(os.environ, {"LSST_DISABLE_BUCKET_VALIDATION": "1"}):
+            self.assertEqual(os.environ["LSST_DISABLE_BUCKET_VALIDATION"], "1")
+            local_client = getS3Client()
+            self.assertFalse(bucketExists("foo:bar", local_client))
 
     def testFileExists(self):
         self.assertTrue(s3CheckFileExists(client=self.client, bucket=self.bucketName, path=self.fileName)[0])
