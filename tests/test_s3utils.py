@@ -19,12 +19,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
 import unittest
+from unittest import mock
 
 from lsst.resources.s3utils import clean_test_environment
 
 try:
     import boto3
+    from botocore.exceptions import ParamValidationError
     from moto import mock_s3
 except ImportError:
     boto3 = None
@@ -81,6 +84,17 @@ class S3UtilsTestCase(unittest.TestCase):
     def testBucketExists(self):
         self.assertTrue(bucketExists(f"{self.bucketName}"))
         self.assertFalse(bucketExists(f"{self.bucketName}_no_exist"))
+
+    def testCephBucket(self):
+        with mock.patch.dict(os.environ, {"LSST_DISABLE_BUCKET_VALIDATION": "N"}):
+            self.assertEqual(os.environ["LSST_DISABLE_BUCKET_VALIDATION"], "N")
+            local_client = getS3Client()
+            with self.assertRaises(ParamValidationError):
+                bucketExists("foo:bar", local_client)
+        with mock.patch.dict(os.environ, {"LSST_DISABLE_BUCKET_VALIDATION": "1"}):
+            self.assertEqual(os.environ["LSST_DISABLE_BUCKET_VALIDATION"], "1")
+            local_client = getS3Client()
+            self.assertFalse(bucketExists("foo:bar", local_client))
 
     def testFileExists(self):
         self.assertTrue(s3CheckFileExists(client=self.client, bucket=self.bucketName, path=self.fileName)[0])
