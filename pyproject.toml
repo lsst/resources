@@ -21,6 +21,7 @@ classifiers = [
 keywords = ["lsst"]
 dependencies = [
     "lsst-utils",
+    "importlib_resources",
 ]
 dynamic = ["version"]
 
