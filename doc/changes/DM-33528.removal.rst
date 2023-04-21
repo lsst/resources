@@ -1,0 +1,1 @@
+This package no longer supports Python versions older than 3.10.

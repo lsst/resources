@@ -1,0 +1,3 @@
+``resource`` URI schemes now use `importlib.resources` rather than the deprecated ``pkg_resources``.
+Due to this change, ``resource`` URI schemes now also support ``walk`` and ``findFileResources``.
+This change means that the ``lsst-resources`` package no longer works with Python versions older than 3.10.
