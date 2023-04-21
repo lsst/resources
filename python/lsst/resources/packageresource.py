@@ -9,11 +9,13 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+from __future__ import annotations
+
 import contextlib
 import logging
 import re
 from importlib import resources
-from typing import Iterator, Optional
+from typing import Iterator
 
 __all__ = ("PackageResourcePath",)
 
@@ -75,7 +77,7 @@ class PackageResourcePath(ResourcePath):
         self,
         mode: str = "r",
         *,
-        encoding: Optional[str] = None,
+        encoding: str | None = None,
         prefer_file_temporary: bool = False,
     ) -> Iterator[ResourceHandleProtocol]:
         # Docstring inherited.
