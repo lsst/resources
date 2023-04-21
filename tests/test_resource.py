@@ -76,6 +76,25 @@ class ResourceReadTestCase(unittest.TestCase):
             with uri.open("w") as buffer:
                 pass
 
+    def test_walk(self):
+        """Test that we can find file resources.
+
+        Try to find resources in this package. Python does not care whether
+        a resource is a Python file or anything else.
+        """
+
+        resource = ResourcePath("resource://lsst.resources/")
+        resources = set(ResourcePath.findFileResources([resource]))
+
+        # Do not try to list all possible options. Files can move around
+        # and cache files can appear.
+        subset = {
+            ResourcePath("resource://lsst.resources/_resourceHandles/_s3ResourceHandle.py"),
+            ResourcePath("resource://lsst.resources/http.py"),
+        }
+        for r in subset:
+            self.assertIn(r, resources)
+
 
 if __name__ == "__main__":
     unittest.main()

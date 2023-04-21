@@ -11,6 +11,7 @@
 
 import contextlib
 import logging
+import re
 from importlib import resources
 from typing import Iterator, Optional
 
@@ -91,3 +92,37 @@ class PackageResourcePath(ResourcePath):
 
             with resources.open_text(package, resource, **kwargs) as buffer:
                 yield buffer
+
+    def walk(
+        self, file_filter: str | re.Pattern | None = None
+    ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
+        # Docstring inherited.
+        if not self.dirLike:
+            raise ValueError("Can not walk a non-directory URI")
+
+        if isinstance(file_filter, str):
+            file_filter = re.compile(file_filter)
+
+        package, _ = self._reallocate_path()
+
+        files: list[str] = []
+        dirs: list[str] = []
+        for item in resources.contents(package):
+            if resources.is_resource(package, item):
+                # This is a file.
+                files.append(item)
+            else:
+                # This is a directory.
+                dirs.append(item)
+
+        if file_filter is not None:
+            files = [f for f in files if file_filter.search(f)]
+
+        if not dirs and not files:
+            return
+        else:
+            yield type(self)(self, forceAbsolute=False, forceDirectory=True), dirs, files
+
+        for dir in dirs:
+            new_uri = self.join(dir, forceDirectory=True)
+            yield from new_uri.walk(file_filter)
