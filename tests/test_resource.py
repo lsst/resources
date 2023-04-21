@@ -9,6 +9,7 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import re
 import unittest
 
 from lsst.resources import ResourcePath
@@ -94,6 +95,23 @@ class ResourceReadTestCase(unittest.TestCase):
         }
         for r in subset:
             self.assertIn(r, resources)
+
+        resources = set(
+            ResourcePath.findFileResources(
+                [ResourcePath("resource://lsst.resources/")], file_filter=r".*\.txt"
+            )
+        )
+        self.assertEqual(resources, set())
+
+        # Compare regex with str.
+        regex = r".*\.py"
+        py_files_str = list(resource.walk(file_filter=regex))
+        py_files_re = list(resource.walk(file_filter=re.compile(regex)))
+        self.assertGreater(len(py_files_str), 1)
+        self.assertEqual(py_files_str, py_files_re)
+
+        with self.assertRaises(ValueError):
+            list(ResourcePath("resource://lsst.resources/http.py").walk())
 
 
 if __name__ == "__main__":
