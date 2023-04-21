@@ -11,9 +11,8 @@
 
 import contextlib
 import logging
+from importlib import resources
 from typing import Iterator, Optional
-
-import pkg_resources
 
 __all__ = ("PackageResourcePath",)
 
@@ -31,13 +30,43 @@ class PackageResourcePath(ResourcePath):
     resource name.
     """
 
+    def _reallocate_path(self) -> tuple[str, str]:
+        """Convert netloc + path + file into resource + file.
+
+        Returns
+        -------
+        package : `str`
+            The package name including any path component and using dot
+            separator.
+        resource : `str`
+            The file resource without a path component.
+
+        Notes
+        -----
+        The ``importlib.resources`` package thinks that resources are files
+        without any path component. This means that the path component has
+        to be combined with the ``netloc`` component before it can be used.
+        This behavior differs from ``pkg_resources``.
+        """
+        package = self.netloc
+        parent_uri, resource = self.split()
+        path = parent_uri.path.strip("/")
+        sub_package = path.replace("/", ".")
+        if sub_package:
+            package += "." + sub_package
+        return package, resource
+
     def exists(self) -> bool:
         """Check that the python resource exists."""
-        return pkg_resources.resource_exists(self.netloc, self.relativeToPathRoot)
+        package, resource = self._reallocate_path()
+        return resources.is_resource(package, resource)
 
     def read(self, size: int = -1) -> bytes:
         """Read the contents of the resource."""
-        with pkg_resources.resource_stream(self.netloc, self.relativeToPathRoot) as fh:
+        package, resource = self._reallocate_path()
+        if size < 0:
+            return resources.read_binary(package, resource)
+        with resources.open_binary(package, resource) as fh:
             return fh.read(size)
 
     @contextlib.contextmanager
@@ -51,9 +80,14 @@ class PackageResourcePath(ResourcePath):
         # Docstring inherited.
         if "r" not in mode or "+" in mode:
             raise RuntimeError(f"Package resource URI {self} is read-only.")
+        package, resource = self._reallocate_path()
         if "b" in mode:
-            with pkg_resources.resource_stream(self.netloc, self.relativeToPathRoot) as buffer:
+            with resources.open_binary(package, resource) as buffer:
                 yield buffer
         else:
-            with super().open(mode, encoding=encoding, prefer_file_temporary=prefer_file_temporary) as buffer:
+            kwargs = {}
+            if encoding is not None:
+                kwargs["encoding"] = encoding
+
+            with resources.open_text(package, resource, **kwargs) as buffer:
                 yield buffer
