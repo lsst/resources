@@ -635,7 +635,7 @@ class HttpResourcePath(ResourcePath):
         backoff_max=_config.backoff_max,
     )
 
-    # Process ID which created the sessions above. We need to store this
+    # Process ID which created the session stores above. We need to store this
     # to replace sessions created by a parent process and inherited by a
     # child process after a fork, to avoid confusing the SSL layer.
     _pid: int = -1
@@ -646,13 +646,16 @@ class HttpResourcePath(ResourcePath):
         download of data, i.e. mostly metadata requests.
         """
 
-        if hasattr(self, "_metadata_session") and self._pid == os.getpid():
-            return self._metadata_session
+        if hasattr(self, "_metadata_session"):
+            if HttpResourcePath._pid == os.getpid():
+                return self._metadata_session
+            else:
+                # The metadata session we have in cache was likely created by
+                # a parent process. Discard all the sessions in that store.
+                self._metadata_session_store.clear()
 
-        # Reset the store in case it was created by another process and
-        # retrieve a session.
-        self._metadata_session_store.clear()
-        self._pid = os.getpid()
+        # Retrieve a new metadata session.
+        HttpResourcePath._pid = os.getpid()
         self._metadata_session: requests.Session = self._metadata_session_store.get(self)
         return self._metadata_session
 
@@ -660,13 +663,16 @@ class HttpResourcePath(ResourcePath):
     def data_session(self) -> requests.Session:
         """Client session for uploading and downloading data."""
 
-        if hasattr(self, "_data_session") and self._pid == os.getpid():
-            return self._data_session
+        if hasattr(self, "_data_session"):
+            if HttpResourcePath._pid == os.getpid():
+                return self._data_session
+            else:
+                # The data session we have in cache was likely created by
+                # a parent process. Discard all the sessions in that store.
+                self._data_session_store.clear()
 
-        # Reset the store in case it was created by another process and
-        # retrieve a session.
-        self._data_session_store.clear()
-        self._pid = os.getpid()
+        # Retrieve a new data session.
+        HttpResourcePath._pid = os.getpid()
         self._data_session: requests.Session = self._data_session_store.get(self)
         return self._data_session
 
