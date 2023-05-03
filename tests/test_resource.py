@@ -9,6 +9,7 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import re
 import unittest
 
 from lsst.resources import ResourcePath
@@ -75,6 +76,42 @@ class ResourceReadTestCase(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             with uri.open("w") as buffer:
                 pass
+
+    def test_walk(self):
+        """Test that we can find file resources.
+
+        Try to find resources in this package. Python does not care whether
+        a resource is a Python file or anything else.
+        """
+
+        resource = ResourcePath("resource://lsst.resources/")
+        resources = set(ResourcePath.findFileResources([resource]))
+
+        # Do not try to list all possible options. Files can move around
+        # and cache files can appear.
+        subset = {
+            ResourcePath("resource://lsst.resources/_resourceHandles/_s3ResourceHandle.py"),
+            ResourcePath("resource://lsst.resources/http.py"),
+        }
+        for r in subset:
+            self.assertIn(r, resources)
+
+        resources = set(
+            ResourcePath.findFileResources(
+                [ResourcePath("resource://lsst.resources/")], file_filter=r".*\.txt"
+            )
+        )
+        self.assertEqual(resources, set())
+
+        # Compare regex with str.
+        regex = r".*\.py"
+        py_files_str = list(resource.walk(file_filter=regex))
+        py_files_re = list(resource.walk(file_filter=re.compile(regex)))
+        self.assertGreater(len(py_files_str), 1)
+        self.assertEqual(py_files_str, py_files_re)
+
+        with self.assertRaises(ValueError):
+            list(ResourcePath("resource://lsst.resources/http.py").walk())
 
 
 if __name__ == "__main__":

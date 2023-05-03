@@ -9,11 +9,19 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+from __future__ import annotations
+
 import contextlib
 import logging
-from typing import Iterator, Optional
+import re
+import sys
 
-import pkg_resources
+if sys.version_info >= (3, 11, 0):
+    from importlib import resources
+else:
+    import importlib_resources as resources  # type: ignore[no-redef]
+
+from typing import Iterator
 
 __all__ = ("PackageResourcePath",)
 
@@ -33,11 +41,13 @@ class PackageResourcePath(ResourcePath):
 
     def exists(self) -> bool:
         """Check that the python resource exists."""
-        return pkg_resources.resource_exists(self.netloc, self.relativeToPathRoot)
+        ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+        return ref.is_file() or ref.is_dir()
 
     def read(self, size: int = -1) -> bytes:
         """Read the contents of the resource."""
-        with pkg_resources.resource_stream(self.netloc, self.relativeToPathRoot) as fh:
+        ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+        with ref.open("rb") as fh:
             return fh.read(size)
 
     @contextlib.contextmanager
@@ -45,15 +55,45 @@ class PackageResourcePath(ResourcePath):
         self,
         mode: str = "r",
         *,
-        encoding: Optional[str] = None,
+        encoding: str | None = None,
         prefer_file_temporary: bool = False,
     ) -> Iterator[ResourceHandleProtocol]:
         # Docstring inherited.
         if "r" not in mode or "+" in mode:
             raise RuntimeError(f"Package resource URI {self} is read-only.")
-        if "b" in mode:
-            with pkg_resources.resource_stream(self.netloc, self.relativeToPathRoot) as buffer:
-                yield buffer
+        ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+        with ref.open(mode, encoding=encoding) as buffer:
+            yield buffer
+
+    def walk(
+        self, file_filter: str | re.Pattern | None = None
+    ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
+        # Docstring inherited.
+        if not self.dirLike:
+            raise ValueError("Can not walk a non-directory URI")
+
+        if isinstance(file_filter, str):
+            file_filter = re.compile(file_filter)
+
+        ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+
+        files: list[str] = []
+        dirs: list[str] = []
+        for item in ref.iterdir():
+            if item.is_file():
+                files.append(item.name)
+            else:
+                # This is a directory.
+                dirs.append(item.name)
+
+        if file_filter is not None:
+            files = [f for f in files if file_filter.search(f)]
+
+        if not dirs and not files:
+            return
         else:
-            with super().open(mode, encoding=encoding, prefer_file_temporary=prefer_file_temporary) as buffer:
-                yield buffer
+            yield type(self)(self, forceAbsolute=False, forceDirectory=True), dirs, files
+
+        for dir in dirs:
+            new_uri = self.join(dir, forceDirectory=True)
+            yield from new_uri.walk(file_filter)
