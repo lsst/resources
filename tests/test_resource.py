@@ -50,6 +50,12 @@ class ResourceReadTestCase(unittest.TestCase):
         truncated = uri.read(size=9).decode()
         self.assertEqual(truncated, content[:9])
 
+        # Check that directory determination can work directly without the
+        # trailing slash.
+        d = self.root_uri.join("Icons")
+        self.assertTrue(d.isdir())
+        self.assertTrue(d.dirLike)
+
         d = self.root_uri.join("Icons/", forceDirectory=True)
         self.assertTrue(uri.exists(), f"Check directory {d} exists")
         self.assertTrue(d.isdir())

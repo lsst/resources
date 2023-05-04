@@ -23,10 +23,14 @@ if sys.version_info >= (3, 11, 0):
 else:
     import importlib_resources as resources  # type: ignore[no-redef]
 
-from typing import Iterator
+from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourcePath
+
+if TYPE_CHECKING:
+    import urllib.parse
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +42,31 @@ class PackageResourcePath(ResourcePath):
     where the network location is the Python package and the path is the
     resource name.
     """
+
+    @classmethod
+    def _fixDirectorySep(
+        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool = False
+    ) -> tuple[urllib.parse.ParseResult, bool]:
+        """Ensure that a path separator is present on directory paths."""
+        parsed, dirLike = super()._fixDirectorySep(parsed, forceDirectory=forceDirectory)
+        if not dirLike:
+            try:
+                # If the resource does location does not exist this can
+                # fail immediately. It is possible we are doing path
+                # manipulation and not wanting to read the resource now,
+                # so catch the error and move on.
+                ref = resources.files(parsed.netloc).joinpath(parsed.path.lstrip("/"))
+            except ModuleNotFoundError:
+                pass
+            else:
+                dirLike = ref.is_dir()
+        return parsed, dirLike
+
+    def isdir(self) -> bool:
+        """Return True if this URI is a directory, else False."""
+        ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+        # The item might not exist yet.
+        return self.dirLike or ref.is_dir()
 
     def exists(self) -> bool:
         """Check that the python resource exists."""
@@ -100,8 +129,8 @@ class PackageResourcePath(ResourcePath):
         self, file_filter: str | re.Pattern | None = None
     ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
         # Docstring inherited.
-        if not self.dirLike:
-            raise ValueError("Can not walk a non-directory URI")
+        if not self.isdir():
+            raise ValueError(f"Can not walk a non-directory URI: {self}")
 
         if isinstance(file_filter, str):
             file_filter = re.compile(file_filter)
