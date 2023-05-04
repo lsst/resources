@@ -43,11 +43,20 @@ class ResourceReadTestCase(unittest.TestCase):
         content = uri.read().decode()
         self.assertIn("IDLE", content)
 
+        with uri.as_local() as local_uri:
+            self.assertEqual(local_uri.scheme, "file")
+            self.assertTrue(local_uri.exists())
+
         truncated = uri.read(size=9).decode()
         self.assertEqual(truncated, content[:9])
 
         d = self.root_uri.join("Icons/", forceDirectory=True)
         self.assertTrue(uri.exists(), f"Check directory {d} exists")
+        self.assertTrue(d.isdir())
+
+        with self.assertRaises(IsADirectoryError):
+            with d.as_local() as local_uri:
+                pass
 
         j = d.join("README.txt")
         self.assertEqual(uri, j)

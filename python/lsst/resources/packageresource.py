@@ -51,6 +51,37 @@ class PackageResourcePath(ResourcePath):
             return fh.read(size)
 
     @contextlib.contextmanager
+    def as_local(self) -> Iterator[ResourcePath]:
+        """Return the location of the Python resource as local file.
+
+        Yields
+        ------
+        local : `ResourcePath`
+            This might be the original resource or a copy on the local file
+            system.
+
+        Notes
+        -----
+        The context manager will automatically delete any local temporary
+        file.
+
+        Examples
+        --------
+        Should be used as a context manager:
+
+        .. code-block:: py
+
+           with uri.as_local() as local:
+               ospath = local.ospath
+        """
+        ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+        if ref.is_dir():
+            raise IsADirectoryError(f"Directory-like URI {self} cannot be fetched as local.")
+
+        with resources.as_file(ref) as file:
+            yield ResourcePath(file)
+
+    @contextlib.contextmanager
     def open(
         self,
         mode: str = "r",
