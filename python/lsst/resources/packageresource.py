@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+__all__ = ("PackageResourcePath",)
+
 import contextlib
 import logging
 import re
@@ -22,8 +24,6 @@ else:
     import importlib_resources as resources  # type: ignore[no-redef]
 
 from typing import Iterator
-
-__all__ = ("PackageResourcePath",)
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourcePath
