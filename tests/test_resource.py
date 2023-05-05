@@ -77,6 +77,18 @@ class ResourceReadTestCase(unittest.TestCase):
         self.assertFalse(multi[bad])
         self.assertFalse(multi[not_there])
 
+        # Check that the bad URI works as expected.
+        self.assertFalse(bad.exists())
+        self.assertFalse(bad.isdir())
+        with self.assertRaises(FileNotFoundError):
+            bad.read()
+        with self.assertRaises(FileNotFoundError):
+            with bad.as_local():
+                pass
+        with self.assertRaises(FileNotFoundError):
+            with bad.open("r"):
+                pass
+
     def test_open(self):
         uri = self.root_uri.join("Icons/README.txt")
         with uri.open("rb") as buffer:
@@ -127,6 +139,11 @@ class ResourceReadTestCase(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             list(ResourcePath("resource://lsst.resources/http.py").walk())
+
+        bad_dir = ResourcePath(f"{self.scheme}://bad.module/a/dir/")
+        self.assertTrue(bad_dir.isdir())
+        with self.assertRaises(ValueError):
+            list(bad_dir.walk())
 
 
 if __name__ == "__main__":
