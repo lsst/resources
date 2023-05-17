@@ -43,11 +43,26 @@ class ResourceReadTestCase(unittest.TestCase):
         content = uri.read().decode()
         self.assertIn("IDLE", content)
 
+        with uri.as_local() as local_uri:
+            self.assertEqual(local_uri.scheme, "file")
+            self.assertTrue(local_uri.exists())
+
         truncated = uri.read(size=9).decode()
         self.assertEqual(truncated, content[:9])
 
+        # Check that directory determination can work directly without the
+        # trailing slash.
+        d = self.root_uri.join("Icons")
+        self.assertTrue(d.isdir())
+        self.assertTrue(d.dirLike)
+
         d = self.root_uri.join("Icons/", forceDirectory=True)
         self.assertTrue(uri.exists(), f"Check directory {d} exists")
+        self.assertTrue(d.isdir())
+
+        with self.assertRaises(IsADirectoryError):
+            with d.as_local() as local_uri:
+                pass
 
         j = d.join("README.txt")
         self.assertEqual(uri, j)
@@ -61,6 +76,18 @@ class ResourceReadTestCase(unittest.TestCase):
         self.assertTrue(multi[uri])
         self.assertFalse(multi[bad])
         self.assertFalse(multi[not_there])
+
+        # Check that the bad URI works as expected.
+        self.assertFalse(bad.exists())
+        self.assertFalse(bad.isdir())
+        with self.assertRaises(FileNotFoundError):
+            bad.read()
+        with self.assertRaises(FileNotFoundError):
+            with bad.as_local():
+                pass
+        with self.assertRaises(FileNotFoundError):
+            with bad.open("r"):
+                pass
 
     def test_open(self):
         uri = self.root_uri.join("Icons/README.txt")
@@ -112,6 +139,11 @@ class ResourceReadTestCase(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             list(ResourcePath("resource://lsst.resources/http.py").walk())
+
+        bad_dir = ResourcePath(f"{self.scheme}://bad.module/a/dir/")
+        self.assertTrue(bad_dir.isdir())
+        with self.assertRaises(ValueError):
+            list(bad_dir.walk())
 
 
 if __name__ == "__main__":
