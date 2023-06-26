@@ -28,7 +28,7 @@ __all__ = (
     "max_retry_time",
     "retryable_io_errors",
     "retryable_client_errors",
-    "_TooManyRequestsException",
+    "_TooManyRequestsError",
 )
 
 import functools
@@ -74,7 +74,7 @@ except ImportError:
     backoff = cast(ModuleType, Backoff)
 
 
-class _TooManyRequestsException(Exception):
+class _TooManyRequestsError(Exception):
     """Private exception that can be used for 429 retry.
 
     botocore refuses to deal with 429 error itself so issues a generic
@@ -98,7 +98,7 @@ retryable_io_errors = (
     TimeoutError,
     ConnectionError,
     # private
-    _TooManyRequestsException,
+    _TooManyRequestsError,
 )
 
 # Client error can include NoSuchKey so retry may not be the right

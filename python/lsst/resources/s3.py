@@ -31,7 +31,7 @@ from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
 from ._resourcePath import ResourcePath
 from .s3utils import (
-    _TooManyRequestsException,
+    _TooManyRequestsError,
     all_retryable_errors,
     backoff,
     bucketExists,
@@ -92,14 +92,14 @@ def _translate_client_error(err: ClientError) -> None:
 
     Raises
     ------
-    _TooManyRequestsException
+    _TooManyRequestsError
         Raised if the `ClientError` looks like a 429 retry request.
     """
     if "(429)" in str(err):
         # ClientError includes the error code in the message
         # but no direct way to access it without looking inside the
         # response.
-        raise _TooManyRequestsException(str(err)) from err
+        raise _TooManyRequestsError(str(err)) from err
     elif "(404)" in str(err):
         # Some systems can generate this rather than NoSuchKey.
         raise FileNotFoundError("Resource not found: {self}")
