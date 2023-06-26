@@ -712,7 +712,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         self.assertEqual(found, expected_yaml)
 
         # Now two explicit directories and a file
-        expected = set(u for u in expected_yaml)
+        expected = {u for u in expected_yaml}
         expected.add(file)
 
         found = set(
