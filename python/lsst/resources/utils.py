@@ -105,7 +105,7 @@ class NoTransaction:
     class.
     """
 
-    def __init__(self) -> None:  # noqa: D107
+    def __init__(self) -> None:
         return
 
     @contextlib.contextmanager
