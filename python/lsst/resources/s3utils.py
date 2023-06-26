@@ -229,7 +229,7 @@ def s3CheckFileExists(
             uri = ResourcePath(path)
             bucket = uri.netloc
             filepath = uri.relativeToPathRoot
-    elif isinstance(path, (ResourcePath, Location)):
+    elif isinstance(path, ResourcePath | Location):
         bucket = path.netloc
         filepath = path.relativeToPathRoot
     else:
