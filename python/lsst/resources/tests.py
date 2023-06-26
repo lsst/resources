@@ -712,7 +712,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         self.assertEqual(found, expected_yaml)
 
         # Now two explicit directories and a file
-        expected = {u for u in expected_yaml}
+        expected = set(expected_yaml)
         expected.add(file)
 
         found = set(
@@ -744,7 +744,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         # at the end
         file2 = root.join("config/templates/templates-bad.yaml")
         found_grouped = [
-            [uri for uri in group]
+            list(group)
             for group in ResourcePath.findFileResources([file, file2, root.join("dir2/")], grouped=True)
             if not isinstance(group, ResourcePath)  # For mypy.
         ]
@@ -789,11 +789,11 @@ class GenericReadWriteTestCase(_GenericTestCase):
         # Again with grouping.
         # (mypy gets upset not knowing which of the two options is being
         # returned so add useless instance check).
-        found_list = list(
-            [uri for uri in group]
+        found_list = [
+            list(group)
             for group in ResourcePath.findFileResources([root], grouped=True)
             if not isinstance(group, ResourcePath)  # For mypy.
-        )
+        ]
         self.assertEqual(len(found_list), 2)
         self.assertEqual(len(found_list[0]), n_dir1)
         self.assertEqual(len(found_list[1]), n_dir2)

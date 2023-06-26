@@ -350,7 +350,7 @@ class GSResourcePath(ResourcePath):
             # Nothing found so match os.walk and return immediately.
             return
         else:
-            yield self, list(sorted(dirnames)), filenames
+            yield self, sorted(dirnames), filenames
 
         for dir in sorted(dirnames):
             new_uri = self.join(dir)
