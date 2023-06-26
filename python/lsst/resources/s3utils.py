@@ -63,6 +63,8 @@ try:
 except ImportError:
 
     class Backoff:
+        """Mock implementation of the backoff class."""
+
         @staticmethod
         def expo(func: Callable, *args: Any, **kwargs: Any) -> Callable:
             return func

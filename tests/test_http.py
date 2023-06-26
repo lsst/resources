@@ -51,6 +51,8 @@ TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
 
 class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
+    """Generic tests of http URIs."""
+
     scheme = "http"
     netloc = "server.example"
 
@@ -785,7 +787,6 @@ class SessionStoreTestCase(unittest.TestCase):
         """Ensure if user certificate and private key are provided, they are
         used for authenticating the client.
         """
-
         # Create mock certificate and private key files.
         with tempfile.NamedTemporaryFile(mode="wt", dir=self.tmpdir.ospath, delete=False) as f:
             f.write("CERT")
@@ -838,7 +839,6 @@ class SessionStoreTestCase(unittest.TestCase):
 
     def test_sessions(self):
         """Ensure the session caching mechanism works."""
-
         # Ensure the store provides a session for a given URL
         root_url = "https://example.org"
         store = SessionStore()

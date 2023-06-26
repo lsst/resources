@@ -23,17 +23,21 @@ except ImportError:
     boto3 = None
 
     def mock_s3(cls):
-        """A no-op decorator in case moto mock_s3 can not be imported."""
+        """No-op decorator in case moto mock_s3 can not be imported."""
         return cls
 
 
 class GenericS3TestCase(GenericTestCase, unittest.TestCase):
+    """Generic tests of S3 URIs."""
+
     scheme = "s3"
     netloc = "my_bucket"
 
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
 class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
+    """Tests of reading and writing S3 URIs."""
+
     scheme = "s3"
     netloc = "my_2nd_bucket"
 

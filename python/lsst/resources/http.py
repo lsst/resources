@@ -80,7 +80,6 @@ class HttpResourcePathConfig:
     @property
     def front_end_connections(self) -> int:
         """Number of persistent connections to the front end server."""
-
         if self._front_end_connections is not None:
             return self._front_end_connections
 
@@ -98,7 +97,6 @@ class HttpResourcePathConfig:
     @property
     def back_end_connections(self) -> int:
         """Number of persistent connections to the back end servers."""
-
         if self._back_end_connections is not None:
             return self._back_end_connections
 
@@ -124,7 +122,6 @@ class HttpResourcePathConfig:
             The name of a digest algorithm or the empty string if no algotihm
             is configured.
         """
-
         if self._digest_algorithm is not None:
             return self._digest_algorithm
 
@@ -144,7 +141,6 @@ class HttpResourcePathConfig:
         the client knows how to handle redirects to the specific server that
         will actually receive the data for PUT requests.
         """
-
         if self._send_expect_on_put is not None:
             return self._send_expect_on_put
 
@@ -157,7 +153,6 @@ class HttpResourcePathConfig:
         server and reading its response, respectively. Both values are in
         seconds.
         """
-
         if self._timeout is not None:
             return self._timeout
 
@@ -180,7 +175,6 @@ class HttpResourcePathConfig:
         operations against the remote server via the `lsst.utils.time_this`
         context manager.
         """
-
         if self._collect_memory_usage is not None:
             return self._collect_memory_usage
 
@@ -192,7 +186,6 @@ class HttpResourcePathConfig:
         """Lower bound of the interval from which a backoff factor is randomly
         selected when retrying requests (seconds).
         """
-
         if self._backoff_min is not None:
             return self._backoff_min
 
@@ -211,7 +204,6 @@ class HttpResourcePathConfig:
         """Upper bound of the interval from which a backoff factor is randomly
         selected when retrying requests (seconds).
         """
-
         if self._backoff_max is not None:
             return self._backoff_max
 
@@ -389,7 +381,6 @@ class SessionStore:
         """Destroy all previously created sessions and attempt to close
         underlying idle network connections.
         """
-
         # Close all sessions and empty the store. Idle network connections
         # should be closed as a consequence. We don't have means through
         # the API exposed by Requests to actually force closing the
@@ -646,7 +637,6 @@ class HttpResourcePath(ResourcePath):
         """Client session to send requests which do not require upload or
         download of data, i.e. mostly metadata requests.
         """
-
         if hasattr(self, "_metadata_session"):
             if HttpResourcePath._pid == os.getpid():
                 return self._metadata_session
@@ -663,7 +653,6 @@ class HttpResourcePath(ResourcePath):
     @property
     def data_session(self) -> requests.Session:
         """Client session for uploading and downloading data."""
-
         if hasattr(self, "_data_session"):
             if HttpResourcePath._pid == os.getpid():
                 return self._data_session
@@ -678,8 +667,9 @@ class HttpResourcePath(ResourcePath):
         return self._data_session
 
     def _clear_sessions(self) -> None:
-        """Internal method to close the socket connections still open. Used
-        only in test suites to avoid warnings.
+        """Close the socket connections that are still open.
+
+        Used only in test suites to avoid warnings.
         """
         self._metadata_session_store.clear()
         self._data_session_store.clear()
@@ -818,7 +808,6 @@ class HttpResourcePath(ResourcePath):
             The number of bytes to read. Negative or omitted indicates
             that all data should be read.
         """
-
         # Use the data session as a context manager to ensure that the
         # network connections to both the front end and back end servers are
         # closed after downloading the data.
@@ -930,10 +919,13 @@ class HttpResourcePath(ResourcePath):
         self, file_filter: str | re.Pattern | None = None
     ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
         """Walk the directory tree returning matching files and directories.
+
         Parameters
         ----------
         file_filter : `str` or `re.Pattern`, optional
             Regex to filter out files from the list before it is returned.
+
+
         Yields
         ------
         dirpath : `ResourcePath`
@@ -988,7 +980,6 @@ class HttpResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-
         # Use the session as a context manager to ensure that connections
         # to both the front end and back end servers are closed after the
         # download operation is finished.
@@ -1170,7 +1161,6 @@ class HttpResourcePath(ResourcePath):
 
     def _head(self) -> requests.Response:
         """Send a HEAD webDAV request for this resource."""
-
         return self._send_webdav_request("HEAD")
 
     def _mkcol(self) -> None:
@@ -1189,7 +1179,6 @@ class HttpResourcePath(ResourcePath):
 
     def _delete(self) -> None:
         """Send a DELETE webDAV request for this resource."""
-
         log.debug("Deleting %s ...", self.geturl())
 
         # If this is a directory, ensure the remote is a webDAV server because

@@ -40,21 +40,33 @@ except ImportError:
 
     # Must also fake the exception classes.
     class ClientError(Exception):
+        """Generic client error."""
+
         pass
 
     class NotFound(ClientError):  # type: ignore  # noqa: N818
+        """Resource not found error."""
+
         pass
 
     class TooManyRequests(ClientError):  # type: ignore  # noqa: N818
+        """Too many requests error."""
+
         pass
 
     class InternalServerError(ClientError):  # type: ignore
+        """Internal server error."""
+
         pass
 
     class BadGateway(ClientError):  # type: ignore  # noqa: N818
+        """Bad gateway error."""
+
         pass
 
     class ServiceUnavailable(ClientError):  # type: ignore  # noqa: N818
+        """Service unavailable error."""
+
         pass
 
 
@@ -77,6 +89,7 @@ _RETRIEVABLE_TYPES = (
 
 
 def is_retryable(exc: Exception) -> bool:
+    """Report if the given exception is a condition that can be retried."""
     return isinstance(exc, _RETRIEVABLE_TYPES)
 
 

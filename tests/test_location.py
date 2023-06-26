@@ -216,7 +216,6 @@ class LocationTestCase(unittest.TestCase):
 
     def testUriExtensions(self):
         """Test extension extraction."""
-
         files = (
             ("file.fits.gz", ".fits.gz"),
             ("file.fits", ".fits"),

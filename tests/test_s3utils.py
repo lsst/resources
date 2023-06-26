@@ -33,7 +33,7 @@ except ImportError:
     boto3 = None
 
     def mock_s3(cls):
-        """A no-op decorator in case moto mock_s3 can not be imported."""
+        """No-op decorator in case moto mock_s3 can not be imported."""
         return cls
 
 
