@@ -29,7 +29,7 @@ from random import Random
 __all__ = ("ResourcePath", "ResourcePathExpression")
 
 from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING, Any, Literal, Union, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 
@@ -1387,6 +1387,6 @@ class ResourcePath:
             self.write(out_bytes, overwrite=("x" not in mode))
 
 
-ResourcePathExpression = Union[str, urllib.parse.ParseResult, ResourcePath, Path]
+ResourcePathExpression = str | urllib.parse.ParseResult | ResourcePath | Path
 """Type-annotation alias for objects that can be coerced to ResourcePath.
 """
