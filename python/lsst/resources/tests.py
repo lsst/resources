@@ -540,7 +540,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         self.assertEqual(newdir.size(), 0)
 
         newfile = newdir.join("temp.txt")
-        newfile.write("Data".encode())
+        newfile.write(b"Data")
         self.assertTrue(newfile.exists())
 
         file = self.tmpdir.join("file.txt")
