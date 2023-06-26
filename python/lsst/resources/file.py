@@ -343,7 +343,7 @@ class FileResourcePath(ResourcePath):
                 with transaction.undoWith(f"relsymlink to {local_src}", os.remove, newFullPath):
                     os.symlink(relPath, newFullPath)
             else:
-                raise NotImplementedError("Transfer type '{}' not supported.".format(transfer))
+                raise NotImplementedError(f"Transfer type '{transfer}' not supported.")
 
             # This was an explicit move requested from a remote resource
             # try to remove that remote resource. We check is_temporary because
