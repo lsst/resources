@@ -171,7 +171,7 @@ def getS3Client() -> boto3.client:
     return _get_s3_client(endpoint, skip_validation)
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def _get_s3_client(endpoint: str, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
     config = botocore.config.Config(read_timeout=180, retries={"mode": "adaptive", "max_attempts": 10})
