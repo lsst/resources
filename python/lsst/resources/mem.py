@@ -9,8 +9,6 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
-from typing import Tuple
-
 __all__ = ("InMemoryResourcePath",)
 
 from ._resourcePath import ResourcePath
@@ -27,5 +25,5 @@ class InMemoryResourcePath(ResourcePath):
         """Test for existence and always return False."""
         return True
 
-    def _as_local(self) -> Tuple[str, bool]:
+    def _as_local(self) -> tuple[str, bool]:
         raise RuntimeError(f"Do not know how to retrieve data for URI '{self}'")

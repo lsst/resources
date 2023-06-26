@@ -12,9 +12,10 @@ from __future__ import annotations
 
 __all__ = ("FileResourceHandle",)
 
+from collections.abc import Iterable
 from io import SEEK_SET
 from logging import Logger
-from typing import IO, AnyStr, Iterable, Optional, TypeVar
+from typing import IO, AnyStr, TypeVar
 
 from ._baseResourceHandle import BaseResourceHandle
 
@@ -46,9 +47,7 @@ class FileResourceHandle(BaseResourceHandle[U]):
     corresponding methods in the `io` module.
     """
 
-    def __init__(
-        self, mode: str, log: Logger, *, filename: str, encoding: Optional[str], newline: str = "\n"
-    ):
+    def __init__(self, mode: str, log: Logger, *, filename: str, encoding: str | None, newline: str = "\n"):
         super().__init__(mode, log, newline=newline)
         self._filename = filename
         # opening a file in binary mode does not support a newline argument
@@ -98,7 +97,7 @@ class FileResourceHandle(BaseResourceHandle[U]):
     def tell(self) -> int:
         return self._fileHandle.tell()
 
-    def truncate(self, size: Optional[int] = None) -> int:
+    def truncate(self, size: int | None = None) -> int:
         return self._fileHandle.truncate(size)
 
     def writable(self) -> bool:

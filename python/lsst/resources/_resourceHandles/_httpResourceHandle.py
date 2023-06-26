@@ -14,8 +14,9 @@ from __future__ import annotations
 __all__ = ("HttpReadResourceHandle",)
 
 import io
+from collections.abc import Callable, Iterable
 from logging import Logger
-from typing import AnyStr, Callable, Iterable, Optional, Union
+from typing import AnyStr
 
 import requests
 from lsst.utils.timer import time_this
@@ -29,10 +30,10 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         mode: str,
         log: Logger,
         *,
-        session: Optional[requests.Session] = None,
-        url: Optional[str] = None,
-        timeout: Optional[tuple[float, float]] = None,
-        newline: Optional[AnyStr] = None,
+        session: requests.Session | None = None,
+        url: str | None = None,
+        timeout: tuple[float, float] | None = None,
+        newline: AnyStr | None = None,
     ) -> None:
         super().__init__(mode, log, newline=newline)
         if url is None:
@@ -46,7 +47,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             raise ValueError("timeout must be specified when constructing this object")
         self._timeout = timeout
 
-        self._completeBuffer: Optional[io.BytesIO] = None
+        self._completeBuffer: io.BytesIO | None = None
 
         self._closed = CloseStatus.OPEN
         self._current_position = 0
@@ -70,7 +71,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             raise io.UnsupportedOperation("HttpReadResourceHandles are read only")
 
     @property
-    def isatty(self) -> Union[bool, Callable[[], bool]]:
+    def isatty(self) -> bool | Callable[[], bool]:
         return False
 
     def readable(self) -> bool:
@@ -102,7 +103,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def tell(self) -> int:
         return self._current_position
 
-    def truncate(self, size: Optional[int] = None) -> int:
+    def truncate(self, size: int | None = None) -> int:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support truncation")
 
     def writable(self) -> bool:

@@ -22,8 +22,9 @@ import tempfile
 import time
 import unittest
 import warnings
+from collections.abc import Callable
 from threading import Thread
-from typing import Callable, Tuple, cast
+from typing import cast
 
 try:
     from cheroot import wsgi
@@ -463,7 +464,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         """Return a randomly selected name for a file"""
         return cls._get_name(prefix="file")
 
-    def _generate_file(self, remove_when_done=True) -> Tuple[str, int]:
+    def _generate_file(self, remove_when_done=True) -> tuple[str, int]:
         """Create a local file of random size with random contents.
 
         Returns

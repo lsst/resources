@@ -21,7 +21,8 @@ import threading
 
 __all__ = ("S3ResourcePath",)
 
-from typing import IO, TYPE_CHECKING, Iterator, List, Optional, Tuple, Union, cast
+from collections.abc import Iterator
+from typing import IO, TYPE_CHECKING, cast
 
 from botocore.exceptions import ClientError
 from lsst.utils.timer import time_this
@@ -57,7 +58,7 @@ class ProgressPercentage:
     log_level = logging.DEBUG
     """Default log level to use when issuing a message."""
 
-    def __init__(self, file: ResourcePath, file_for_msg: Optional[ResourcePath] = None, msg: str = ""):
+    def __init__(self, file: ResourcePath, file_for_msg: ResourcePath | None = None, msg: str = ""):
         self._filename = file
         self._file_for_msg = str(file_for_msg) if file_for_msg is not None else str(file)
         self._size = file.size()
@@ -185,7 +186,7 @@ class S3ResourcePath(ResourcePath):
             self.client.put_object(Bucket=self.netloc, Key=self.relativeToPathRoot)
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
-    def _download_file(self, local_file: IO, progress: Optional[ProgressPercentage]) -> None:
+    def _download_file(self, local_file: IO, progress: ProgressPercentage | None) -> None:
         """Download the remote resource to a local file.
 
         Helper routine for _as_local to allow backoff without regenerating
@@ -202,7 +203,7 @@ class S3ResourcePath(ResourcePath):
             _translate_client_error(err)
             raise
 
-    def _as_local(self) -> Tuple[str, bool]:
+    def _as_local(self) -> tuple[str, bool]:
         """Download object from S3 and place in temporary directory.
 
         Returns
@@ -223,7 +224,7 @@ class S3ResourcePath(ResourcePath):
         return tmpFile.name, True
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
-    def _upload_file(self, local_file: ResourcePath, progress: Optional[ProgressPercentage]) -> None:
+    def _upload_file(self, local_file: ResourcePath, progress: ProgressPercentage | None) -> None:
         """Upload a local file with backoff.
 
         Helper method to wrap file uploading in backoff for transfer_from.
@@ -257,7 +258,7 @@ class S3ResourcePath(ResourcePath):
         src: ResourcePath,
         transfer: str = "copy",
         overwrite: bool = False,
-        transaction: Optional[TransactionProtocol] = None,
+        transaction: TransactionProtocol | None = None,
     ) -> None:
         """Transfer the current resource to an S3 bucket.
 
@@ -333,8 +334,8 @@ class S3ResourcePath(ResourcePath):
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def walk(
-        self, file_filter: Optional[Union[str, re.Pattern]] = None
-    ) -> Iterator[Union[List, Tuple[ResourcePath, List[str], List[str]]]]:
+        self, file_filter: str | re.Pattern | None = None
+    ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
         """Walk the directory tree returning matching files and directories.
 
         Parameters
@@ -411,7 +412,7 @@ class S3ResourcePath(ResourcePath):
         self,
         mode: str = "r",
         *,
-        encoding: Optional[str] = None,
+        encoding: str | None = None,
     ) -> Iterator[ResourceHandleProtocol]:
         with S3ResourceHandle(mode, log, self.client, self.netloc, self.relativeToPathRoot) as handle:
             if "b" in mode:

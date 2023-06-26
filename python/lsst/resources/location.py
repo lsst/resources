@@ -13,8 +13,6 @@ from __future__ import annotations
 
 __all__ = ("Location", "LocationFactory")
 
-from typing import Optional, Union
-
 from ._resourcePath import ResourcePath
 
 
@@ -35,7 +33,7 @@ class Location:
 
     __slots__ = ("_datastoreRootUri", "_path", "_uri")
 
-    def __init__(self, datastoreRootUri: Union[None, ResourcePath, str], path: Union[ResourcePath, str]):
+    def __init__(self, datastoreRootUri: None | ResourcePath | str, path: ResourcePath | str):
         # Be careful not to force a relative local path to absolute path
         path_uri = ResourcePath(path, forceAbsolute=False)
 
@@ -61,7 +59,7 @@ class Location:
         self._path = path_uri
 
         # Internal cache of the full location as a ResourcePath
-        self._uri: Optional[ResourcePath] = None
+        self._uri: ResourcePath | None = None
 
         # Check that the resulting URI is inside the datastore
         # This can go wrong if we were given ../dir as path
@@ -134,7 +132,7 @@ class Location:
         """
         return self.uri.relativeToPathRoot
 
-    def updateExtension(self, ext: Optional[str]) -> None:
+    def updateExtension(self, ext: str | None) -> None:
         """Update the file extension associated with this `Location`.
 
         All file extensions are replaced.
@@ -185,7 +183,7 @@ class LocationFactory:
         be treated as a posixpath but then converted to an absolute path.
     """
 
-    def __init__(self, datastoreRoot: Union[ResourcePath, str]):
+    def __init__(self, datastoreRoot: ResourcePath | str):
         self._datastoreRootUri = ResourcePath(datastoreRoot, forceAbsolute=True, forceDirectory=True)
 
     def __str__(self) -> str:
@@ -196,7 +194,7 @@ class LocationFactory:
         """Return the network location of root location of the `Datastore`."""
         return self._datastoreRootUri.netloc
 
-    def fromPath(self, path: Union[str, ResourcePath]) -> Location:
+    def fromPath(self, path: str | ResourcePath) -> Location:
         """Create a `Location` from a POSIX path.
 
         Parameters

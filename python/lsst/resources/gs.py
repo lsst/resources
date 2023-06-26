@@ -19,7 +19,8 @@ import contextlib
 import logging
 import re
 import tempfile
-from typing import TYPE_CHECKING, Iterator, List, Optional, Set, Tuple, Union
+from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 
@@ -79,6 +80,7 @@ def is_retryable(exc: Exception) -> bool:
     return isinstance(exc, _RETRIEVABLE_TYPES)
 
 
+_RETRY_POLICY: retry.Retry | None
 if retry:
     _RETRY_POLICY = retry.Retry(predicate=is_retryable)
 else:
@@ -101,9 +103,9 @@ def _get_client() -> storage.Client:
 class GSResourcePath(ResourcePath):
     """Access Google Cloud Storage resources."""
 
-    _bucket: Optional[storage.Bucket] = None
-    _blob: Optional[storage.Blob] = None
-    _client: Optional[storage.Client] = None
+    _bucket: storage.Bucket | None = None
+    _blob: storage.Blob | None = None
+    _client: storage.Client | None = None
 
     @property
     def client(self) -> storage.Client:
@@ -181,7 +183,7 @@ class GSResourcePath(ResourcePath):
         # Should this method do anything at all?
         self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
 
-    def _as_local(self) -> Tuple[str, bool]:
+    def _as_local(self) -> tuple[str, bool]:
         with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile:
             with time_this(log, msg="Downloading %s to local file", args=(self,)):
                 try:
@@ -195,7 +197,7 @@ class GSResourcePath(ResourcePath):
         src: ResourcePath,
         transfer: str = "copy",
         overwrite: bool = False,
-        transaction: Optional[TransactionProtocol] = None,
+        transaction: TransactionProtocol | None = None,
     ) -> None:
         if transfer not in self.transferModes:
             raise ValueError(f"Transfer mode '{transfer}' not supported by URI scheme {self.scheme}")
@@ -262,7 +264,7 @@ class GSResourcePath(ResourcePath):
         self,
         mode: str = "r",
         *,
-        encoding: Optional[str] = None,
+        encoding: str | None = None,
         prefer_file_temporary: bool = False,
     ) -> Iterator[ResourceHandleProtocol]:
         # Docstring inherited
@@ -291,8 +293,8 @@ class GSResourcePath(ResourcePath):
                 yield buffer
 
     def walk(
-        self, file_filter: Optional[Union[str, re.Pattern]] = None
-    ) -> Iterator[Union[List, Tuple[ResourcePath, List[str], List[str]]]]:
+        self, file_filter: str | re.Pattern | None = None
+    ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
         # We pretend that GCS uses directories and files and not simply keys.
         if not (self.isdir() or self.is_root):
             raise ValueError(f"Can not walk a non-directory URI: {self}")
@@ -311,7 +313,7 @@ class GSResourcePath(ResourcePath):
         # them all grouped properly across the 1000 limit boundary.
         prefix = self.relativeToPathRoot if not self.is_root else ""
         prefix_len = len(prefix)
-        dirnames: Set[str] = set()
+        dirnames: set[str] = set()
         filenames = []
         files_there = False
 

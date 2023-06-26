@@ -23,7 +23,8 @@ import urllib.parse
 
 __all__ = ("FileResourcePath",)
 
-from typing import IO, TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
+from collections.abc import Iterator
+from typing import IO, TYPE_CHECKING
 
 from ._resourceHandles._fileResourceHandle import FileResourceHandle
 from ._resourcePath import ResourcePath
@@ -72,7 +73,7 @@ class FileResourcePath(ResourcePath):
         """Remove the resource."""
         os.remove(self.ospath)
 
-    def _as_local(self) -> Tuple[str, bool]:
+    def _as_local(self) -> tuple[str, bool]:
         """Return the local path of the file.
 
         This is an internal helper for ``as_local()``.
@@ -135,7 +136,7 @@ class FileResourcePath(ResourcePath):
         src: ResourcePath,
         transfer: str,
         overwrite: bool = False,
-        transaction: Optional[TransactionProtocol] = None,
+        transaction: TransactionProtocol | None = None,
     ) -> None:
         """Transfer the current resource to a local file.
 
@@ -226,7 +227,7 @@ class FileResourcePath(ResourcePath):
             # The output location should not exist unless overwrite=True.
             # Rather than use `exists()`, use os.stat since we might need
             # the full answer later.
-            dest_stat: Optional[os.stat_result]
+            dest_stat: os.stat_result | None
             try:
                 # Do not read through links of the file itself.
                 dest_stat = os.lstat(self.ospath)
@@ -352,8 +353,8 @@ class FileResourcePath(ResourcePath):
                 src.remove()
 
     def walk(
-        self, file_filter: Optional[Union[str, re.Pattern]] = None
-    ) -> Iterator[Union[List, Tuple[ResourcePath, List[str], List[str]]]]:
+        self, file_filter: str | re.Pattern | None = None
+    ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
         """Walk the directory tree returning matching files and directories.
 
         Parameters
@@ -386,10 +387,10 @@ class FileResourcePath(ResourcePath):
     def _fixupPathUri(
         cls,
         parsed: urllib.parse.ParseResult,
-        root: Optional[ResourcePath] = None,
+        root: ResourcePath | None = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
-    ) -> Tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool]:
         """Fix up relative paths in URI instances.
 
         Parameters
@@ -481,7 +482,7 @@ class FileResourcePath(ResourcePath):
         self,
         mode: str = "r",
         *,
-        encoding: Optional[str] = None,
+        encoding: str | None = None,
     ) -> Iterator[IO]:
         with FileResourceHandle(mode=mode, log=log, filename=self.ospath, encoding=encoding) as buffer:
             yield buffer  # type: ignore

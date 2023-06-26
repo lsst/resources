@@ -28,20 +28,8 @@ from random import Random
 
 __all__ = ("ResourcePath", "ResourcePathExpression")
 
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterable,
-    Iterator,
-    List,
-    Literal,
-    Optional,
-    Tuple,
-    Type,
-    Union,
-    overload,
-)
+from collections.abc import Iterable, Iterator
+from typing import TYPE_CHECKING, Any, Literal, Union, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 
@@ -102,13 +90,13 @@ class ResourcePath:
     to an absolute ``file`` URI.
     """
 
-    _pathLib: Type[PurePath] = PurePosixPath
+    _pathLib: type[PurePath] = PurePosixPath
     """Path library to use for this scheme."""
 
     _pathModule = posixpath
     """Path module to use for this scheme."""
 
-    transferModes: Tuple[str, ...] = ("copy", "auto", "move")
+    transferModes: tuple[str, ...] = ("copy", "auto", "move")
     """Transfer modes supported by this implementation.
 
     Move is special in that it is generally a copy followed by an unlink.
@@ -144,15 +132,15 @@ class ResourcePath:
     def __new__(
         cls,
         uri: ResourcePathExpression,
-        root: Optional[Union[str, ResourcePath]] = None,
+        root: str | ResourcePath | None = None,
         forceAbsolute: bool = True,
         forceDirectory: bool = False,
-        isTemporary: Optional[bool] = None,
+        isTemporary: bool | None = None,
     ) -> ResourcePath:
         """Create and return new specialist ResourcePath subclass."""
         parsed: urllib.parse.ParseResult
         dirLike: bool = False
-        subclass: Optional[Type[ResourcePath]] = None
+        subclass: type[ResourcePath] | None = None
 
         # Force root to be a ResourcePath -- this simplifies downstream
         # code.
@@ -412,7 +400,7 @@ class ResourcePath:
         """
         return self.replace(path="", forceDirectory=True)
 
-    def split(self) -> Tuple[ResourcePath, str]:
+    def split(self) -> tuple[ResourcePath, str]:
         """Split URI into head and tail.
 
         Returns
@@ -553,7 +541,7 @@ class ResourcePath:
         updated.dirLike = False
         return updated
 
-    def updatedExtension(self, ext: Optional[str]) -> ResourcePath:
+    def updatedExtension(self, ext: str | None) -> ResourcePath:
         """Return a new `ResourcePath` with updated file extension.
 
         All file extensions are replaced.
@@ -624,7 +612,7 @@ class ResourcePath:
         return ext
 
     def join(
-        self, path: Union[str, ResourcePath], isTemporary: Optional[bool] = None, forceDirectory: bool = False
+        self, path: str | ResourcePath, isTemporary: bool | None = None, forceDirectory: bool = False
     ) -> ResourcePath:
         """Return new `ResourcePath` with additional path components.
 
@@ -715,7 +703,7 @@ class ResourcePath:
             isTemporary=isTemporary,
         )
 
-    def relative_to(self, other: ResourcePath) -> Optional[str]:
+    def relative_to(self, other: ResourcePath) -> str | None:
         """Return the relative path from this URI to the other URI.
 
         Parameters
@@ -750,7 +738,7 @@ class ResourcePath:
 
         enclosed_path = self._pathLib(self.relativeToPathRoot)
         parent_path = other.relativeToPathRoot
-        subpath: Optional[str]
+        subpath: str | None
         try:
             subpath = str(enclosed_path.relative_to(parent_path))
         except ValueError:
@@ -770,7 +758,7 @@ class ResourcePath:
         raise NotImplementedError()
 
     @classmethod
-    def mexists(cls, uris: Iterable[ResourcePath]) -> Dict[ResourcePath, bool]:
+    def mexists(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, bool]:
         """Check for existence of multiple URIs at once.
 
         Parameters
@@ -786,7 +774,7 @@ class ResourcePath:
         exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
         future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
-        results: Dict[ResourcePath, bool] = {}
+        results: dict[ResourcePath, bool] = {}
         for future in concurrent.futures.as_completed(future_exists):
             uri = future_exists[future]
             try:
@@ -823,7 +811,7 @@ class ResourcePath:
         """
         return self
 
-    def _as_local(self) -> Tuple[str, bool]:
+    def _as_local(self) -> tuple[str, bool]:
         """Return the location of the (possibly remote) resource as local file.
 
         This is a helper function for `as_local` context manager.
@@ -884,7 +872,7 @@ class ResourcePath:
     @classmethod
     @contextlib.contextmanager
     def temporary_uri(
-        cls, prefix: Optional[ResourcePath] = None, suffix: Optional[str] = None
+        cls, prefix: ResourcePath | None = None, suffix: str | None = None
     ) -> Iterator[ResourcePath]:
         """Create a temporary file-like URI.
 
@@ -1027,14 +1015,14 @@ class ResourcePath:
         # Implement here because the __new__ method confuses things
         return self
 
-    def __getnewargs__(self) -> Tuple:
+    def __getnewargs__(self) -> tuple:
         """Support pickling."""
         return (str(self),)
 
     @classmethod
     def _fixDirectorySep(
         cls, parsed: urllib.parse.ParseResult, forceDirectory: bool = False
-    ) -> Tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool]:
         """Ensure that a path separator is present on directory paths.
 
         Parameters
@@ -1075,10 +1063,10 @@ class ResourcePath:
     def _fixupPathUri(
         cls,
         parsed: urllib.parse.ParseResult,
-        root: Optional[ResourcePath] = None,
+        root: ResourcePath | None = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
-    ) -> Tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool]:
         """Correct any issues with the supplied URI.
 
         Parameters
@@ -1124,7 +1112,7 @@ class ResourcePath:
         src: ResourcePath,
         transfer: str,
         overwrite: bool = False,
-        transaction: Optional[TransactionProtocol] = None,
+        transaction: TransactionProtocol | None = None,
     ) -> None:
         """Transfer to this URI from another.
 
@@ -1162,8 +1150,8 @@ class ResourcePath:
         raise NotImplementedError(f"No transfer modes supported by URI scheme {self.scheme}")
 
     def walk(
-        self, file_filter: Optional[Union[str, re.Pattern]] = None
-    ) -> Iterator[Union[List, Tuple[ResourcePath, List[str], List[str]]]]:
+        self, file_filter: str | re.Pattern | None = None
+    ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
         """Walk the directory tree returning matching files and directories.
 
         Parameters
@@ -1187,7 +1175,7 @@ class ResourcePath:
     def findFileResources(
         cls,
         candidates: Iterable[ResourcePathExpression],
-        file_filter: Optional[Union[str, re.Pattern]],
+        file_filter: str | re.Pattern | None,
         grouped: Literal[True],
     ) -> Iterator[Iterator[ResourcePath]]:
         ...
@@ -1207,7 +1195,7 @@ class ResourcePath:
     def findFileResources(
         cls,
         candidates: Iterable[ResourcePathExpression],
-        file_filter: Optional[Union[str, re.Pattern]] = None,
+        file_filter: str | re.Pattern | None = None,
         grouped: Literal[False] = False,
     ) -> Iterator[ResourcePath]:
         ...
@@ -1216,9 +1204,9 @@ class ResourcePath:
     def findFileResources(
         cls,
         candidates: Iterable[ResourcePathExpression],
-        file_filter: Optional[Union[str, re.Pattern]] = None,
+        file_filter: str | re.Pattern | None = None,
         grouped: bool = False,
-    ) -> Iterator[Union[ResourcePath, Iterator[ResourcePath]]]:
+    ) -> Iterator[ResourcePath | Iterator[ResourcePath]]:
         """Get all the files from a list of values.
 
         Parameters
@@ -1284,7 +1272,7 @@ class ResourcePath:
         self,
         mode: str = "r",
         *,
-        encoding: Optional[str] = None,
+        encoding: str | None = None,
         prefer_file_temporary: bool = False,
     ) -> Iterator[ResourceHandleProtocol]:
         """Return a context manager that wraps an object that behaves like an
@@ -1352,9 +1340,7 @@ class ResourcePath:
                 yield handle
 
     @contextlib.contextmanager
-    def _openImpl(
-        self, mode: str = "r", *, encoding: Optional[str] = None
-    ) -> Iterator[ResourceHandleProtocol]:
+    def _openImpl(self, mode: str = "r", *, encoding: str | None = None) -> Iterator[ResourceHandleProtocol]:
         """Implement opening of a resource handle.
 
         This private method may be overridden by specific `ResourcePath`

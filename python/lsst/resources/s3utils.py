@@ -34,9 +34,10 @@ __all__ = (
 import functools
 import os
 import re
+from collections.abc import Callable
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
-from typing import Any, Callable, Optional, Tuple, Union, cast
+from typing import Any, cast
 
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
@@ -182,10 +183,10 @@ def _get_s3_client(endpoint: str, skip_validation: bool) -> boto3.client:
 
 
 def s3CheckFileExists(
-    path: Union[Location, ResourcePath, str],
-    bucket: Optional[str] = None,
-    client: Optional[boto3.client] = None,
-) -> Tuple[bool, int]:
+    path: Location | ResourcePath | str,
+    bucket: str | None = None,
+    client: boto3.client | None = None,
+) -> tuple[bool, int]:
     """Return if the file exists in the bucket or not.
 
     Parameters
@@ -254,7 +255,7 @@ def s3CheckFileExists(
         raise
 
 
-def bucketExists(bucketName: str, client: Optional[boto3.client] = None) -> bool:
+def bucketExists(bucketName: str, client: boto3.client | None = None) -> bool:
     """Check if the S3 bucket with the given name actually exists.
 
     Parameters

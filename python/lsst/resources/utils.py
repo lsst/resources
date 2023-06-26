@@ -18,11 +18,11 @@ import posixpath
 import shutil
 import tempfile
 from pathlib import Path, PurePath, PurePosixPath
-from typing import Optional
 
 __all__ = ("os2posix", "posix2os", "NoTransaction", "TransactionProtocol")
 
-from typing import Any, Callable, Iterator, Protocol, Union
+from collections.abc import Callable, Iterator
+from typing import Any, Protocol
 
 # Determine if the path separator for the OS looks like POSIX
 IS_POSIX = os.sep == posixpath.sep
@@ -65,7 +65,7 @@ def os2posix(ospath: str) -> str:
     return posix
 
 
-def posix2os(posix: Union[PurePath, str]) -> str:
+def posix2os(posix: PurePath | str) -> str:
     """Convert a POSIX path description to a local path description.
 
     Parameters
@@ -122,7 +122,7 @@ class TransactionProtocol(Protocol):
         ...
 
 
-def makeTestTempDir(default_base: Optional[str] = None) -> str:
+def makeTestTempDir(default_base: str | None = None) -> str:
     """Create a temporary directory for test usage.
 
     The directory will be created within ``LSST_RESOURCES_TEST_TMP`` if that
@@ -148,7 +148,7 @@ def makeTestTempDir(default_base: Optional[str] = None) -> str:
     return tempfile.mkdtemp(dir=base)
 
 
-def removeTestTempDir(root: Optional[str]) -> None:
+def removeTestTempDir(root: str | None) -> None:
     """Attempt to remove a temporary test directory, but do not raise if
     unable to.
 
