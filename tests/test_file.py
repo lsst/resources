@@ -11,7 +11,6 @@
 
 import os
 import pathlib
-import sys
 import unittest
 import unittest.mock
 import urllib.parse
@@ -21,15 +20,10 @@ from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
-_OLD_PYTHON = False
-if sys.version_info < (3, 10, 0):
-    _OLD_PYTHON = True
-
 
 class SimpleTestCase(unittest.TestCase):
     """Basic tests for file URIs."""
 
-    @unittest.skipIf(_OLD_PYTHON, "isinstance() with unions is not supported.")
     def test_instance(self):
         for example in (
             "xxx",
