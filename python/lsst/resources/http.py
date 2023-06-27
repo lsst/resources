@@ -925,7 +925,6 @@ class HttpResourcePath(ResourcePath):
         file_filter : `str` or `re.Pattern`, optional
             Regex to filter out files from the list before it is returned.
 
-
         Yields
         ------
         dirpath : `ResourcePath`
