@@ -11,13 +11,12 @@
 
 from __future__ import annotations
 
+__all__ = ("SchemelessResourcePath",)
+
 import logging
 import os
 import os.path
 import urllib.parse
-
-__all__ = ("SchemelessResourcePath",)
-
 from pathlib import PurePath
 
 from ._resourcePath import ResourcePath

@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+__all__ = ("S3ResourcePath",)
+
 import contextlib
 import io
 import logging
@@ -18,9 +20,6 @@ import re
 import sys
 import tempfile
 import threading
-
-__all__ = ("S3ResourcePath",)
-
 from collections.abc import Iterator
 from typing import IO, TYPE_CHECKING, cast
 

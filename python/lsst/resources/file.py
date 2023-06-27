@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+__all__ = ("FileResourcePath",)
+
 import contextlib
 import copy
 import logging
@@ -20,9 +22,6 @@ import posixpath
 import re
 import shutil
 import urllib.parse
-
-__all__ = ("FileResourcePath",)
-
 from collections.abc import Iterator
 from typing import IO, TYPE_CHECKING
 

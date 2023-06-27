@@ -11,17 +11,16 @@
 
 from __future__ import annotations
 
+__all__ = ("os2posix", "posix2os", "NoTransaction", "TransactionProtocol")
+
 import contextlib
 import logging
 import os
 import posixpath
 import shutil
 import tempfile
-from pathlib import Path, PurePath, PurePosixPath
-
-__all__ = ("os2posix", "posix2os", "NoTransaction", "TransactionProtocol")
-
 from collections.abc import Callable, Iterator
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, Protocol
 
 # Determine if the path separator for the OS looks like POSIX

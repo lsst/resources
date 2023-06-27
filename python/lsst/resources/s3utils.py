@@ -11,11 +11,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from unittest import TestCase
-
 __all__ = (
     "clean_test_environment",
     "getS3Client",
@@ -37,11 +32,14 @@ import re
 from collections.abc import Callable
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
 from urllib3.exceptions import HTTPError, RequestError
+
+if TYPE_CHECKING:
+    from unittest import TestCase
 
 try:
     import boto3
