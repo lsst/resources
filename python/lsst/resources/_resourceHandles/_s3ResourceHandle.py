@@ -14,9 +14,10 @@ from __future__ import annotations
 __all__ = ("S3ResourceHandle",)
 
 import warnings
+from collections.abc import Iterable, Mapping
 from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO, UnsupportedOperation
 from logging import Logger
-from typing import TYPE_CHECKING, Iterable, Mapping, Optional
+from typing import TYPE_CHECKING
 
 from botocore.exceptions import ClientError
 from lsst.utils.timer import time_this
@@ -72,7 +73,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
     """
 
     def __init__(
-        self, mode: str, log: Logger, client: "boto3.client", bucket: str, key: str, newline: bytes = b"\n"
+        self, mode: str, log: Logger, client: boto3.client, bucket: str, key: str, newline: bytes = b"\n"
     ):
         super().__init__(mode, log, newline=newline)
         self._client = client
@@ -81,7 +82,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         self._buffer = BytesIO()
         self._position = 0
         self._writable = False
-        self._last_flush_position: Optional[int] = None
+        self._last_flush_position: int | None = None
         self._warned = False
         self._readable = bool({"r", "+"} & set(self._mode))
         self._max_size: int | None = None
@@ -237,7 +238,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
     def seekable(self) -> bool:
         return True
 
-    def truncate(self, size: Optional[int] = None) -> int:
+    def truncate(self, size: int | None = None) -> int:
         if self.writable():
             self._buffer.truncate(size)
             return self._position

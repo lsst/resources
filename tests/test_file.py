@@ -11,7 +11,6 @@
 
 import os
 import pathlib
-import sys
 import unittest
 import unittest.mock
 import urllib.parse
@@ -21,13 +20,10 @@ from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
-_OLD_PYTHON = False
-if sys.version_info < (3, 10, 0):
-    _OLD_PYTHON = True
-
 
 class SimpleTestCase(unittest.TestCase):
-    @unittest.skipIf(_OLD_PYTHON, "isinstance() with unions is not supported.")
+    """Basic tests for file URIs."""
+
     def test_instance(self):
         for example in (
             "xxx",
@@ -42,12 +38,13 @@ class SimpleTestCase(unittest.TestCase):
 
 
 class FileTestCase(GenericTestCase, unittest.TestCase):
+    """File-specific generic test cases."""
+
     scheme = "file"
     netloc = "localhost"
 
     def test_env_var(self):
         """Test that environment variables are expanded."""
-
         with unittest.mock.patch.dict(os.environ, {"MY_TEST_DIR": "/a/b/c"}):
             uri = ResourcePath("${MY_TEST_DIR}/d.txt")
         self.assertEqual(uri.path, "/a/b/c/d.txt")
@@ -60,7 +57,6 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
 
     def test_ospath(self):
         """File URIs have ospath property."""
-
         file = ResourcePath(self._make_uri("a/test.txt"))
         self.assertEqual(file.ospath, "/a/test.txt")
         self.assertEqual(file.ospath, file.path)
@@ -88,6 +84,8 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
 
 
 class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
+    """File tests involving reading and writing of data."""
+
     scheme = "file"
     netloc = "localhost"
     testdir = TESTDIR
@@ -145,7 +143,6 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     def test_transfers_from_local(self):
         """Extra tests for local transfers."""
-
         target = self.tmpdir.join("a/target.txt")
         with ResourcePath.temporary_uri() as tmp:
             tmp.write(b"")

@@ -20,7 +20,8 @@ import string
 import unittest
 import urllib.parse
 import uuid
-from typing import Any, Callable, Iterable, Optional, Union
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from lsst.resources import ResourcePath
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
@@ -29,7 +30,7 @@ TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
 
 def _check_open(
-    test_case: Union[_GenericTestCase, unittest.TestCase],
+    test_case: _GenericTestCase | unittest.TestCase,
     uri: ResourcePath,
     *,
     mode_suffixes: Iterable[str] = ("", "t", "b"),
@@ -45,7 +46,7 @@ def _check_open(
         URI to use for tests.  Must point to a writeable location that is not
         yet occupied by a file.  On return, the location may point to a file
         only if the test fails.
-    mode_suffixes : `Iterable` of `str`
+    mode_suffixes : `~collections.abc.Iterable` of `str`
         Suffixes to pass as part of the ``mode`` argument to
         `ResourcePath.open`, indicating whether to open as binary or as text;
         the only permitted elements are ``""``, ``"t"``, and ``"b"`.
@@ -168,9 +169,9 @@ def _check_open(
 class _GenericTestCase:
     """Generic base class for test mixin."""
 
-    scheme: Optional[str] = None
-    netloc: Optional[str] = None
-    base_path: Optional[str] = None
+    scheme: str | None = None
+    netloc: str | None = None
+    base_path: str | None = None
     path1 = "test_dir"
     path2 = "file.txt"
 
@@ -190,7 +191,7 @@ class _GenericTestCase:
     assertRaises: Callable
     assertLogs: Callable
 
-    def _make_uri(self, path: str, netloc: Optional[str] = None) -> str:
+    def _make_uri(self, path: str, netloc: str | None = None) -> str:
         if self.scheme is not None:
             if netloc is None:
                 netloc = self.netloc
@@ -472,7 +473,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
     """Test schemes that can read and write using concrete resources."""
 
     transfer_modes: tuple[str, ...] = ("copy", "move")
-    testdir: Optional[str] = None
+    testdir: str | None = None
 
     def setUp(self) -> None:
         if self.scheme is None:
@@ -539,7 +540,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         self.assertEqual(newdir.size(), 0)
 
         newfile = newdir.join("temp.txt")
-        newfile.write("Data".encode())
+        newfile.write(b"Data")
         self.assertTrue(newfile.exists())
 
         file = self.tmpdir.join("file.txt")
@@ -711,7 +712,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         self.assertEqual(found, expected_yaml)
 
         # Now two explicit directories and a file
-        expected = set(u for u in expected_yaml)
+        expected = set(expected_yaml)
         expected.add(file)
 
         found = set(
@@ -743,7 +744,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         # at the end
         file2 = root.join("config/templates/templates-bad.yaml")
         found_grouped = [
-            [uri for uri in group]
+            list(group)
             for group in ResourcePath.findFileResources([file, file2, root.join("dir2/")], grouped=True)
             if not isinstance(group, ResourcePath)  # For mypy.
         ]
@@ -788,11 +789,11 @@ class GenericReadWriteTestCase(_GenericTestCase):
         # Again with grouping.
         # (mypy gets upset not knowing which of the two options is being
         # returned so add useless instance check).
-        found_list = list(
-            [uri for uri in group]
+        found_list = [
+            list(group)
             for group in ResourcePath.findFileResources([root], grouped=True)
             if not isinstance(group, ResourcePath)  # For mypy.
-        )
+        ]
         self.assertEqual(len(found_list), 2)
         self.assertEqual(len(found_list[0]), n_dir1)
         self.assertEqual(len(found_list[1]), n_dir2)

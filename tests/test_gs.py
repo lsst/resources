@@ -21,6 +21,8 @@ except ImportError:
 
 @unittest.skipIf(not storage, "Warning: google-cloud-storage not found!")
 class GenericGCSTestCase(GenericTestCase, unittest.TestCase):
+    """Generic tests of google cloud storage URI format."""
+
     scheme = "gs"
     netloc = "my_bucket"
 

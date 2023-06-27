@@ -15,10 +15,11 @@ from types import TracebackType
 __all__ = ("BaseResourceHandle", "CloseStatus", "ResourceHandleProtocol")
 
 from abc import ABC, abstractmethod, abstractproperty
+from collections.abc import Callable, Iterable
 from enum import Enum, auto
 from io import SEEK_SET
 from logging import Logger
-from typing import AnyStr, Callable, Generic, Iterable, Optional, Protocol, Type, TypeVar, Union
+from typing import AnyStr, Generic, Protocol, TypeVar
 
 S = TypeVar("S", bound="ResourceHandleProtocol")
 T = TypeVar("T", bound="BaseResourceHandle")
@@ -64,7 +65,7 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
         ...
 
     @abstractproperty
-    def isatty(self) -> Union[bool, Callable[[], bool]]:
+    def isatty(self) -> bool | Callable[[], bool]:
         ...
 
     @abstractmethod
@@ -92,7 +93,7 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
         ...
 
     @abstractmethod
-    def truncate(self, size: Optional[int] = None) -> int:
+    def truncate(self, size: int | None = None) -> int:
         ...
 
     @abstractmethod
@@ -116,11 +117,11 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
 
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
         /,
-    ) -> Optional[bool]:
+    ) -> bool | None:
         ...
 
 
@@ -149,7 +150,7 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
     _log: Logger
     _newline: U
 
-    def __init__(self, mode: str, log: Logger, *, newline: Optional[AnyStr] = None) -> None:
+    def __init__(self, mode: str, log: Logger, *, newline: AnyStr | None = None) -> None:
         if newline is None:
             if "b" in mode:
                 self._newline = b"\n"  # type: ignore
@@ -170,9 +171,9 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
 
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_bal: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> Optional[bool]:
+        exc_type: type[BaseException] | None,
+        exc_bal: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
         self.close()
         return None

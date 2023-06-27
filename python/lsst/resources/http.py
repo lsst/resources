@@ -25,7 +25,8 @@ import re
 import stat
 import tempfile
 import xml.etree.ElementTree as eTree
-from typing import TYPE_CHECKING, BinaryIO, Iterator, List, Optional, Tuple, Union, cast
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 import requests
 from astropy import units as u
@@ -67,19 +68,18 @@ class HttpResourcePathConfig:
     # Accepted digest algorithms
     ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
 
-    _front_end_connections: Optional[int] = None
-    _back_end_connections: Optional[int] = None
-    _digest_algorithm: Optional[str] = None
-    _send_expect_on_put: Optional[bool] = None
-    _timeout: Optional[tuple[float, float]] = None
-    _collect_memory_usage: Optional[bool] = None
-    _backoff_min: Optional[float] = None
-    _backoff_max: Optional[float] = None
+    _front_end_connections: int | None = None
+    _back_end_connections: int | None = None
+    _digest_algorithm: str | None = None
+    _send_expect_on_put: bool | None = None
+    _timeout: tuple[float, float] | None = None
+    _collect_memory_usage: bool | None = None
+    _backoff_min: float | None = None
+    _backoff_max: float | None = None
 
     @property
     def front_end_connections(self) -> int:
         """Number of persistent connections to the front end server."""
-
         if self._front_end_connections is not None:
             return self._front_end_connections
 
@@ -97,7 +97,6 @@ class HttpResourcePathConfig:
     @property
     def back_end_connections(self) -> int:
         """Number of persistent connections to the back end servers."""
-
         if self._back_end_connections is not None:
             return self._back_end_connections
 
@@ -123,7 +122,6 @@ class HttpResourcePathConfig:
             The name of a digest algorithm or the empty string if no algotihm
             is configured.
         """
-
         if self._digest_algorithm is not None:
             return self._digest_algorithm
 
@@ -143,7 +141,6 @@ class HttpResourcePathConfig:
         the client knows how to handle redirects to the specific server that
         will actually receive the data for PUT requests.
         """
-
         if self._send_expect_on_put is not None:
             return self._send_expect_on_put
 
@@ -156,7 +153,6 @@ class HttpResourcePathConfig:
         server and reading its response, respectively. Both values are in
         seconds.
         """
-
         if self._timeout is not None:
             return self._timeout
 
@@ -179,7 +175,6 @@ class HttpResourcePathConfig:
         operations against the remote server via the `lsst.utils.time_this`
         context manager.
         """
-
         if self._collect_memory_usage is not None:
             return self._collect_memory_usage
 
@@ -191,7 +186,6 @@ class HttpResourcePathConfig:
         """Lower bound of the interval from which a backoff factor is randomly
         selected when retrying requests (seconds).
         """
-
         if self._backoff_min is not None:
             return self._backoff_min
 
@@ -210,7 +204,6 @@ class HttpResourcePathConfig:
         """Upper bound of the interval from which a backoff factor is randomly
         selected when retrying requests (seconds).
         """
-
         if self._backoff_max is not None:
             return self._backoff_max
 
@@ -226,7 +219,7 @@ class HttpResourcePathConfig:
 
 
 @functools.lru_cache
-def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
+def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
     """Check whether the remote HTTP endpoint implements WebDAV features.
 
     Parameters
@@ -244,7 +237,7 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
     log.debug("Detecting HTTP endpoint type for '%s'...", path)
     try:
         ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
-        verify: Union[bool, str] = ca_cert_bundle if ca_cert_bundle else True
+        verify: bool | str = ca_cert_bundle if ca_cert_bundle else True
         resp = requests.options(str(path), verify=verify, stream=False)
         if resp.status_code not in (requests.codes.ok, requests.codes.created):
             raise ValueError(
@@ -281,7 +274,7 @@ def _is_webdav_endpoint(path: Union[ResourcePath, str]) -> bool:
 
 # Tuple (path, block_size) pointing to the location of a local directory
 # to save temporary files and the block size of the underlying file system.
-_TMPDIR: Optional[tuple[str, int]] = None
+_TMPDIR: tuple[str, int] | None = None
 
 
 def _get_temp_dir() -> tuple[str, int]:
@@ -388,7 +381,6 @@ class SessionStore:
         """Destroy all previously created sessions and attempt to close
         underlying idle network connections.
         """
-
         # Close all sessions and empty the store. Idle network connections
         # should be closed as a consequence. We don't have means through
         # the API exposed by Requests to actually force closing the
@@ -604,7 +596,7 @@ class HttpResourcePath(ResourcePath):
         Valid values are those in ACCEPTED_DIGESTS.
     """
 
-    _is_webdav: Optional[bool] = None
+    _is_webdav: bool | None = None
 
     # Configuration items for this class instances.
     _config = HttpResourcePathConfig()
@@ -645,7 +637,6 @@ class HttpResourcePath(ResourcePath):
         """Client session to send requests which do not require upload or
         download of data, i.e. mostly metadata requests.
         """
-
         if hasattr(self, "_metadata_session"):
             if HttpResourcePath._pid == os.getpid():
                 return self._metadata_session
@@ -662,7 +653,6 @@ class HttpResourcePath(ResourcePath):
     @property
     def data_session(self) -> requests.Session:
         """Client session for uploading and downloading data."""
-
         if hasattr(self, "_data_session"):
             if HttpResourcePath._pid == os.getpid():
                 return self._data_session
@@ -677,8 +667,9 @@ class HttpResourcePath(ResourcePath):
         return self._data_session
 
     def _clear_sessions(self) -> None:
-        """Internal method to close the socket connections still open. Used
-        only in test suites to avoid warnings.
+        """Close the socket connections that are still open.
+
+        Used only in test suites to avoid warnings.
         """
         self._metadata_session_store.clear()
         self._data_session_store.clear()
@@ -817,7 +808,6 @@ class HttpResourcePath(ResourcePath):
             The number of bytes to read. Negative or omitted indicates
             that all data should be read.
         """
-
         # Use the data session as a context manager to ensure that the
         # network connections to both the front end and back end servers are
         # closed after downloading the data.
@@ -865,7 +855,7 @@ class HttpResourcePath(ResourcePath):
         src: ResourcePath,
         transfer: str = "copy",
         overwrite: bool = False,
-        transaction: Optional[TransactionProtocol] = None,
+        transaction: TransactionProtocol | None = None,
     ) -> None:
         """Transfer the current resource to a Webdav repository.
 
@@ -926,13 +916,15 @@ class HttpResourcePath(ResourcePath):
             src.remove()
 
     def walk(
-        self, file_filter: Optional[Union[str, re.Pattern]] = None
-    ) -> Iterator[Union[List, Tuple[ResourcePath, List[str], List[str]]]]:
+        self, file_filter: str | re.Pattern | None = None
+    ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
         """Walk the directory tree returning matching files and directories.
+
         Parameters
         ----------
         file_filter : `str` or `re.Pattern`, optional
             Regex to filter out files from the list before it is returned.
+
         Yields
         ------
         dirpath : `ResourcePath`
@@ -954,8 +946,8 @@ class HttpResourcePath(ResourcePath):
 
         resp = self._propfind(depth="1")
         if resp.status_code == requests.codes.multi_status:  # 207
-            files: List[str] = []
-            dirs: List[str] = []
+            files: list[str] = []
+            dirs: list[str] = []
 
             for prop in _parse_propfind_response_body(resp.text):
                 if prop.is_file:
@@ -977,7 +969,7 @@ class HttpResourcePath(ResourcePath):
                 new_uri = self.join(dir, forceDirectory=True)
                 yield from new_uri.walk(file_filter)
 
-    def _as_local(self) -> Tuple[str, bool]:
+    def _as_local(self) -> tuple[str, bool]:
         """Download object over HTTP and place in temporary directory.
 
         Returns
@@ -987,7 +979,6 @@ class HttpResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-
         # Use the session as a context manager to ensure that connections
         # to both the front end and back end servers are closed after the
         # download operation is finished.
@@ -1030,11 +1021,11 @@ class HttpResourcePath(ResourcePath):
     def _send_webdav_request(
         self,
         method: str,
-        url: Optional[str] = None,
+        url: str | None = None,
         headers: dict[str, str] = {},
-        body: Optional[str] = None,
-        session: Optional[requests.Session] = None,
-        timeout: Optional[tuple[float, float]] = None,
+        body: str | None = None,
+        session: requests.Session | None = None,
+        timeout: tuple[float, float] | None = None,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
 
@@ -1112,7 +1103,7 @@ class HttpResourcePath(ResourcePath):
                 f"{max_redirects} redirections"
             )
 
-    def _propfind(self, body: Optional[str] = None, depth: str = "0") -> requests.Response:
+    def _propfind(self, body: str | None = None, depth: str = "0") -> requests.Response:
         """Send a PROPFIND webDAV request and return the response.
 
         Parameters
@@ -1169,7 +1160,6 @@ class HttpResourcePath(ResourcePath):
 
     def _head(self) -> requests.Response:
         """Send a HEAD webDAV request for this resource."""
-
         return self._send_webdav_request("HEAD")
 
     def _mkcol(self) -> None:
@@ -1188,7 +1178,6 @@ class HttpResourcePath(ResourcePath):
 
     def _delete(self) -> None:
         """Send a DELETE webDAV request for this resource."""
-
         log.debug("Deleting %s ...", self.geturl())
 
         # If this is a directory, ensure the remote is a webDAV server because
@@ -1303,7 +1292,7 @@ class HttpResourcePath(ResourcePath):
         """
         return self._copy_or_move("MOVE", src)
 
-    def _put(self, data: Union[BinaryIO, bytes]) -> None:
+    def _put(self, data: BinaryIO | bytes) -> None:
         """Perform an HTTP PUT request and handle redirection.
 
         Parameters
@@ -1360,7 +1349,7 @@ class HttpResourcePath(ResourcePath):
             # for the list of supported digest algorithhms.
             # In addition, note that not all servers implement this RFC so
             # the checksum may not be computed by the server.
-            put_headers: Optional[dict[str, str]] = None
+            put_headers: dict[str, str] | None = None
             if digest := self._config.digest_algorithm:
                 put_headers = {"Want-Digest": digest}
 
@@ -1394,7 +1383,7 @@ class HttpResourcePath(ResourcePath):
         self,
         mode: str = "r",
         *,
-        encoding: Optional[str] = None,
+        encoding: str | None = None,
     ) -> Iterator[ResourceHandleProtocol]:
         resp = self._head()
         accepts_range = resp.status_code == requests.codes.ok and resp.headers.get("Accept-Ranges") == "bytes"
@@ -1467,7 +1456,7 @@ def _is_protected(filepath: str) -> bool:
     return owner_accessible and not group_accessible and not other_accessible
 
 
-def _parse_propfind_response_body(body: str) -> List[DavProperty]:
+def _parse_propfind_response_body(body: str) -> list[DavProperty]:
     """Parse the XML-encoded contents of the response body to a webDAV PROPFIND
     request.
 
@@ -1539,7 +1528,7 @@ class DavProperty:
     # PROPFIND response's 'propstat' element.
     _status_ok_rex = re.compile(r"^HTTP/.* 200 .*$", re.IGNORECASE)
 
-    def __init__(self, response: Optional[eTree.Element]):
+    def __init__(self, response: eTree.Element | None):
         self._href: str = ""
         self._displayname: str = ""
         self._collection: bool = False

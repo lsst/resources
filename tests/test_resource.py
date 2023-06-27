@@ -17,6 +17,8 @@ from lsst.resources.tests import GenericTestCase
 
 
 class ResourceTestCase(GenericTestCase, unittest.TestCase):
+    """Generic test of resource URIs."""
+
     scheme = "resource"
     netloc = "lsst.resources"
 
@@ -110,7 +112,6 @@ class ResourceReadTestCase(unittest.TestCase):
         Try to find resources in this package. Python does not care whether
         a resource is a Python file or anything else.
         """
-
         resource = ResourcePath("resource://lsst.resources/")
         resources = set(ResourcePath.findFileResources([resource]))
 

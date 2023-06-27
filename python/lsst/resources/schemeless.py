@@ -11,15 +11,13 @@
 
 from __future__ import annotations
 
+__all__ = ("SchemelessResourcePath",)
+
 import logging
 import os
 import os.path
 import urllib.parse
-
-__all__ = ("SchemelessResourcePath",)
-
 from pathlib import PurePath
-from typing import Optional, Tuple
 
 from ._resourcePath import ResourcePath
 from .file import FileResourcePath
@@ -75,7 +73,7 @@ class SchemelessResourcePath(FileResourcePath):
             str(self), forceAbsolute=True, forceDirectory=self.isdir(), isTemporary=self.isTemporary
         )
 
-    def relative_to(self, other: ResourcePath) -> Optional[str]:
+    def relative_to(self, other: ResourcePath) -> str | None:
         """Return the relative path from this URI to the other URI.
 
         Parameters
@@ -133,10 +131,10 @@ class SchemelessResourcePath(FileResourcePath):
     def _fixupPathUri(
         cls,
         parsed: urllib.parse.ParseResult,
-        root: Optional[ResourcePath] = None,
+        root: ResourcePath | None = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
-    ) -> Tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool]:
         """Fix up relative paths for local file system.
 
         Parameters

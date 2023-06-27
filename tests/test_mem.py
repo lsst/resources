@@ -16,11 +16,15 @@ from lsst.resources.tests import GenericTestCase
 
 
 class MemoryTestCase(GenericTestCase, unittest.TestCase):
+    """Generic tests of the mem URI."""
+
     scheme = "mem"
     netloc = "unknown"
 
 
 class MemoryReadTestCase(unittest.TestCase):
+    """Simple tests of I/O with mem URI."""
+
     def setUp(self):
         self.root_uri = ResourcePath("mem://x/y.z")
 

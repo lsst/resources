@@ -11,11 +11,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from unittest import TestCase
-
 __all__ = (
     "clean_test_environment",
     "getS3Client",
@@ -28,19 +23,23 @@ __all__ = (
     "max_retry_time",
     "retryable_io_errors",
     "retryable_client_errors",
-    "_TooManyRequestsException",
+    "_TooManyRequestsError",
 )
 
 import functools
 import os
 import re
+from collections.abc import Callable
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
-from typing import Any, Callable, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
 from urllib3.exceptions import HTTPError, RequestError
+
+if TYPE_CHECKING:
+    from unittest import TestCase
 
 try:
     import boto3
@@ -62,6 +61,8 @@ try:
 except ImportError:
 
     class Backoff:
+        """Mock implementation of the backoff class."""
+
         @staticmethod
         def expo(func: Callable, *args: Any, **kwargs: Any) -> Callable:
             return func
@@ -73,7 +74,7 @@ except ImportError:
     backoff = cast(ModuleType, Backoff)
 
 
-class _TooManyRequestsException(Exception):
+class _TooManyRequestsError(Exception):
     """Private exception that can be used for 429 retry.
 
     botocore refuses to deal with 429 error itself so issues a generic
@@ -97,7 +98,7 @@ retryable_io_errors = (
     TimeoutError,
     ConnectionError,
     # private
-    _TooManyRequestsException,
+    _TooManyRequestsError,
 )
 
 # Client error can include NoSuchKey so retry may not be the right
@@ -170,7 +171,7 @@ def getS3Client() -> boto3.client:
     return _get_s3_client(endpoint, skip_validation)
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def _get_s3_client(endpoint: str, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
     config = botocore.config.Config(read_timeout=180, retries={"mode": "adaptive", "max_attempts": 10})
@@ -182,10 +183,10 @@ def _get_s3_client(endpoint: str, skip_validation: bool) -> boto3.client:
 
 
 def s3CheckFileExists(
-    path: Union[Location, ResourcePath, str],
-    bucket: Optional[str] = None,
-    client: Optional[boto3.client] = None,
-) -> Tuple[bool, int]:
+    path: Location | ResourcePath | str,
+    bucket: str | None = None,
+    client: boto3.client | None = None,
+) -> tuple[bool, int]:
     """Return if the file exists in the bucket or not.
 
     Parameters
@@ -226,7 +227,7 @@ def s3CheckFileExists(
             uri = ResourcePath(path)
             bucket = uri.netloc
             filepath = uri.relativeToPathRoot
-    elif isinstance(path, (ResourcePath, Location)):
+    elif isinstance(path, ResourcePath | Location):
         bucket = path.netloc
         filepath = path.relativeToPathRoot
     else:
@@ -254,7 +255,7 @@ def s3CheckFileExists(
         raise
 
 
-def bucketExists(bucketName: str, client: Optional[boto3.client] = None) -> bool:
+def bucketExists(bucketName: str, client: boto3.client | None = None) -> bool:
     """Check if the S3 bucket with the given name actually exists.
 
     Parameters
