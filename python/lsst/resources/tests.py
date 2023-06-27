@@ -46,7 +46,7 @@ def _check_open(
         URI to use for tests.  Must point to a writeable location that is not
         yet occupied by a file.  On return, the location may point to a file
         only if the test fails.
-    mode_suffixes : `Iterable` of `str`
+    mode_suffixes : `~collections.abc.Iterable` of `str`
         Suffixes to pass as part of the ``mode`` argument to
         `ResourcePath.open`, indicating whether to open as binary or as text;
         the only permitted elements are ``""``, ``"t"``, and ``"b"`.
