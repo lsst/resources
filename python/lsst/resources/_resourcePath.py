@@ -1299,8 +1299,9 @@ class ResourcePath:
 
         Yields
         ------
-        cm : `~collections.abc.Iterator` of `ResourceHandleProtocol`
-            A context manager that wraps a file-like object.
+        cm : `~contextlib.AbstractContextManager`
+            A context manager that wraps a `ResourceHandleProtocol` file-like
+            object.
 
         Notes
         -----
