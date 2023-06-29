@@ -13,7 +13,7 @@ doxylink = {}
 exclude_patterns = ["changes/*"]
 
 nitpick_ignore_regex = [
-    ("py:(class|obj)", ".*_baseResourceHandle.U$"),
+    ("py:(class|obj)", ".*ResourceHandle.U$"),
     ("py:(class|obj)", "re.Pattern"),
 ]
 nitpick_ignore = [
