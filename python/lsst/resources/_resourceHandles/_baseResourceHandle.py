@@ -38,10 +38,10 @@ class CloseStatus(Enum):
 
 class ResourceHandleProtocol(Protocol, Generic[U]):
     """Defines the interface protocol that is compatible with children of
-    `BaseResourceHandle`.
+    `.BaseResourceHandle`.
 
     Any class that satisfies this protocol can be used in any context where a
-    `BaseResourceHandle` is expected.
+    `.BaseResourceHandle` is expected.
     """
 
     @abstractproperty
@@ -126,8 +126,8 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
 
 
 class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
-    """Base class interface for the handle like interface of `ResourcePath`
-    subclasses.
+    """Base class interface for the handle like interface of
+    `~lsst.resources.ResourcePath` subclasses.
 
     Parameters
     ----------

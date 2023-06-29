@@ -69,7 +69,7 @@ def posix2os(posix: PurePath | str) -> str:
 
     Parameters
     ----------
-    posix : `str`, `PurePath`
+    posix : `str`, `~pathlib.PurePath`
         Path using the POSIX path separator.
 
     Returns
@@ -96,7 +96,8 @@ def posix2os(posix: PurePath | str) -> str:
 
 
 class NoTransaction:
-    """A simple emulation of the `~lsst.daf.butler.DatastoreTransaction` class.
+    """A simple emulation of the
+    `~lsst.daf.butler.core.datastore.DatastoreTransaction` class.
 
     Notes
     -----
@@ -109,7 +110,9 @@ class NoTransaction:
 
     @contextlib.contextmanager
     def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Iterator[None]:
-        """No-op context manager to replace `DatastoreTransaction`."""
+        """No-op context manager to replace
+        `~lsst.daf.butler.core.datastore.DatastoreTransaction`.
+        """
         yield None
 
 
