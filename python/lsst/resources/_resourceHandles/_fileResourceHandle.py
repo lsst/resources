@@ -23,7 +23,7 @@ U = TypeVar("U", str, bytes)
 
 
 class FileResourceHandle(BaseResourceHandle[U]):
-    """File based specialization of `BaseResourceHandle`
+    """File based specialization of `.BaseResourceHandle`
 
     Parameters
     ----------
