@@ -1,3 +1,8 @@
+.. _lsst.resources-internal-api:
+
+Internal API reference
+======================
+
 .. automodapi:: lsst.resources.utils
    :no-main-docstr:
 

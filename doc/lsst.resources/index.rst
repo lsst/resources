@@ -33,12 +33,9 @@ Python API reference
    :no-main-docstr:
 
 
-.. _lsst.resources-internal-api:
-
-Internal API reference
-======================
+See also :ref:`lsst.resources-internal-api`.
 
 .. toctree::
-   :maxdepth: 1
+   :hidden:
 
    internal-api.rst
