@@ -31,3 +31,11 @@ Python API reference
 
 .. automodapi:: lsst.resources
    :no-main-docstr:
+
+
+See also :ref:`lsst.resources-internal-api`.
+
+.. toctree::
+   :hidden:
+
+   internal-api.rst

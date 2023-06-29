@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class S3ResourceHandle(BaseResourceHandle[bytes]):
-    """S3 specialization of `BaseResourceHandle`
+    """S3 specialization of `.BaseResourceHandle`
 
     Parameters
     ----------

@@ -62,7 +62,7 @@ class ResourcePath:
 
     Parameters
     ----------
-    uri : `str`, `Path`, `urllib.parse.ParseResult`, or `ResourcePath`.
+    uri : `str`, `pathlib.Path`, `urllib.parse.ParseResult`, or `ResourcePath`.
         URI in string form.  Can be scheme-less if referring to a relative
         path or an absolute path on the local file system.
     root : `str` or `ResourcePath`, optional
@@ -409,13 +409,13 @@ class ResourcePath:
             Everything leading up to tail, expanded and normalized as per
             ResourcePath rules.
         tail : `str`
-            Last `self.path` component. Tail will be empty if path ends on a
+            Last path component. Tail will be empty if path ends on a
             separator. Tail will never contain separators. It will be
             unquoted.
 
         Notes
         -----
-        Equivalent to `os.path.split()` where head preserves the URI
+        Equivalent to `os.path.split` where head preserves the URI
         components.
         """
         head, tail = self._pathModule.split(self.path)
@@ -444,7 +444,7 @@ class ResourcePath:
         If URI ends on a slash returns an empty string. This is the second
         element returned by `split()`.
 
-        Equivalent of `os.path.basename()``.
+        Equivalent of `os.path.basename`.
         """
         return self.split()[1]
 
@@ -459,7 +459,7 @@ class ResourcePath:
 
         Notes
         -----
-        Equivalent of `os.path.dirname()`.
+        Equivalent of `os.path.dirname`.
         """
         return self.split()[0]
 
@@ -623,7 +623,7 @@ class ResourcePath:
             to include a file at the end. Will be quoted depending on the
             associated URI scheme. If the path looks like a URI with a scheme
             referring to an absolute location, it will be returned
-            directly (matching the behavior of `os.path.join()`). It can
+            directly (matching the behavior of `os.path.join`). It can
             also be a `ResourcePath`.
         isTemporary : `bool`, optional
             Indicate that the resulting URI represents a temporary resource.
@@ -1282,13 +1282,13 @@ class ResourcePath:
         ----------
         mode : `str`
             String indicating the mode in which to open the file.  Values are
-            the same as those accepted by `builtins.open`, though intrinsically
+            the same as those accepted by `open`, though intrinsically
             read-only URI types may only support read modes, and
             `io.IOBase.seekable` is not guaranteed to be `True` on the returned
             object.
         encoding : `str`, optional
             Unicode encoding for text IO; ignored for binary IO.  Defaults to
-            ``locale.getpreferredencoding(False)``, just as `builtins.open`
+            ``locale.getpreferredencoding(False)``, just as `open`
             does.
         prefer_file_temporary : `bool`, optional
             If `True`, for implementations that require transfers from a remote
@@ -1297,10 +1297,11 @@ class ResourcePath:
             may be necessary to avoid excessive memory usage by large files.
             Ignored by implementations that do not require a temporary.
 
-        Returns
-        -------
-        cm : `contextlib.ContextManager`
-            A context manager that wraps a file-like object.
+        Yields
+        ------
+        cm : `~contextlib.AbstractContextManager`
+            A context manager that wraps a `ResourceHandleProtocol` file-like
+            object.
 
         Notes
         -----
@@ -1313,7 +1314,7 @@ class ResourcePath:
         possible (as is guaranteed for local files).  `ResourcePath`
         implementations for which `as_local` does not return a temporary are
         required to reimplement `open`, though they may delegate to `super`
-        when `prefer_file_temporary` is `False`.
+        when ``prefer_file_temporary`` is `False`.
         """
         if self.dirLike:
             raise IsADirectoryError(f"Directory-like URI {self} cannot be opened.")
@@ -1355,8 +1356,9 @@ class ResourcePath:
 
         Yields
         ------
-        handle : `BaseResourceHandle`
-            A handle that conforms to the `BaseResourcehandle interface
+        handle : `~._resourceHandles.BaseResourceHandle`
+            A handle that conforms to the
+            `~._resourceHandles.BaseResourceHandle` interface
 
         Notes
         -----

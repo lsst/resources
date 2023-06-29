@@ -25,7 +25,7 @@ from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 
 class HttpReadResourceHandle(BaseResourceHandle[bytes]):
-    """HTTP-based specialization of `BaseResourceHandle`."""
+    """HTTP-based specialization of `.BaseResourceHandle`."""
 
     def __init__(
         self,

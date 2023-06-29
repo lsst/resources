@@ -11,3 +11,11 @@ html_title = project
 html_short_title = project
 doxylink = {}
 exclude_patterns = ["changes/*"]
+
+nitpick_ignore_regex = [
+    ("py:(class|obj)", ".*ResourceHandle.U$"),
+    ("py:(class|obj)", "re.Pattern"),
+]
+nitpick_ignore = [
+    ("py:obj", "lsst.daf.butler.core.datastore.DatastoreTransaction"),
+]
