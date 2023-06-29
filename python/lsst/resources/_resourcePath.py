@@ -1297,9 +1297,9 @@ class ResourcePath:
             may be necessary to avoid excessive memory usage by large files.
             Ignored by implementations that do not require a temporary.
 
-        Returns
-        -------
-        cm : `contextlib.contextmanager`
+        Yields
+        ------
+        cm : `~collections.abc.Iterator` of `ResourceHandleProtocol`
             A context manager that wraps a file-like object.
 
         Notes
