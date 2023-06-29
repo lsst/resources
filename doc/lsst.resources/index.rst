@@ -32,8 +32,13 @@ Python API reference
 .. automodapi:: lsst.resources
    :no-main-docstr:
 
-.. automodapi:: lsst.resources.utils
-   :no-main-docstr:
 
-.. automodapi:: lsst.resources._resourceHandles._baseResourceHandle
-   :no-main-docstr:
+.. _lsst.resources-internal-api:
+
+Internal API reference
+======================
+
+.. toctree::
+   :maxdepth: 1
+
+   internal-api.rst
