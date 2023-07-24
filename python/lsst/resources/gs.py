@@ -173,9 +173,8 @@ class GSResourcePath(ResourcePath):
         return body
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
-        if not overwrite:
-            if self.exists():
-                raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
+        if not overwrite and self.exists():
+            raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
         with time_this(log, msg="Write to %s", args=(self,)):
             self.blob.upload_from_string(data, retry=_RETRY_POLICY)
 

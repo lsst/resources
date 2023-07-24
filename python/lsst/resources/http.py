@@ -839,9 +839,8 @@ class HttpResourcePath(ResourcePath):
             the write will fail.
         """
         log.debug("Writing to remote resource: %s", self.geturl())
-        if not overwrite:
-            if self.exists():
-                raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
+        if not overwrite and self.exists():
+            raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
 
         # Ensure the parent directory exists.
         self.parent().mkdir()
@@ -1009,12 +1008,15 @@ class HttpResourcePath(ResourcePath):
             # Check that the expected and actual content lengths match. Perform
             # this check only when the contents of the file was not encoded by
             # the server.
-            if "Content-Encoding" not in resp.headers:
-                if expected_length >= 0 and expected_length != content_length:
-                    raise ValueError(
-                        f"Size of downloaded file does not match value in Content-Length header for {self}: "
-                        f"expecting {expected_length} and got {content_length} bytes"
-                    )
+            if (
+                "Content-Encoding" not in resp.headers
+                and expected_length >= 0
+                and expected_length != content_length
+            ):
+                raise ValueError(
+                    f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                    f"expecting {expected_length} and got {content_length} bytes"
+                )
 
             return tmpFile.name, True
 

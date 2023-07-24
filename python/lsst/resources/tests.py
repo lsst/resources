@@ -494,9 +494,8 @@ class GenericReadWriteTestCase(_GenericTestCase):
             self.tmpdir.mkdir()
 
     def tearDown(self) -> None:
-        if self.tmpdir:
-            if self.tmpdir.isLocal:
-                removeTestTempDir(self.tmpdir.ospath)
+        if self.tmpdir and self.tmpdir.isLocal:
+            removeTestTempDir(self.tmpdir.ospath)
 
     def test_file(self) -> None:
         uri = self.tmpdir.join("test.txt")

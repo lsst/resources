@@ -222,9 +222,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
                     offset -= self._last_flush_position
                     if offset < 0:
                         raise OSError("S3 ResourceHandle can not seek prior to already flushed positions")
-                if whence == SEEK_CUR:
-                    if (self.tell() - self._last_flush_position) < 0:
-                        raise OSError("S3 ResourceHandle can not seek prior to already flushed positions")
+                if whence == SEEK_CUR and (self.tell() - self._last_flush_position) < 0:
+                    raise OSError("S3 ResourceHandle can not seek prior to already flushed positions")
                 if whence == SEEK_END:
                     raise OSError("S3 ResourceHandle can not seek referencing the end of the resource")
             self._buffer.seek(offset, whence)

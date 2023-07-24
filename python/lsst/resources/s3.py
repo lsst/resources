@@ -164,9 +164,8 @@ class S3ResourcePath(ResourcePath):
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def write(self, data: bytes, overwrite: bool = True) -> None:
         """Write the supplied data to the resource."""
-        if not overwrite:
-            if self.exists():
-                raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
+        if not overwrite and self.exists():
+            raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
         with time_this(log, msg="Write to %s", args=(self,)):
             self.client.put_object(Bucket=self.netloc, Key=self.relativeToPathRoot, Body=data)
 
