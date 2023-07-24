@@ -637,27 +637,27 @@ class GenericReadWriteTestCase(_GenericTestCase):
 
         # Temporary (possibly remote) resource.
         # Transfers between temporary resources.
-        with ResourcePath.temporary_uri(prefix=self.tmpdir.join("tmp"), suffix=".json") as remote_tmp:
-            # Temporary local resource.
-            with ResourcePath.temporary_uri(suffix=".json") as local_tmp:
-                remote_tmp.write(b"42")
-                if not remote_tmp.isLocal:
-                    for transfer in ("link", "symlink", "hardlink", "relsymlink"):
-                        with self.assertRaises(RuntimeError):
-                            # Trying to symlink a remote resource is not going
-                            # to work. A hardlink could work but would rely
-                            # on the local temp space being on the same
-                            # filesystem as the target.
-                            local_tmp.transfer_from(remote_tmp, transfer)
-                local_tmp.transfer_from(remote_tmp, "move")
-                self.assertFalse(remote_tmp.exists())
-                remote_tmp.transfer_from(local_tmp, "auto", overwrite=True)
-                self.assertEqual(local_tmp.read(), remote_tmp.read())
+        with ResourcePath.temporary_uri(
+            prefix=self.tmpdir.join("tmp"), suffix=".json"
+        ) as remote_tmp, ResourcePath.temporary_uri(suffix=".json") as local_tmp:
+            remote_tmp.write(b"42")
+            if not remote_tmp.isLocal:
+                for transfer in ("link", "symlink", "hardlink", "relsymlink"):
+                    with self.assertRaises(RuntimeError):
+                        # Trying to symlink a remote resource is not going
+                        # to work. A hardlink could work but would rely
+                        # on the local temp space being on the same
+                        # filesystem as the target.
+                        local_tmp.transfer_from(remote_tmp, transfer)
+            local_tmp.transfer_from(remote_tmp, "move")
+            self.assertFalse(remote_tmp.exists())
+            remote_tmp.transfer_from(local_tmp, "auto", overwrite=True)
+            self.assertEqual(local_tmp.read(), remote_tmp.read())
 
-                # Transfer of missing remote.
-                remote_tmp.remove()
-                with self.assertRaises(FileNotFoundError):
-                    local_tmp.transfer_from(remote_tmp, "auto", overwrite=True)
+            # Transfer of missing remote.
+            remote_tmp.remove()
+            with self.assertRaises(FileNotFoundError):
+                local_tmp.transfer_from(remote_tmp, "auto", overwrite=True)
 
     def test_local(self) -> None:
         """Check that remote resources can be made local."""

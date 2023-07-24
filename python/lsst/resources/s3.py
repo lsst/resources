@@ -212,14 +212,15 @@ class S3ResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile:
-            with time_this(log, msg="Downloading %s to local file", args=(self,)):
-                progress = (
-                    ProgressPercentage(self, msg="Downloading:")
-                    if log.isEnabledFor(ProgressPercentage.log_level)
-                    else None
-                )
-                self._download_file(tmpFile, progress)
+        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile, time_this(
+            log, msg="Downloading %s to local file", args=(self,)
+        ):
+            progress = (
+                ProgressPercentage(self, msg="Downloading:")
+                if log.isEnabledFor(ProgressPercentage.log_level)
+                else None
+            )
+            self._download_file(tmpFile, progress)
         return tmpFile.name, True
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)

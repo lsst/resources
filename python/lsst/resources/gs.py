@@ -197,12 +197,13 @@ class GSResourcePath(ResourcePath):
         self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
 
     def _as_local(self) -> tuple[str, bool]:
-        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile:
-            with time_this(log, msg="Downloading %s to local file", args=(self,)):
-                try:
-                    self.blob.download_to_filename(tmpFile.name, retry=_RETRY_POLICY)
-                except NotFound as e:
-                    raise FileNotFoundError(f"No such resource: {self}") from e
+        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile, time_this(
+            log, msg="Downloading %s to local file", args=(self,)
+        ):
+            try:
+                self.blob.download_to_filename(tmpFile.name, retry=_RETRY_POLICY)
+            except NotFound as e:
+                raise FileNotFoundError(f"No such resource: {self}") from e
         return tmpFile.name, True
 
     def transfer_from(
@@ -262,9 +263,8 @@ class GSResourcePath(ResourcePath):
                         break
         else:
             # Use local file and upload it
-            with src.as_local() as local_uri:
-                with time_this(log, msg=timer_msg, args=timer_args):
-                    self.blob.upload_from_filename(local_uri.ospath, retry=_RETRY_POLICY)
+            with src.as_local() as local_uri, time_this(log, msg=timer_msg, args=timer_args):
+                self.blob.upload_from_filename(local_uri.ospath, retry=_RETRY_POLICY)
 
         # This was an explicit move requested from a remote resource
         # try to remove that resource
