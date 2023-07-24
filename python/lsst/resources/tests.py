@@ -190,6 +190,10 @@ class _GenericTestCase:
     assertTrue: Callable
     assertRaises: Callable
     assertLogs: Callable
+    assertGreater: Callable
+    assertGreaterEqual: Callable
+    assertLess: Callable
+    assertLessEqual: Callable
 
     def _make_uri(self, path: str, netloc: str | None = None) -> str:
         if self.scheme is not None:
@@ -459,14 +463,14 @@ class GenericTestCase(_GenericTestCase):
         """Check that greater/less comparison operators work."""
         a = self._make_uri("a.txt")
         b = self._make_uri("b/")
-        self.assertTrue(a < b)
+        self.assertLess(a, b)
         self.assertFalse(a < a)
-        self.assertTrue(a <= b)
-        self.assertTrue(a <= a)
-        self.assertTrue(b > a)
+        self.assertLessEqual(a, b)
+        self.assertLessEqual(a, a)
+        self.assertGreater(b, a)
         self.assertFalse(b > b)
-        self.assertTrue(b >= a)
-        self.assertTrue(b >= b)
+        self.assertGreaterEqual(b, a)
+        self.assertGreaterEqual(b, b)
 
 
 class GenericReadWriteTestCase(_GenericTestCase):
