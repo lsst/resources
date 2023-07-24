@@ -812,7 +812,7 @@ class HttpResourcePath(ResourcePath):
         # network connections to both the front end and back end servers are
         # closed after downloading the data.
         log.debug("Reading from remote resource: %s", self.geturl())
-        stream = True if size > 0 else False
+        stream = size > 0
         with self.data_session as session:
             with time_this(log, msg="GET %s", args=(self,)):
                 resp = session.get(self.geturl(), stream=stream, timeout=self._config.timeout)
