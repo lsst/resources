@@ -149,7 +149,7 @@ class GSResourcePath(ResourcePath):
         try:
             self.blob.reload(retry=_RETRY_POLICY)
         except NotFound:
-            raise FileNotFoundError(f"Resource {self} does not exist")
+            raise FileNotFoundError(f"Resource {self} does not exist") from None
         size = self.blob.size
         if size is None:
             raise FileNotFoundError(f"Resource {self} does not exist")
