@@ -20,6 +20,7 @@ from logging import Logger
 from typing import TYPE_CHECKING
 
 from botocore.exceptions import ClientError
+from lsst.utils.introspection import find_outside_stacklevel
 from lsst.utils.timer import time_this
 
 from ..s3utils import all_retryable_errors, backoff, max_retry_time
@@ -171,7 +172,10 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             and not self._warned
         ):
             amount = s3_min_bits / (1024 * 1024)
-            warnings.warn(f"S3 does not support flushing objects less than {amount} Mib, skipping")
+            warnings.warn(
+                f"S3 does not support flushing objects less than {amount} Mib, skipping",
+                stacklevel=find_outside_stacklevel("lsst.resources"),
+            )
             self._warned = True
             return
         # nothing to write, don't create an empty upload
