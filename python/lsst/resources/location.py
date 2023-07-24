@@ -87,10 +87,7 @@ class Location:
         """Return URI corresponding to fully-specified datastore location."""
         if self._uri is None:
             root = self._datastoreRootUri
-            if root is None:
-                uri = self._path
-            else:
-                uri = root.join(self._path)
+            uri = self._path if root is None else root.join(self._path)
             self._uri = uri
         return self._uri
 

@@ -96,10 +96,7 @@ class FileResourcePath(ResourcePath):
         dir = os.path.dirname(self.ospath)
         if not os.path.exists(dir):
             os.makedirs(dir, exist_ok=True)
-        if overwrite:
-            mode = "wb"
-        else:
-            mode = "xb"
+        mode = "wb" if overwrite else "xb"
         with open(self.ospath, mode) as f:
             f.write(data)
 

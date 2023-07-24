@@ -94,10 +94,7 @@ def is_retryable(exc: Exception) -> bool:
 
 
 _RETRY_POLICY: retry.Retry | None
-if retry:
-    _RETRY_POLICY = retry.Retry(predicate=is_retryable)
-else:
-    _RETRY_POLICY = None
+_RETRY_POLICY = retry.Retry(predicate=is_retryable) if retry else None
 
 
 _client = None

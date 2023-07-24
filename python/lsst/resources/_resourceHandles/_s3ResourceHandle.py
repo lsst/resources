@@ -270,10 +270,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         # otherwise fetch the appropriate bytes from the remote resource
         if self._max_size is not None and self._position >= self._max_size:
             return b""
-        if size > 0:
-            stop = f"{self._position + size - 1}"
-        else:
-            stop = ""
+        stop = f"{self._position + size - 1}" if size > 0 else ""
         args = {"Range": f"bytes={self._position}-{stop}"}
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=self._key, **args)

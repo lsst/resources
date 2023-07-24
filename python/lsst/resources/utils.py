@@ -29,10 +29,7 @@ IS_POSIX = os.sep == posixpath.sep
 # Root path for this operating system. This can use getcwd which
 # can fail in some situations so in the default case assume that
 # posix means posix and only determine explicitly in the non-posix case.
-if IS_POSIX:
-    OS_ROOT_PATH = posixpath.sep
-else:
-    OS_ROOT_PATH = Path().resolve().root
+OS_ROOT_PATH = posixpath.sep if IS_POSIX else Path().resolve().root
 
 log = logging.getLogger(__name__)
 

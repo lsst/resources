@@ -51,10 +51,7 @@ class FileResourceHandle(BaseResourceHandle[U]):
         super().__init__(mode, log, newline=newline)
         self._filename = filename
         # opening a file in binary mode does not support a newline argument
-        if "b" in mode:
-            newline_arg = None
-        else:
-            newline_arg = newline
+        newline_arg = None if "b" in mode else newline
         self._fileHandle: IO = open(file=filename, mode=self._mode, newline=newline_arg, encoding=encoding)
 
     @property

@@ -1367,10 +1367,7 @@ class ResourcePath:
         upon close. Subclasses of this class may offer more fine grained
         control.
         """
-        if "r" in mode or "a" in mode:
-            in_bytes = self.read()
-        else:
-            in_bytes = b""
+        in_bytes = self.read() if "r" in mode or "a" in mode else b""
         if "b" in mode:
             bytes_buffer = io.BytesIO(in_bytes)
             if "a" in mode:
