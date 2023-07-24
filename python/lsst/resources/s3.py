@@ -41,10 +41,9 @@ from .s3utils import (
 )
 
 if TYPE_CHECKING:
-    try:
+    with contextlib.suppress(ImportError):
         import boto3
-    except ImportError:
-        pass
+
     from .utils import TransactionProtocol
 
 
