@@ -367,7 +367,7 @@ class LocationTestCase(unittest.TestCase):
             (f"file://{osRelExpected}/", ""),
         )
 
-        for p, e in zip(testPaths, expected):
+        for p, e in zip(testPaths, expected, strict=True):
             with self.subTest(path=p):
                 uri = ResourcePath(p, testRoot)
                 head, tail = uri.split()
