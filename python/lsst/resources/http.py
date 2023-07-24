@@ -1160,7 +1160,7 @@ class HttpResourcePath(ResourcePath):
             return resp
 
         raise ValueError(
-            f"Unexpected response to OPTIONS request for {self}, status: {resp.status_code} " f"{resp.reason}"
+            f"Unexpected response to OPTIONS request for {self}, status: {resp.status_code} {resp.reason}"
         )
 
     def _head(self) -> requests.Response:
