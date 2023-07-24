@@ -168,7 +168,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         s3_min_bits = 5 * 1024 * 1024  # S3 flush threshold is 5 Mib.
         if (
             (self.tell() - (self._last_flush_position or 0)) < s3_min_bits
-            and not self._closed == CloseStatus.CLOSING
+            and self._closed != CloseStatus.CLOSING
             and not self._warned
         ):
             amount = s3_min_bits / (1024 * 1024)

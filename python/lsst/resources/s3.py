@@ -181,7 +181,7 @@ class S3ResourcePath(ResourcePath):
             raise NotADirectoryError(f"Can not create a 'directory' for file-like URI {self}")
 
         # don't create S3 key when root is at the top-level of an Bucket
-        if not self.path == "/":
+        if self.path != "/":
             self.client.put_object(Bucket=self.netloc, Key=self.relativeToPathRoot)
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
