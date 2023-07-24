@@ -1022,7 +1022,7 @@ class HttpResourcePath(ResourcePath):
         self,
         method: str,
         url: str | None = None,
-        headers: dict[str, str] = {},
+        headers: dict[str, str] | None = None,
         body: str | None = None,
         session: requests.Session | None = None,
         timeout: tuple[float, float] | None = None,
@@ -1064,6 +1064,9 @@ class HttpResourcePath(ResourcePath):
         """
         if url is None:
             url = self.geturl()
+
+        if headers is None:
+            headers = {}
 
         if session is None:
             session = self.metadata_session
