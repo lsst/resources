@@ -241,8 +241,7 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
         resp = requests.options(str(path), verify=verify, stream=False)
         if resp.status_code not in (requests.codes.ok, requests.codes.created):
             raise ValueError(
-                f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} "
-                f"{resp.reason}"
+                f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} {resp.reason}"
             )
 
         # Check that "1" is part of the value of the "DAV" header. We don't
@@ -1104,8 +1103,7 @@ class HttpResourcePath(ResourcePath):
             # We reached the maximum allowed number of redirects.
             # Stop trying.
             raise ValueError(
-                f"Could not get a response to {method} request for {self} after "
-                f"{max_redirects} redirections"
+                f"Could not get a response to {method} request for {self} after {max_redirects} redirections"
             )
 
     def _propfind(self, body: str | None = None, depth: str = "0") -> requests.Response:
@@ -1551,7 +1549,7 @@ class DavProperty:
             self._href = str(element.text).strip()
         else:
             raise ValueError(
-                f"Property 'href' expected but not found in PROPFIND response: "
+                "Property 'href' expected but not found in PROPFIND response: "
                 f"{eTree.tostring(response, encoding='unicode')}"
             )
 
