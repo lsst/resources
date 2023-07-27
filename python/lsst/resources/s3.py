@@ -210,8 +210,9 @@ class S3ResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile, time_this(
-            log, msg="Downloading %s to local file", args=(self,)
+        with (
+            tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile,
+            time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             progress = (
                 ProgressPercentage(self, msg="Downloading:")

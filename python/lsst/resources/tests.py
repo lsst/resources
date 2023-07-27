@@ -640,9 +640,10 @@ class GenericReadWriteTestCase(_GenericTestCase):
 
         # Temporary (possibly remote) resource.
         # Transfers between temporary resources.
-        with ResourcePath.temporary_uri(
-            prefix=self.tmpdir.join("tmp"), suffix=".json"
-        ) as remote_tmp, ResourcePath.temporary_uri(suffix=".json") as local_tmp:
+        with (
+            ResourcePath.temporary_uri(prefix=self.tmpdir.join("tmp"), suffix=".json") as remote_tmp,
+            ResourcePath.temporary_uri(suffix=".json") as local_tmp,
+        ):
             remote_tmp.write(b"42")
             if not remote_tmp.isLocal:
                 for transfer in ("link", "symlink", "hardlink", "relsymlink"):

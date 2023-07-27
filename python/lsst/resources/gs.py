@@ -193,8 +193,9 @@ class GSResourcePath(ResourcePath):
         self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
 
     def _as_local(self) -> tuple[str, bool]:
-        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile, time_this(
-            log, msg="Downloading %s to local file", args=(self,)
+        with (
+            tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile,
+            time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             try:
                 self.blob.download_to_filename(tmpFile.name, retry=_RETRY_POLICY)
