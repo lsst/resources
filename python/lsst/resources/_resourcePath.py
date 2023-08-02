@@ -918,12 +918,10 @@ class ResourcePath:
             if use_tempdir:
                 shutil.rmtree(prefix.ospath, ignore_errors=True)
             else:
-                try:
+                with contextlib.suppress(FileNotFoundError):
                     # It's okay if this does not work because the user removed
                     # the file.
                     temporary_uri.remove()
-                except FileNotFoundError:
-                    pass
 
     def read(self, size: int = -1) -> bytes:
         """Open the resource and return the contents in bytes.
@@ -1367,10 +1365,7 @@ class ResourcePath:
         upon close. Subclasses of this class may offer more fine grained
         control.
         """
-        if "r" in mode or "a" in mode:
-            in_bytes = self.read()
-        else:
-            in_bytes = b""
+        in_bytes = self.read() if "r" in mode or "a" in mode else b""
         if "b" in mode:
             bytes_buffer = io.BytesIO(in_bytes)
             if "a" in mode:

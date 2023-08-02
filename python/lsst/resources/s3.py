@@ -41,10 +41,9 @@ from .s3utils import (
 )
 
 if TYPE_CHECKING:
-    try:
+    with contextlib.suppress(ImportError):
         import boto3
-    except ImportError:
-        pass
+
     from .utils import TransactionProtocol
 
 
@@ -165,9 +164,8 @@ class S3ResourcePath(ResourcePath):
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def write(self, data: bytes, overwrite: bool = True) -> None:
         """Write the supplied data to the resource."""
-        if not overwrite:
-            if self.exists():
-                raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
+        if not overwrite and self.exists():
+            raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
         with time_this(log, msg="Write to %s", args=(self,)):
             self.client.put_object(Bucket=self.netloc, Key=self.relativeToPathRoot, Body=data)
 
@@ -181,7 +179,7 @@ class S3ResourcePath(ResourcePath):
             raise NotADirectoryError(f"Can not create a 'directory' for file-like URI {self}")
 
         # don't create S3 key when root is at the top-level of an Bucket
-        if not self.path == "/":
+        if self.path != "/":
             self.client.put_object(Bucket=self.netloc, Key=self.relativeToPathRoot)
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
@@ -212,14 +210,16 @@ class S3ResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile:
-            with time_this(log, msg="Downloading %s to local file", args=(self,)):
-                progress = (
-                    ProgressPercentage(self, msg="Downloading:")
-                    if log.isEnabledFor(ProgressPercentage.log_level)
-                    else None
-                )
-                self._download_file(tmpFile, progress)
+        with (
+            tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile,
+            time_this(log, msg="Downloading %s to local file", args=(self,)),
+        ):
+            progress = (
+                ProgressPercentage(self, msg="Downloading:")
+                if log.isEnabledFor(ProgressPercentage.log_level)
+                else None
+            )
+            self._download_file(tmpFile, progress)
         return tmpFile.name, True
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)

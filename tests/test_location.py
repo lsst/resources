@@ -29,7 +29,7 @@ class LocationTestCase(unittest.TestCase):
         arguments.
         """
         # Root to use for relative paths
-        testRoot = "/tmp/"
+        testRoot = "/tempdir/"
 
         # uriStrings is a list of tuples containing test string, forceAbsolute,
         # forceDirectory as arguments to ResourcePath and scheme, netloc and
@@ -338,7 +338,7 @@ class LocationTestCase(unittest.TestCase):
 
     def testSplit(self):
         """Tests split functionality."""
-        testRoot = "/tmp/"
+        testRoot = "/tempdir/"
 
         testPaths = (
             "/absolute/file.ext",
@@ -367,7 +367,7 @@ class LocationTestCase(unittest.TestCase):
             (f"file://{osRelExpected}/", ""),
         )
 
-        for p, e in zip(testPaths, expected):
+        for p, e in zip(testPaths, expected, strict=True):
             with self.subTest(path=p):
                 uri = ResourcePath(p, testRoot)
                 head, tail = uri.split()

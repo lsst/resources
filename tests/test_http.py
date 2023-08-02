@@ -678,9 +678,8 @@ class WebdavUtilsTestCase(unittest.TestCase):
         self.tmpdir = ResourcePath(makeTestTempDir(TESTDIR))
 
     def tearDown(self):
-        if self.tmpdir:
-            if self.tmpdir.isLocal:
-                removeTestTempDir(self.tmpdir.ospath)
+        if self.tmpdir and self.tmpdir.isLocal:
+            removeTestTempDir(self.tmpdir.ospath)
 
     @responses.activate
     def test_is_webdav_endpoint(self):

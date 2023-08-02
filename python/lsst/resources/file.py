@@ -96,10 +96,7 @@ class FileResourcePath(ResourcePath):
         dir = os.path.dirname(self.ospath)
         if not os.path.exists(dir):
             os.makedirs(dir, exist_ok=True)
-        if overwrite:
-            mode = "wb"
-        else:
-            mode = "xb"
+        mode = "wb" if overwrite else "xb"
         with open(self.ospath, mode) as f:
             f.write(data)
 
@@ -276,13 +273,11 @@ class FileResourcePath(ResourcePath):
             # exist we have to remove it before we do the actual "transfer"
             # below
             if "link" in transfer and overwrite and dest_stat:
-                try:
-                    self.remove()
-                except Exception:
+                with contextlib.suppress(Exception):
                     # If this fails we ignore it since it's a problem
                     # that will manifest immediately below with a more relevant
                     # error message
-                    pass
+                    self.remove()
 
             if transfer == "move":
                 # If a rename works we try that since that is guaranteed to

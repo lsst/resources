@@ -20,6 +20,7 @@ from logging import Logger
 from typing import TYPE_CHECKING
 
 from botocore.exceptions import ClientError
+from lsst.utils.introspection import find_outside_stacklevel
 from lsst.utils.timer import time_this
 
 from ..s3utils import all_retryable_errors, backoff, max_retry_time
@@ -167,11 +168,14 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         s3_min_bits = 5 * 1024 * 1024  # S3 flush threshold is 5 Mib.
         if (
             (self.tell() - (self._last_flush_position or 0)) < s3_min_bits
-            and not self._closed == CloseStatus.CLOSING
+            and self._closed != CloseStatus.CLOSING
             and not self._warned
         ):
             amount = s3_min_bits / (1024 * 1024)
-            warnings.warn(f"S3 does not support flushing objects less than {amount} Mib, skipping")
+            warnings.warn(
+                f"S3 does not support flushing objects less than {amount} Mib, skipping",
+                stacklevel=find_outside_stacklevel("lsst.resources"),
+            )
             self._warned = True
             return
         # nothing to write, don't create an empty upload
@@ -218,9 +222,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
                     offset -= self._last_flush_position
                     if offset < 0:
                         raise OSError("S3 ResourceHandle can not seek prior to already flushed positions")
-                if whence == SEEK_CUR:
-                    if (self.tell() - self._last_flush_position) < 0:
-                        raise OSError("S3 ResourceHandle can not seek prior to already flushed positions")
+                if whence == SEEK_CUR and (self.tell() - self._last_flush_position) < 0:
+                    raise OSError("S3 ResourceHandle can not seek prior to already flushed positions")
                 if whence == SEEK_END:
                     raise OSError("S3 ResourceHandle can not seek referencing the end of the resource")
             self._buffer.seek(offset, whence)
@@ -266,10 +269,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         # otherwise fetch the appropriate bytes from the remote resource
         if self._max_size is not None and self._position >= self._max_size:
             return b""
-        if size > 0:
-            stop = f"{self._position + size - 1}"
-        else:
-            stop = ""
+        stop = f"{self._position + size - 1}" if size > 0 else ""
         args = {"Range": f"bytes={self._position}-{stop}"}
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=self._key, **args)

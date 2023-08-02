@@ -93,11 +93,7 @@ def is_retryable(exc: Exception) -> bool:
     return isinstance(exc, _RETRIEVABLE_TYPES)
 
 
-_RETRY_POLICY: retry.Retry | None
-if retry:
-    _RETRY_POLICY = retry.Retry(predicate=is_retryable)
-else:
-    _RETRY_POLICY = None
+_RETRY_POLICY = retry.Retry(predicate=is_retryable) if retry else None
 
 
 _client = None
@@ -149,7 +145,7 @@ class GSResourcePath(ResourcePath):
         try:
             self.blob.reload(retry=_RETRY_POLICY)
         except NotFound:
-            raise FileNotFoundError(f"Resource {self} does not exist")
+            raise FileNotFoundError(f"Resource {self} does not exist") from None
         size = self.blob.size
         if size is None:
             raise FileNotFoundError(f"Resource {self} does not exist")
@@ -176,9 +172,8 @@ class GSResourcePath(ResourcePath):
         return body
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
-        if not overwrite:
-            if self.exists():
-                raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
+        if not overwrite and self.exists():
+            raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
         with time_this(log, msg="Write to %s", args=(self,)):
             self.blob.upload_from_string(data, retry=_RETRY_POLICY)
 
@@ -197,12 +192,14 @@ class GSResourcePath(ResourcePath):
         self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
 
     def _as_local(self) -> tuple[str, bool]:
-        with tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile:
-            with time_this(log, msg="Downloading %s to local file", args=(self,)):
-                try:
-                    self.blob.download_to_filename(tmpFile.name, retry=_RETRY_POLICY)
-                except NotFound as e:
-                    raise FileNotFoundError(f"No such resource: {self}") from e
+        with (
+            tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile,
+            time_this(log, msg="Downloading %s to local file", args=(self,)),
+        ):
+            try:
+                self.blob.download_to_filename(tmpFile.name, retry=_RETRY_POLICY)
+            except NotFound as e:
+                raise FileNotFoundError(f"No such resource: {self}") from e
         return tmpFile.name, True
 
     def transfer_from(
@@ -262,9 +259,8 @@ class GSResourcePath(ResourcePath):
                         break
         else:
             # Use local file and upload it
-            with src.as_local() as local_uri:
-                with time_this(log, msg=timer_msg, args=timer_args):
-                    self.blob.upload_from_filename(local_uri.ospath, retry=_RETRY_POLICY)
+            with src.as_local() as local_uri, time_this(log, msg=timer_msg, args=timer_args):
+                self.blob.upload_from_filename(local_uri.ospath, retry=_RETRY_POLICY)
 
         # This was an explicit move requested from a remote resource
         # try to remove that resource

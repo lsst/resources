@@ -241,8 +241,7 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
         resp = requests.options(str(path), verify=verify, stream=False)
         if resp.status_code not in (requests.codes.ok, requests.codes.created):
             raise ValueError(
-                f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} "
-                f"{resp.reason}"
+                f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} {resp.reason}"
             )
 
         # Check that "1" is part of the value of the "DAV" header. We don't
@@ -812,7 +811,7 @@ class HttpResourcePath(ResourcePath):
         # network connections to both the front end and back end servers are
         # closed after downloading the data.
         log.debug("Reading from remote resource: %s", self.geturl())
-        stream = True if size > 0 else False
+        stream = size > 0
         with self.data_session as session:
             with time_this(log, msg="GET %s", args=(self,)):
                 resp = session.get(self.geturl(), stream=stream, timeout=self._config.timeout)
@@ -839,9 +838,8 @@ class HttpResourcePath(ResourcePath):
             the write will fail.
         """
         log.debug("Writing to remote resource: %s", self.geturl())
-        if not overwrite:
-            if self.exists():
-                raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
+        if not overwrite and self.exists():
+            raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
 
         # Ensure the parent directory exists.
         self.parent().mkdir()
@@ -1009,12 +1007,15 @@ class HttpResourcePath(ResourcePath):
             # Check that the expected and actual content lengths match. Perform
             # this check only when the contents of the file was not encoded by
             # the server.
-            if "Content-Encoding" not in resp.headers:
-                if expected_length >= 0 and expected_length != content_length:
-                    raise ValueError(
-                        f"Size of downloaded file does not match value in Content-Length header for {self}: "
-                        f"expecting {expected_length} and got {content_length} bytes"
-                    )
+            if (
+                "Content-Encoding" not in resp.headers
+                and expected_length >= 0
+                and expected_length != content_length
+            ):
+                raise ValueError(
+                    f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                    f"expecting {expected_length} and got {content_length} bytes"
+                )
 
             return tmpFile.name, True
 
@@ -1022,7 +1023,7 @@ class HttpResourcePath(ResourcePath):
         self,
         method: str,
         url: str | None = None,
-        headers: dict[str, str] = {},
+        headers: dict[str, str] | None = None,
         body: str | None = None,
         session: requests.Session | None = None,
         timeout: tuple[float, float] | None = None,
@@ -1065,6 +1066,9 @@ class HttpResourcePath(ResourcePath):
         if url is None:
             url = self.geturl()
 
+        if headers is None:
+            headers = {}
+
         if session is None:
             session = self.metadata_session
 
@@ -1099,8 +1103,7 @@ class HttpResourcePath(ResourcePath):
             # We reached the maximum allowed number of redirects.
             # Stop trying.
             raise ValueError(
-                f"Could not get a response to {method} request for {self} after "
-                f"{max_redirects} redirections"
+                f"Could not get a response to {method} request for {self} after {max_redirects} redirections"
             )
 
     def _propfind(self, body: str | None = None, depth: str = "0") -> requests.Response:
@@ -1155,7 +1158,7 @@ class HttpResourcePath(ResourcePath):
             return resp
 
         raise ValueError(
-            f"Unexpected response to OPTIONS request for {self}, status: {resp.status_code} " f"{resp.reason}"
+            f"Unexpected response to OPTIONS request for {self}, status: {resp.status_code} {resp.reason}"
         )
 
     def _head(self) -> requests.Response:
@@ -1546,7 +1549,7 @@ class DavProperty:
             self._href = str(element.text).strip()
         else:
             raise ValueError(
-                f"Property 'href' expected but not found in PROPFIND response: "
+                "Property 'href' expected but not found in PROPFIND response: "
                 f"{eTree.tostring(response, encoding='unicode')}"
             )
 

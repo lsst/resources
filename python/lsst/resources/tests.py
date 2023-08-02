@@ -20,8 +20,8 @@ import string
 import unittest
 import urllib.parse
 import uuid
-from collections.abc import Callable, Iterable
-from typing import Any
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 from lsst.resources import ResourcePath
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
@@ -166,7 +166,22 @@ def _check_open(
         uri.remove()
 
 
-class _GenericTestCase:
+if TYPE_CHECKING:
+
+    class TestCaseMixin(unittest.TestCase):
+        """Base class for mixin test classes that use TestCase methods."""
+
+        pass
+
+else:
+
+    class TestCaseMixin:
+        """Do-nothing definition of mixin base class for regular execution."""
+
+        pass
+
+
+class _GenericTestCase(TestCaseMixin):
     """Generic base class for test mixin."""
 
     scheme: str | None = None
@@ -174,22 +189,6 @@ class _GenericTestCase:
     base_path: str | None = None
     path1 = "test_dir"
     path2 = "file.txt"
-
-    # Because we use a mixin for tests mypy needs to understand that
-    # the unittest.TestCase methods exist.
-    # We do not inherit from unittest.TestCase because that results
-    # in the tests defined here being run as well as the tests in the
-    # test file itself. We can make those tests skip but it gives an
-    # uniformative view of how many tests are running.
-    assertEqual: Callable
-    assertNotEqual: Callable
-    assertIsNone: Callable
-    assertIn: Callable
-    assertNotIn: Callable
-    assertFalse: Callable
-    assertTrue: Callable
-    assertRaises: Callable
-    assertLogs: Callable
 
     def _make_uri(self, path: str, netloc: str | None = None) -> str:
         if self.scheme is not None:
@@ -459,14 +458,14 @@ class GenericTestCase(_GenericTestCase):
         """Check that greater/less comparison operators work."""
         a = self._make_uri("a.txt")
         b = self._make_uri("b/")
-        self.assertTrue(a < b)
+        self.assertLess(a, b)
         self.assertFalse(a < a)
-        self.assertTrue(a <= b)
-        self.assertTrue(a <= a)
-        self.assertTrue(b > a)
+        self.assertLessEqual(a, b)
+        self.assertLessEqual(a, a)
+        self.assertGreater(b, a)
         self.assertFalse(b > b)
-        self.assertTrue(b >= a)
-        self.assertTrue(b >= b)
+        self.assertGreaterEqual(b, a)
+        self.assertGreaterEqual(b, b)
 
 
 class GenericReadWriteTestCase(_GenericTestCase):
@@ -494,9 +493,8 @@ class GenericReadWriteTestCase(_GenericTestCase):
             self.tmpdir.mkdir()
 
     def tearDown(self) -> None:
-        if self.tmpdir:
-            if self.tmpdir.isLocal:
-                removeTestTempDir(self.tmpdir.ospath)
+        if self.tmpdir and self.tmpdir.isLocal:
+            removeTestTempDir(self.tmpdir.ospath)
 
     def test_file(self) -> None:
         uri = self.tmpdir.join("test.txt")
@@ -637,27 +635,28 @@ class GenericReadWriteTestCase(_GenericTestCase):
 
         # Temporary (possibly remote) resource.
         # Transfers between temporary resources.
-        with ResourcePath.temporary_uri(prefix=self.tmpdir.join("tmp"), suffix=".json") as remote_tmp:
-            # Temporary local resource.
-            with ResourcePath.temporary_uri(suffix=".json") as local_tmp:
-                remote_tmp.write(b"42")
-                if not remote_tmp.isLocal:
-                    for transfer in ("link", "symlink", "hardlink", "relsymlink"):
-                        with self.assertRaises(RuntimeError):
-                            # Trying to symlink a remote resource is not going
-                            # to work. A hardlink could work but would rely
-                            # on the local temp space being on the same
-                            # filesystem as the target.
-                            local_tmp.transfer_from(remote_tmp, transfer)
-                local_tmp.transfer_from(remote_tmp, "move")
-                self.assertFalse(remote_tmp.exists())
-                remote_tmp.transfer_from(local_tmp, "auto", overwrite=True)
-                self.assertEqual(local_tmp.read(), remote_tmp.read())
+        with (
+            ResourcePath.temporary_uri(prefix=self.tmpdir.join("tmp"), suffix=".json") as remote_tmp,
+            ResourcePath.temporary_uri(suffix=".json") as local_tmp,
+        ):
+            remote_tmp.write(b"42")
+            if not remote_tmp.isLocal:
+                for transfer in ("link", "symlink", "hardlink", "relsymlink"):
+                    with self.assertRaises(RuntimeError):
+                        # Trying to symlink a remote resource is not going
+                        # to work. A hardlink could work but would rely
+                        # on the local temp space being on the same
+                        # filesystem as the target.
+                        local_tmp.transfer_from(remote_tmp, transfer)
+            local_tmp.transfer_from(remote_tmp, "move")
+            self.assertFalse(remote_tmp.exists())
+            remote_tmp.transfer_from(local_tmp, "auto", overwrite=True)
+            self.assertEqual(local_tmp.read(), remote_tmp.read())
 
-                # Transfer of missing remote.
-                remote_tmp.remove()
-                with self.assertRaises(FileNotFoundError):
-                    local_tmp.transfer_from(remote_tmp, "auto", overwrite=True)
+            # Transfer of missing remote.
+            remote_tmp.remove()
+            with self.assertRaises(FileNotFoundError):
+                local_tmp.transfer_from(remote_tmp, "auto", overwrite=True)
 
     def test_local(self) -> None:
         """Check that remote resources can be made local."""
