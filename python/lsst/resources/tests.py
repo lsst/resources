@@ -20,8 +20,8 @@ import string
 import unittest
 import urllib.parse
 import uuid
-from collections.abc import Callable, Iterable
-from typing import Any
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 from lsst.resources import ResourcePath
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
@@ -166,7 +166,22 @@ def _check_open(
         uri.remove()
 
 
-class _GenericTestCase:
+if TYPE_CHECKING:
+
+    class TestCaseMixin(unittest.TestCase):
+        """Base class for mixin test classes that use TestCase methods."""
+
+        pass
+
+else:
+
+    class TestCaseMixin:
+        """Do-nothing definition of mixin base class for regular execution."""
+
+        pass
+
+
+class _GenericTestCase(TestCaseMixin):
     """Generic base class for test mixin."""
 
     scheme: str | None = None
@@ -174,26 +189,6 @@ class _GenericTestCase:
     base_path: str | None = None
     path1 = "test_dir"
     path2 = "file.txt"
-
-    # Because we use a mixin for tests mypy needs to understand that
-    # the unittest.TestCase methods exist.
-    # We do not inherit from unittest.TestCase because that results
-    # in the tests defined here being run as well as the tests in the
-    # test file itself. We can make those tests skip but it gives an
-    # uniformative view of how many tests are running.
-    assertEqual: Callable
-    assertNotEqual: Callable
-    assertIsNone: Callable
-    assertIn: Callable
-    assertNotIn: Callable
-    assertFalse: Callable
-    assertTrue: Callable
-    assertRaises: Callable
-    assertLogs: Callable
-    assertGreater: Callable
-    assertGreaterEqual: Callable
-    assertLess: Callable
-    assertLessEqual: Callable
 
     def _make_uri(self, path: str, netloc: str | None = None) -> str:
         if self.scheme is not None:
