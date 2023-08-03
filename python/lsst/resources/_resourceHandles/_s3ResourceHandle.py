@@ -174,7 +174,12 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             amount = s3_min_bits / (1024 * 1024)
             warnings.warn(
                 f"S3 does not support flushing objects less than {amount} Mib, skipping",
-                stacklevel=find_outside_stacklevel("lsst.resources"),
+                stacklevel=find_outside_stacklevel(
+                    "lsst.resources",
+                    "backoff",
+                    "contextlib",
+                    allow_modules={"lsst.resources.tests"},
+                ),
             )
             self._warned = True
             return
