@@ -421,7 +421,8 @@ class BearerTokenAuth(AuthBase):
                 self._token = f.read().rstrip("\n")
 
     def __call__(self, req: requests.PreparedRequest) -> requests.PreparedRequest:
-        if self._token:
+        # Only add a bearer token to a request when using secure HTTP.
+        if req.url.lower().startswith("https://") and self._token:
             self._refresh()
             req.headers["Authorization"] = f"Bearer {self._token}"
         return req

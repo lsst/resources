@@ -738,6 +738,15 @@ class BearerTokenAuthTestCase(unittest.TestCase):
         req = auth(requests.Request("GET", "https://example.org").prepare())
         self.assertEqual(req.headers.get("Authorization"), f"Bearer {self.token}")
 
+    def test_token_insecure_http(self):
+        """Ensure that no 'Authorization' header is attached to a request when
+        using insecure HTTP.
+        """
+        auth = BearerTokenAuth(self.token)
+        for url in ("http://example.org", "HTTP://example.org", "HttP://example.org"):
+            req = auth(requests.Request("GET", url).prepare())
+            self.assertIsNone(req.headers.get("Authorization"))
+
     def test_token_file(self):
         """Ensure when the provided token is a file path, its contents is
         correctly used in the the 'Authorization' header of the requests.
