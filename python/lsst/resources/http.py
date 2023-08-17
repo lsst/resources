@@ -307,15 +307,16 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
     try:
         session = requests.Session()
         session.mount(str(path), HTTPAdapter(max_retries=retries))
+        session.verify = os.environ.get("LSST_HTTP_CACERT_BUNDLE", True)
         with session:
-            ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
-            verify: bool | str = ca_cert_bundle if ca_cert_bundle else True
-            timeout = (
-                _timeout_from_environment("LSST_HTTP_TIMEOUT_CONNECT", 30.0),
-                _timeout_from_environment("LSST_HTTP_TIMEOUT_READ", 60.0),
+            resp = session.options(
+                str(path),
+                stream=False,
+                timeout=(
+                    _timeout_from_environment("LSST_HTTP_TIMEOUT_CONNECT", 30.0),
+                    _timeout_from_environment("LSST_HTTP_TIMEOUT_READ", 60.0),
+                ),
             )
-
-            resp = session.options(str(path), verify=verify, stream=False, timeout=timeout)
             if resp.status_code not in (requests.codes.ok, requests.codes.created):
                 raise ValueError(
                     f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} "
