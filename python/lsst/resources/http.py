@@ -24,9 +24,15 @@ import random
 import re
 import stat
 import tempfile
-import xml.etree.ElementTree as eTree
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, BinaryIO, cast
+
+try:
+    # Prefer 'defusedxml' (not part of standard library) if available, since
+    # 'xml' is vulnerable to XML bombs.
+    import defusedxml.ElementTree as eTree
+except ImportError:
+    import xml.etree.ElementTree as eTree
 
 import requests
 from astropy import units as u
