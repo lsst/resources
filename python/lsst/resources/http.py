@@ -24,9 +24,15 @@ import random
 import re
 import stat
 import tempfile
-import xml.etree.ElementTree as eTree
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, BinaryIO, cast
+
+try:
+    # Prefer 'defusedxml' (not part of standard library) if available, since
+    # 'xml' is vulnerable to XML bombs.
+    import defusedxml.ElementTree as eTree
+except ImportError:
+    import xml.etree.ElementTree as eTree
 
 import requests
 from astropy import units as u
@@ -43,6 +49,37 @@ if TYPE_CHECKING:
     from .utils import TransactionProtocol
 
 log = logging.getLogger(__name__)
+
+
+def _timeout_from_environment(env_var: str, default_value: float) -> float:
+    """Convert and return a timeout from the value of an environment variable
+    or a default value if the environment variable is not initialized. The
+    value of `env_var` must be a valid `float` otherwise this function raises.
+
+    Parameters
+    ----------
+    env_var : `str`
+        Environment variable to look for.
+    default_value: `float``
+        Value to return if `env_var` is not defined in the environment.
+
+    Returns
+    -------
+    _timeout_from_environment : `float`
+        Converted value.
+    """
+    try:
+        timeout = float(os.environ.get(env_var, default_value))
+    except ValueError:
+        raise ValueError(
+            f"Expecting valid timeout value in environment variable {env_var} but found "
+            f"{os.environ.get(env_var)}"
+        )
+
+    if math.isnan(timeout):
+        raise ValueError(f"Unexpected timeout value NaN found in environment variable {env_var}")
+
+    return timeout
 
 
 class HttpResourcePathConfig:
@@ -156,17 +193,10 @@ class HttpResourcePathConfig:
         if self._timeout is not None:
             return self._timeout
 
-        self._timeout = (self.DEFAULT_TIMEOUT_CONNECT, self.DEFAULT_TIMEOUT_READ)
-        try:
-            timeout = (
-                float(os.environ.get("LSST_HTTP_TIMEOUT_CONNECT", self.DEFAULT_TIMEOUT_CONNECT)),
-                float(os.environ.get("LSST_HTTP_TIMEOUT_READ", self.DEFAULT_TIMEOUT_READ)),
-            )
-            if not math.isnan(timeout[0]) and not math.isnan(timeout[1]):
-                self._timeout = timeout
-        except ValueError:
-            pass
-
+        self._timeout = (
+            _timeout_from_environment("LSST_HTTP_TIMEOUT_CONNECT", self.DEFAULT_TIMEOUT_CONNECT),
+            _timeout_from_environment("LSST_HTTP_TIMEOUT_READ", self.DEFAULT_TIMEOUT_READ),
+        )
         return self._timeout
 
     @property
@@ -235,38 +265,88 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
         True if the endpoint implements WebDAV, False if it doesn't.
     """
     log.debug("Detecting HTTP endpoint type for '%s'...", path)
-    try:
-        ca_cert_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
-        verify: bool | str = ca_cert_bundle if ca_cert_bundle else True
-        resp = requests.options(str(path), verify=verify, stream=False)
-        if resp.status_code not in (requests.codes.ok, requests.codes.created):
-            raise ValueError(
-                f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} {resp.reason}"
-            )
 
-        # Check that "1" is part of the value of the "DAV" header. We don't
-        # use locks, so a server complying to class 1 is enough for our
-        # purposes. All webDAV servers must advertise at least compliance
-        # class "1".
-        #
-        # Compliance classes are documented in
-        #    http://www.webdav.org/specs/rfc4918.html#dav.compliance.classes
-        #
-        # Examples of values for header DAV are:
-        #   DAV: 1, 2
-        #   DAV: 1, <http://apache.org/dav/propset/fs/1>
-        if "DAV" not in resp.headers:
-            return False
-        else:
-            # Convert to str to keep mypy happy
-            compliance_class = str(resp.headers.get("DAV"))
-            return "1" in compliance_class.replace(" ", "").split(",")
+    # Send an OPTIONS request and inspect its response. An OPTIONS
+    # request does not need authentication of the client, so we don't need
+    # to provide a client certificate or a bearer token. We set a
+    # relatively short timeout since an OPTIONS request is relatively cheap
+    # for the server to compute.
+
+    # Create a session for configuring retries
+    retries = Retry(
+        # Total number of retries to allow. Takes precedence over other
+        # counts.
+        total=6,
+        # How many connection-related errors to retry on.
+        connect=3,
+        # How many times to retry on read errors.
+        read=3,
+        # How many times to retry on bad status codes.
+        status=5,
+        # Set of uppercased HTTP method verbs that we should retry on.
+        allowed_methods=frozenset(
+            [
+                "OPTIONS",
+            ]
+        ),
+        # HTTP status codes that we should force a retry on.
+        status_forcelist=frozenset(
+            [
+                requests.codes.too_many_requests,  # 429
+                requests.codes.internal_server_error,  # 500
+                requests.codes.bad_gateway,  # 502
+                requests.codes.service_unavailable,  # 503
+                requests.codes.gateway_timeout,  # 504
+            ]
+        ),
+        # Whether to respect 'Retry-After' header on status codes defined
+        # above.
+        respect_retry_after_header=True,
+    )
+
+    try:
+        session = requests.Session()
+        session.mount(str(path), HTTPAdapter(max_retries=retries))
+        session.verify = os.environ.get("LSST_HTTP_CACERT_BUNDLE", True)
+        with session:
+            resp = session.options(
+                str(path),
+                stream=False,
+                timeout=(
+                    _timeout_from_environment("LSST_HTTP_TIMEOUT_CONNECT", 30.0),
+                    _timeout_from_environment("LSST_HTTP_TIMEOUT_READ", 60.0),
+                ),
+            )
+            if resp.status_code not in (requests.codes.ok, requests.codes.created):
+                raise ValueError(
+                    f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} "
+                    f"{resp.reason}"
+                )
+
+            # Check that "1" is part of the value of the "DAV" header. We don't
+            # use locks, so a server complying to class 1 is enough for our
+            # purposes. All webDAV servers must advertise at least compliance
+            # class "1".
+            #
+            # Compliance classes are documented in
+            #    http://www.webdav.org/specs/rfc4918.html#dav.compliance.classes
+            #
+            # Examples of values for header DAV are:
+            #   DAV: 1, 2
+            #   DAV: 1, <http://apache.org/dav/propset/fs/1>
+            if "DAV" not in resp.headers:
+                return False
+            else:
+                # Convert to str to keep mypy happy
+                compliance_class = str(resp.headers.get("DAV"))
+                return "1" in compliance_class.replace(" ", "").split(",")
+
     except requests.exceptions.SSLError as e:
         log.warning(
             "Environment variable LSST_HTTP_CACERT_BUNDLE can be used to "
-            "specify a bundle of certificate authorities you trust which are "
-            "not included in the default set of trusted authorities of your "
-            "system."
+            "specify tha path to a bundle of certificate authorities you trust "
+            "which are not included in the default set of trusted authorities "
+            "of this system."
         )
         raise e
 
@@ -341,7 +421,8 @@ class BearerTokenAuth(AuthBase):
                 self._token = f.read().rstrip("\n")
 
     def __call__(self, req: requests.PreparedRequest) -> requests.PreparedRequest:
-        if self._token:
+        # Only add a bearer token to a request when using secure HTTP.
+        if req.url and req.url.lower().startswith("https://") and self._token:
             self._refresh()
             req.headers["Authorization"] = f"Bearer {self._token}"
         return req

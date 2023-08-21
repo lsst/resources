@@ -547,7 +547,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             self.assertAlmostEqual(config.timeout[1], config.DEFAULT_TIMEOUT_READ)
 
         # Ensure that when both the connect and read timeouts are specified
-        # they are stored in the config.
+        # they are both stored in the config.
         connect_timeout, read_timeout = 100.5, 200.8
         with unittest.mock.patch.dict(
             os.environ,
@@ -560,17 +560,19 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             self.assertAlmostEqual(config.timeout[0], connect_timeout)
             self.assertAlmostEqual(config.timeout[1], read_timeout)
 
-        # Ensure that NaN values are ignored and the defaults values are used.
-        with unittest.mock.patch.dict(
-            os.environ,
-            {"LSST_HTTP_TIMEOUT_CONNECT": "NaN", "LSST_HTTP_TIMEOUT_READ": "NaN"},
-            clear=True,
-        ):
-            # Force module reload.
-            importlib.reload(lsst.resources.http)
-            config = HttpResourcePathConfig()
-            self.assertAlmostEqual(config.timeout[0], config.DEFAULT_TIMEOUT_CONNECT)
-            self.assertAlmostEqual(config.timeout[1], config.DEFAULT_TIMEOUT_READ)
+        # Ensure that invalid float values (including NaN values) raise a
+        # ValueError.
+        for value in ("invalid", "NaN"):
+            with unittest.mock.patch.dict(
+                os.environ,
+                {"LSST_HTTP_TIMEOUT_CONNECT": value, "LSST_HTTP_TIMEOUT_READ": value},
+                clear=True,
+            ):
+                # Force module reload.
+                importlib.reload(lsst.resources.http)
+                with self.assertRaises(ValueError):
+                    config = HttpResourcePathConfig()
+                    config.timeout()
 
     def test_front_end_connections(self):
         # Ensure that when the number of front end connections is not specified
@@ -735,6 +737,15 @@ class BearerTokenAuthTestCase(unittest.TestCase):
         auth = BearerTokenAuth(self.token)
         req = auth(requests.Request("GET", "https://example.org").prepare())
         self.assertEqual(req.headers.get("Authorization"), f"Bearer {self.token}")
+
+    def test_token_insecure_http(self):
+        """Ensure that no 'Authorization' header is attached to a request when
+        using insecure HTTP.
+        """
+        auth = BearerTokenAuth(self.token)
+        for url in ("http://example.org", "HTTP://example.org", "HttP://example.org"):
+            req = auth(requests.Request("GET", url).prepare())
+            self.assertIsNone(req.headers.get("Authorization"))
 
     def test_token_file(self):
         """Ensure when the provided token is a file path, its contents is
