@@ -40,6 +40,7 @@ https = [
     "requests >= 2.26.0",
     "urllib3 >= 1.25.10",
     "responses >= 0.12.0",
+    "defusedxml",
 ]
 gs = [
     "google-cloud-storage",
