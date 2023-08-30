@@ -318,10 +318,7 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
                 ),
             )
             if resp.status_code not in (requests.codes.ok, requests.codes.created):
-                raise ValueError(
-                    f"Unexpected response to OPTIONS request for {path}, status: {resp.status_code} "
-                    f"{resp.reason}"
-                )
+                return False
 
             # Check that "1" is part of the value of the "DAV" header. We don't
             # use locks, so a server complying to class 1 is enough for our
