@@ -693,6 +693,10 @@ class WebdavUtilsTestCase(unittest.TestCase):
         responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
         self.assertFalse(_is_webdav_endpoint(plainHttpEndpoint))
 
+        notWebdavEndpoint = "http://www.notwebdav.org"
+        responses.add(responses.OPTIONS, notWebdavEndpoint, status=403)
+        self.assertFalse(_is_webdav_endpoint(notWebdavEndpoint))
+
     def test_is_protected(self):
         self.assertFalse(_is_protected("/this-file-does-not-exist"))
 
