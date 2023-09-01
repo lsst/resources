@@ -166,14 +166,21 @@ class ResourcePath:
                 if ESCAPES_RE.search(uri):
                     log.warning("Possible double encoding of %s", uri)
                 else:
-                    uri = urllib.parse.quote(uri)
-                    # Special case hash since we must support fragments
-                    # even in schemeless URIs -- although try to only replace
-                    # them in file part and not directory part
-                    if ESCAPED_HASH in uri:
+                    # Fragments are generally not encoded so we must search
+                    # for the fragment boundary ourselves. This is making
+                    # an assumption that the filename does not include a "#"
+                    # and also that there is no "/" in the fragment itself.
+                    to_encode = uri
+                    fragment = ""
+                    if "#" in uri:
                         dirpos = uri.rfind("/")
-                        # Do replacement after this /
-                        uri = uri[: dirpos + 1] + uri[dirpos + 1 :].replace(ESCAPED_HASH, "#")
+                        trailing = uri[dirpos + 1 :]
+                        hashpos = trailing.rfind("#")
+                        if hashpos != -1:
+                            fragment = trailing[hashpos:]
+                            to_encode = uri[: dirpos + hashpos + 1]
+
+                    uri = urllib.parse.quote(to_encode) + fragment
 
             parsed = urllib.parse.urlparse(uri)
         elif isinstance(uri, urllib.parse.ParseResult):

@@ -56,6 +56,14 @@ class SchemelessTestCase(unittest.TestCase):
         file_uri = ResourcePath(relative + "#frag", root=prefix_uri)
         self.assertEqual(str(file_uri), f"file://{prefix_uri.ospath}{relative}#frag")
 
+        # Fragments should not be encoded.
+        relative_uri = ResourcePath(relative + "#a,b", forceAbsolute=False)
+        self.assertEqual(str(relative_uri), f"{relative}#a,b")
+
+        # file URI with # in directory name does not encode fragment.
+        file_uri = ResourcePath("./relati#ve/file.yaml#a,v", root=prefix_uri)
+        self.assertEqual(str(file_uri), f"file://{prefix_uri.ospath}relati%23ve/file.yaml#a,v")
+
         # For historical reasons a a root can not be anything other
         # than a file. This does not really make sense in the general
         # sense but can be implemented using uri.join().
