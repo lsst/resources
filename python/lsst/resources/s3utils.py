@@ -238,7 +238,8 @@ def s3CheckFileExists(
         return (True, obj["ContentLength"])
     except client.exceptions.ClientError as err:
         # resource unreachable error means key does not exist
-        if err.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
+        errcode = err.response["ResponseMetadata"]["HTTPStatusCode"]
+        if errcode == 404:
             return (False, -1)
         # head_object returns 404 when object does not exist only when user has
         # s3:ListBucket permission. If list permission does not exist a 403 is
@@ -246,12 +247,16 @@ def s3CheckFileExists(
         # not exist, but it could also mean user lacks s3:GetObject permission:
         # https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectHEAD.html
         # I don't think its possible to discern which case is it with certainty
-        if err.response["ResponseMetadata"]["HTTPStatusCode"] == 403:
+        if errcode == 403:
             raise PermissionError(
-                "Forbidden HEAD operation error occured. "
+                "Forbidden HEAD operation error occurred. "
                 "Verify s3:ListBucket and s3:GetObject "
                 "permissions are granted for your IAM user. "
             ) from err
+        if errcode == 429:
+            # boto3, incorrectly, does not automatically retry with 429
+            # so instead we raise an explicit retry exception for backoff.
+            raise _TooManyRequestsError(str(err)) from err
         raise
 
 

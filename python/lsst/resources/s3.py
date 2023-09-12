@@ -20,7 +20,7 @@ import re
 import sys
 import tempfile
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import IO, TYPE_CHECKING, cast
 
 from botocore.exceptions import ClientError
@@ -111,6 +111,13 @@ class S3ResourcePath(ResourcePath):
         """Client object to address remote resource."""
         # Defer import for circular dependencies
         return getS3Client()
+
+    @classmethod
+    def _mexists(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, bool]:
+        # Force client to be created before creating threads.
+        getS3Client()
+
+        return super()._mexists(uris)
 
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
     def exists(self) -> bool:
