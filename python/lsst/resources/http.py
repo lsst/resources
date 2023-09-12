@@ -74,7 +74,7 @@ def _timeout_from_environment(env_var: str, default_value: float) -> float:
         raise ValueError(
             f"Expecting valid timeout value in environment variable {env_var} but found "
             f"{os.environ.get(env_var)}"
-        )
+        ) from None
 
     if math.isnan(timeout):
         raise ValueError(f"Unexpected timeout value NaN found in environment variable {env_var}")
