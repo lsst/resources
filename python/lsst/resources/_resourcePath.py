@@ -778,6 +778,37 @@ class ResourcePath:
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
+        # Group by scheme to allow a subclass to be able to use
+        # specialized implementations.
+        grouped: dict[type, list[ResourcePath]] = {}
+        for uri in uris:
+            uri_class = uri.__class__
+            if uri_class not in grouped:
+                grouped[uri_class] = []
+            grouped[uri_class].append(uri)
+
+        existence: dict[ResourcePath, bool] = {}
+        for uri_class in grouped:
+            existence.update(uri_class._mexists(grouped[uri_class]))
+
+        return existence
+
+    @classmethod
+    def _mexists(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, bool]:
+        """Check for existence of multiple URIs at once.
+
+        Implementation helper method for `mexists`.
+
+        Parameters
+        ----------
+        uris : iterable of `ResourcePath`
+            The URIs to test.
+
+        Returns
+        -------
+        existence : `dict` of [`ResourcePath`, `bool`]
+            Mapping of original URI to boolean indicating existence.
+        """
         exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
         future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
