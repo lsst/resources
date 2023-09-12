@@ -249,7 +249,7 @@ def s3CheckFileExists(
         # I don't think its possible to discern which case is it with certainty
         if errcode == 403:
             raise PermissionError(
-                "Forbidden HEAD operation error occured. "
+                "Forbidden HEAD operation error occurred. "
                 "Verify s3:ListBucket and s3:GetObject "
                 "permissions are granted for your IAM user. "
             ) from err
