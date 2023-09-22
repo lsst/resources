@@ -1,1 +1,0 @@
-Reorganized ``mexists()`` implementation to allow S3 codepath to ensure that a client object was created before using multi-threading.
