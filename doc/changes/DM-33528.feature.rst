@@ -1,2 +1,0 @@
-``resource`` URI schemes now use `importlib.resources` (or `importlib_resources`) rather than the deprecated ``pkg_resources``.
-Due to this change, ``resource`` URI schemes now also support ``walk`` and ``findFileResources``.
