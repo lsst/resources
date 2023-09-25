@@ -1,4 +1,4 @@
-git+https://github.com/lsst/utils@main#egg=lsst-utils
+git+https://github.com/lsst/utils@v26.0.x#egg=lsst-utils
 # Needed for Python <=3.10
 importlib_resources
 # optional

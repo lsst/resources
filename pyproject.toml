@@ -20,7 +20,7 @@ classifiers = [
 ]
 keywords = ["lsst"]
 dependencies = [
-    "lsst-utils",
+    "lsst-utils >=26.0,<26.100",
     "importlib_resources",
 ]
 dynamic = ["version"]
