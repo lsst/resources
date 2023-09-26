@@ -1,2 +1,0 @@
-* Modified the way that a schemeless absolute URI behaves such that we now always convert it to a ``file`` URI.
-* The ``root`` parameter can now use any ``ResourcePath`` scheme such that a relative URI can be treated as a URI relative to, for example, a S3 or WebDAV root.

@@ -1,2 +1,0 @@
-* Added support for ``as_local`` for Python package resource URIs.
-* Added explicit ``isdir()`` implementation for Python package resources.

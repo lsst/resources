@@ -1,1 +1,0 @@
-* ``ResourcePathExpression`` can now be used in an `isinstance()` call on Python 3.10 and newer.

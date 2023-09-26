@@ -1,3 +1,42 @@
+Resources v26.0.0 2023-09-22
+============================
+
+This package now requires Python 3.10 and newer.
+
+New Features
+------------
+
+- ``resource`` URI schemes now use `importlib.resources` (or ``importlib_resources``) rather than the deprecated ``pkg_resources``.
+  Due to this change, ``resource`` URI schemes now also support ``walk`` and ``findFileResources``. (`DM-33528 <https://jira.lsstcorp.org/browse/DM-33528>`_)
+- * Modified the way that a schemeless absolute URI behaves such that we now always convert it to a ``file`` URI.
+  * The ``root`` parameter can now use any ``ResourcePath`` scheme such that a relative URI can be treated as a URI relative to, for example, a S3 or WebDAV root. (`DM-38552 <https://jira.lsstcorp.org/browse/DM-38552>`_)
+- The ``LSST_DISABLE_BUCKET_VALIDATION`` environment variable can now be set to disable validation of S3 bucket names, allowing Ceph multi-tenant colon-separated names to be used. (`DM-38742 <https://jira.lsstcorp.org/browse/DM-38742>`_)
+- * Added support for ``as_local`` for Python package resource URIs.
+  * Added explicit ``isdir()`` implementation for Python package resources. (`DM-39044 <https://jira.lsstcorp.org/browse/DM-39044>`_)
+
+
+Bug Fixes
+---------
+
+- Fixed problem where a fragment associated with a schemeless URI was erroneously being quoted. (`DM-35695 <https://jira.lsstcorp.org/browse/DM-35695>`_)
+- Fixed invalid endpoint error in the ``FileReadWriteTestCase`` test when the ``S3_ENDPOINT_URL`` environment variable is set to an invalid endpoint. (`DM-37439 <https://jira.lsstcorp.org/browse/DM-37439>`_)
+- * Fixed EOF detection with S3 and HTTP resource handles when using repeated ``read()``.
+  * Ensured that HTTP reads with resource handles using byte ranges correctly disable remote compression. (`DM-38589 <https://jira.lsstcorp.org/browse/DM-38589>`_)
+- Reorganized ``mexists()`` implementation to allow S3 codepath to ensure that a client object was created before using multi-threading. (`DM-40762 <https://jira.lsstcorp.org/browse/DM-40762>`_)
+
+
+Miscellaneous Changes of Minor Interest
+---------------------------------------
+
+- ``ResourcePathExpression`` can now be used in an `isinstance` call on Python 3.10 and newer. (`DM-38492 <https://jira.lsstcorp.org/browse/DM-38492>`_)
+
+
+An API Removal or Deprecation
+-----------------------------
+
+- Dropped support for Python 3.8 and 3.9. (`DM-39791 <https://jira.lsstcorp.org/browse/DM-39791>`_)
+
+
 Resources v25.0.0 2023-02-27
 ============================
 

@@ -1,1 +1,0 @@
-The LSST_DISABLE_BUCKET_VALIDATION environment variable can now be set to disable validation of S3 bucket names, allowing Ceph multi-tenant colon-separated names to be used.
