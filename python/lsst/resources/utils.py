@@ -18,6 +18,7 @@ import logging
 import os
 import posixpath
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable, Iterator
 from pathlib import Path, PurePath, PurePosixPath
@@ -161,3 +162,19 @@ def removeTestTempDir(root: str | None) -> None:
     """
     if root is not None and os.path.exists(root):
         shutil.rmtree(root, ignore_errors=True)
+
+
+def ensure_directory_is_writeable(directory_path: str | bytes) -> None:
+    """Given the path to a directory, ensures that we are able to write it and
+    access files in it.  Alters the directory permissions by adding the
+    owner-write and owner-traverse permission bits if they aren't already set
+
+    Parameters
+    ----------
+    directory_path : `str` or `bytes`
+        Path to the directory that will be made writeable
+    """
+    current_mode = os.stat(directory_path).st_mode
+    desired_mode = current_mode | stat.S_IWUSR | stat.S_IXUSR
+    if current_mode != desired_mode:
+        os.chmod(directory_path, desired_mode)
