@@ -1,9 +1,9 @@
-git+https://github.com/lsst/utils@main#egg=lsst-utils
+git+https://github.com/lsst/utils@v25.0.x#egg=lsst-utils
 # optional
 backoff >= 1.10
 boto3 >= 1.13
 botocore >= 1.15
 moto >= 1.3
 responses >= 0.12.0
-urllib3 >= 1.25.10
+urllib3 >= 1.25.10, <2.0
 requests >= 2.26.0
