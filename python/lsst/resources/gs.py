@@ -197,7 +197,7 @@ class GSResourcePath(ResourcePath):
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             try:
-                self.blob.download_to_filename(tmpFile.name, retry=_RETRY_POLICY)
+                self.blob.download_to_file(tmpFile, retry=_RETRY_POLICY)
             except NotFound as e:
                 raise FileNotFoundError(f"No such resource: {self}") from e
         return tmpFile.name, True
