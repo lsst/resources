@@ -21,7 +21,7 @@ classifiers = [
 ]
 keywords = ["lsst"]
 dependencies = [
-    "lsst-utils",
+    "lsst-utils >=25.0,<25.100",
 ]
 dynamic = ["version"]
 
