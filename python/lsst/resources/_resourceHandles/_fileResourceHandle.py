@@ -78,11 +78,11 @@ class FileResourceHandle(BaseResourceHandle[U]):
     def readable(self) -> bool:
         return self._fileHandle.readable()
 
-    def readline(self, size: int = -1) -> AnyStr:
+    def readline(self, size: int = -1) -> U:
         return self._fileHandle.readline(size)
         ...
 
-    def readlines(self, hint: int = -1) -> Iterable[AnyStr]:
+    def readlines(self, hint: int = -1) -> Iterable[U]:
         return self._fileHandle.readlines(hint)
 
     def seek(self, offset: int, whence: int = SEEK_SET) -> int:
@@ -103,7 +103,7 @@ class FileResourceHandle(BaseResourceHandle[U]):
     def writelines(self, lines: Iterable[AnyStr]) -> None:
         self._fileHandle.writelines(lines)
 
-    def read(self, size: int = -1) -> AnyStr:
+    def read(self, size: int = -1) -> U:
         return self._fileHandle.read(size)
 
     def write(self, b: U) -> int:
