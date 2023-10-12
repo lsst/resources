@@ -1,0 +1,1 @@
+When the process's filesystem umask set to a restrictive value like 0222, ``transfer_from``, ``write``, and ``mkdir`` no longer fail due to incorrect permissions on newly-created parent directories.

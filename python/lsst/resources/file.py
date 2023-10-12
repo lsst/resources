@@ -27,7 +27,7 @@ from typing import IO, TYPE_CHECKING
 
 from ._resourceHandles._fileResourceHandle import FileResourceHandle
 from ._resourcePath import ResourcePath
-from .utils import NoTransaction, os2posix, posix2os
+from .utils import NoTransaction, ensure_directory_is_writeable, os2posix, posix2os
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -95,7 +95,7 @@ class FileResourcePath(ResourcePath):
         """Write the supplied data to the file."""
         dir = os.path.dirname(self.ospath)
         if not os.path.exists(dir):
-            os.makedirs(dir, exist_ok=True)
+            _create_directories(dir)
         mode = "wb" if overwrite else "xb"
         with open(self.ospath, mode) as f:
             f.write(data)
@@ -112,7 +112,7 @@ class FileResourcePath(ResourcePath):
             Raised if a non-directory already exists.
         """
         try:
-            os.makedirs(self.ospath, exist_ok=True)
+            _create_directories(self.ospath)
         except FileExistsError:
             raise NotADirectoryError(f"{self.ospath} exists but is not a directory.") from None
 
@@ -263,7 +263,7 @@ class FileResourcePath(ResourcePath):
                 # Must create the directory -- this can not be rolled back
                 # since another transfer running concurrently may
                 # be relying on this existing.
-                os.makedirs(outputDir, exist_ok=True)
+                _create_directories(outputDir)
 
             if transaction is None:
                 # Use a no-op transaction to reduce code duplication
@@ -480,3 +480,52 @@ class FileResourcePath(ResourcePath):
     ) -> Iterator[IO]:
         with FileResourceHandle(mode=mode, log=log, filename=self.ospath, encoding=encoding) as buffer:
             yield buffer  # type: ignore
+
+
+def _create_directories(name: str | bytes) -> None:
+    """Create a directory and all of its parent directories that don't yet
+    exist.
+
+    Parameters
+    ----------
+    name: `str` or `bytes`
+        Path to the directory to be created
+
+    Notes
+    -----
+    The code in this function is duplicated from the Python standard library
+    function os.makedirs with one change: if the user has set a process umask
+    that prevents us from creating/accessing files in the newly created
+    directories, the permissions of the directories are altered to allow
+    owner-write and owner-traverse so that they can be used.
+    """
+    # These are optional parameters in the original function, but they can be
+    # constant here.
+    mode = 0o777
+    exist_ok = True
+
+    head, tail = os.path.split(name)
+    if not tail:
+        head, tail = os.path.split(head)
+    if head and tail and not os.path.exists(head):
+        try:
+            _create_directories(head)
+        except FileExistsError:
+            # Defeats race condition when another thread created the path
+            pass
+        cdir: str | bytes = os.curdir
+        if isinstance(tail, bytes):
+            cdir = bytes(os.curdir, "ASCII")
+        if tail == cdir:  # xxx/newdir/. exists if xxx/newdir exists
+            return
+    try:
+        os.mkdir(name, mode)
+        # This is the portion that is modified relative to the standard library
+        # version of the function.
+        ensure_directory_is_writeable(name)
+        # end modified portion
+    except OSError:
+        # Cannot rely on checking for EEXIST, since the operating system
+        # could give priority to other errors like EACCES or EROFS
+        if not exist_ok or not os.path.isdir(name):
+            raise

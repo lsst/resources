@@ -32,6 +32,7 @@ from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
+from .utils import ensure_directory_is_writeable
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -931,7 +932,13 @@ class ResourcePath:
         """
         use_tempdir = False
         if prefix is None:
-            prefix = ResourcePath(tempfile.mkdtemp(), forceDirectory=True, isTemporary=True)
+            directory = tempfile.mkdtemp()
+            # If the user has set a umask that restricts the owner-write bit,
+            # the directory returned from mkdtemp may not initially be
+            # writeable by us
+            ensure_directory_is_writeable(directory)
+
+            prefix = ResourcePath(directory, forceDirectory=True, isTemporary=True)
             # Record that we need to delete this directory. Can not rely
             # on isTemporary flag since an external prefix may have that
             # set as well.

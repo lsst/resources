@@ -9,6 +9,7 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import contextlib
 import os
 import pathlib
 import unittest
@@ -81,6 +82,9 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
         root = ResourcePath(self._make_uri("/root"))
         via_root = ResourcePath("b.txt", root=root)
         self.assertEqual(via_root.ospath, "/root/b.txt")
+
+
+TEST_UMASK = 0o0333
 
 
 class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
@@ -163,6 +167,63 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             # Temporary file now gone so transfer should not work.
             with self.assertRaises(FileNotFoundError):
                 target.transfer_from(tmp, "move", overwrite=True)
+
+    def test_write_with_restrictive_umask(self):
+        self._test_file_with_restrictive_umask(lambda target: target.write(b"123"))
+
+    def test_transfer_from_with_restrictive_umask(self):
+        def cb(target):
+            with ResourcePath.temporary_uri() as tmp:
+                tmp.write(b"")
+                target.transfer_from(tmp, "copy")
+
+        self._test_file_with_restrictive_umask(cb)
+
+    def test_mkdir_with_restrictive_umask(self):
+        self._test_with_restrictive_umask(lambda target: target.mkdir())
+
+    def test_temporary_uri_with_restrictive_umask(self):
+        with _override_umask(TEST_UMASK):
+            with ResourcePath.temporary_uri() as tmp:
+                tmp.write(b"")
+                self.assertTrue(tmp.exists())
+
+    def _test_file_with_restrictive_umask(self, callback):
+        def inner_cb(target):
+            callback(target)
+
+            # Make sure the umask was respected for the file itself
+            file_mode = os.stat(target.ospath).st_mode
+            self.assertEqual(file_mode & TEST_UMASK, 0)
+
+        self._test_with_restrictive_umask(inner_cb)
+
+    def _test_with_restrictive_umask(self, callback):
+        """Make sure that parent directories for a file can be created even if
+        the user has set a process umask that restricts the write and traverse
+        bits.
+        """
+        with _override_umask(TEST_UMASK):
+            target = self.tmpdir.join("a/b/target.txt")
+            callback(target)
+            self.assertTrue(target.exists())
+
+            dir_b_path = os.path.dirname(target.ospath)
+            dir_a_path = os.path.dirname(dir_b_path)
+            for dir in [dir_a_path, dir_b_path]:
+                # Make sure we only added the minimum permissions needed for it
+                # to work (owner-write and owner-traverse)
+                mode = os.stat(dir).st_mode
+                self.assertEqual(mode & TEST_UMASK, 0o0300, f"Permissions incorrect for {dir}: {mode:o}")
+
+
+@contextlib.contextmanager
+def _override_umask(temp_umask):
+    old = os.umask(temp_umask)
+    try:
+        yield
+    finally:
+        os.umask(old)
 
 
 if __name__ == "__main__":
