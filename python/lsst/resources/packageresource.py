@@ -173,11 +173,13 @@ class PackageResourcePath(ResourcePath):
         files: list[str] = []
         dirs: list[str] = []
         for item in ref.iterdir():
-            if item.is_file():
-                files.append(item.name)
-            else:
-                # This is a directory.
+            if item.is_dir():
                 dirs.append(item.name)
+            elif item.is_file():
+                files.append(item.name)
+            # If the item wasn't covered by one of the cases above that
+            # means it was deleted concurrently with this walk or is
+            # not a plain file/directory/symlink
 
         if file_filter is not None:
             files = [f for f in files if file_filter.search(f)]
