@@ -12,7 +12,7 @@
 import unittest
 
 from lsst.resources import ResourcePath
-from lsst.resources.s3utils import clean_test_environment
+from lsst.resources.s3utils import clean_test_environment_for_s3
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 try:
@@ -45,13 +45,9 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     """The mocked s3 interface from moto."""
 
     def setUp(self):
+        self.enterContext(clean_test_environment_for_s3())
         # Enable S3 mocking of tests.
         self.mock_s3.start()
-
-        clean_test_environment(self)
-
-        # set up some fake credentials if they do not exist
-        # self.usingDummyCredentials = setAwsEnvCredentials()
 
         # MOTO needs to know that we expect Bucket bucketname to exist
         s3 = boto3.resource("s3")

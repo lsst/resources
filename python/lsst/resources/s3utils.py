@@ -12,34 +12,31 @@
 from __future__ import annotations
 
 __all__ = (
-    "clean_test_environment",
     "getS3Client",
     "s3CheckFileExists",
     "bucketExists",
-    "setAwsEnvCredentials",
-    "unsetAwsEnvCredentials",
     "backoff",
     "all_retryable_errors",
     "max_retry_time",
     "retryable_io_errors",
     "retryable_client_errors",
     "_TooManyRequestsError",
+    "clean_test_environment_for_s3",
 )
 
 import functools
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
+from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
 from urllib3.exceptions import HTTPError, RequestError
-
-if TYPE_CHECKING:
-    from unittest import TestCase
 
 try:
     import boto3
@@ -117,25 +114,29 @@ all_retryable_errors = retryable_io_errors
 max_retry_time = 60
 
 
-def clean_test_environment(testcase: TestCase) -> None:
-    """Clear S3_ENDPOINT_URL then restore it at the end of a test.
-
-    Parameters
-    ----------
-    testcase: `unittest.TestCase`
-        Reference to the test being run; used to add a cleanup function.
+@contextmanager
+def clean_test_environment_for_s3() -> Iterator[None]:
+    """Reset S3 environment to ensure that unit tests with a mock S3 can't
+    accidentally reference real infrastructure
     """
-    endpoint = os.environ.get("S3_ENDPOINT_URL")
-
-    if not endpoint:
-        return
-    os.environ["S3_ENDPOINT_URL"] = ""
-
-    def cleanup() -> None:
-        if endpoint is not None:
-            os.environ["S3_ENDPOINT_URL"] = endpoint
-
-    testcase.addCleanup(cleanup)
+    with patch.dict(
+        os.environ,
+        {
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-access-key",
+        },
+    ) as patched_environ:
+        for var in (
+            "S3_ENDPOINT_URL",
+            "AWS_SECURITY_TOKEN",
+            "AWS_SESSION_TOKEN",
+            "AWS_PROFILE",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "AWS_CONFIG_FILE",
+        ):
+            patched_environ.pop(var, None)
+        _get_s3_client.cache_clear()
+        yield
 
 
 def getS3Client() -> boto3.client:
@@ -290,46 +291,3 @@ def bucketExists(bucketName: str, client: boto3.client | None = None) -> bool:
         return True
     except client.exceptions.NoSuchBucket:
         return False
-
-
-def setAwsEnvCredentials(
-    accessKeyId: str = "dummyAccessKeyId", secretAccessKey: str = "dummySecretAccessKey"
-) -> bool:
-    """Set AWS credentials environmental variables.
-
-    Parameters
-    ----------
-    accessKeyId : `str`
-        Value given to AWS_ACCESS_KEY_ID environmental variable. Defaults to
-        `dummyAccessKeyId`.
-    secretAccessKey : `str`
-        Value given to AWS_SECRET_ACCESS_KEY environmental variable. Defaults
-        to `dummySecretAccessKey`.
-
-    Returns
-    -------
-    setEnvCredentials : `bool`
-        True when environmental variables were set, False otherwise.
-
-    Notes
-    -----
-    If either AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY are not set, both
-    values are overwritten to ensure that the values are consistent.
-    """
-    if "AWS_ACCESS_KEY_ID" not in os.environ or "AWS_SECRET_ACCESS_KEY" not in os.environ:
-        os.environ["AWS_ACCESS_KEY_ID"] = accessKeyId
-        os.environ["AWS_SECRET_ACCESS_KEY"] = secretAccessKey
-        return True
-    return False
-
-
-def unsetAwsEnvCredentials() -> None:
-    """Unset AWS credential environment variables.
-
-    Unsets the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environmental
-    variables.
-    """
-    if "AWS_ACCESS_KEY_ID" in os.environ:
-        del os.environ["AWS_ACCESS_KEY_ID"]
-    if "AWS_SECRET_ACCESS_KEY" in os.environ:
-        del os.environ["AWS_SECRET_ACCESS_KEY"]
