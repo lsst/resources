@@ -1,1 +1,3 @@
 Removed ``clean_test_environment``, ``setAwsEnvCredentials``, and ``unsetAwsEnvCredentials`` from the ``s3utils`` submodule.  The new function ``clean_test_environment_for_s3`` replaces these.
+
+Dropped support for Python 3.10
