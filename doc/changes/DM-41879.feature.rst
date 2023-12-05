@@ -1,0 +1,1 @@
+Added functions to S3ResourcePath for generating presigned HTTP URLs

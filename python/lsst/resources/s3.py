@@ -430,3 +430,18 @@ class S3ResourcePath(ResourcePath):
                 # BytesIO in the inheritance tree
                 with io.TextIOWrapper(cast(io.BytesIO, handle), encoding=encoding, write_through=True) as sub:
                     yield sub
+
+    def generate_presigned_get_url(self, *, expiration_time_seconds: int) -> str:
+        # Docstring inherited
+        return self._generate_presigned_url("get_object", expiration_time_seconds)
+
+    def generate_presigned_put_url(self, *, expiration_time_seconds: int) -> str:
+        # Docstring inherited
+        return self._generate_presigned_url("put_object", expiration_time_seconds)
+
+    def _generate_presigned_url(self, method: str, expiration_time_seconds: int) -> str:
+        return self.client.generate_presigned_url(
+            method,
+            Params={"Bucket": self.netloc, "Key": self.relativeToPathRoot},
+            ExpiresIn=expiration_time_seconds,
+        )
