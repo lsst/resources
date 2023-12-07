@@ -922,7 +922,7 @@ class HttpResourcePath(ResourcePath):
         # Ensure the parent directory exists.
         # This is only meaningful and appropriate for WebDAV, not the general
         # HTTP case.  e.g. for S3 HTTP URLs, the underlying service has no
-        # concept of 'directories' at all
+        # concept of 'directories' at all.
         if self.is_webdav_endpoint:
             self.parent().mkdir()
 

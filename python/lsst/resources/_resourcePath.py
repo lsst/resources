@@ -1434,13 +1434,13 @@ class ResourcePath:
 
         Parameters
         ----------
-            expiration_time_seconds : `int`
-                Number of seconds until the generated URL is no longer valid
+        expiration_time_seconds : `int`
+            Number of seconds until the generated URL is no longer valid.
 
         Returns
         -------
-            url : `str`
-                HTTP URL signed for GET
+        url : `str`
+            HTTP URL signed for GET.
         """
         raise NotImplementedError(f"URL signing is not supported for '{self.scheme}'")
 
@@ -1450,13 +1450,13 @@ class ResourcePath:
 
         Parameters
         ----------
-            expiration_time_seconds : `int`
-                Number of seconds until the generated URL is no longer valid
+        expiration_time_seconds : `int`
+            Number of seconds until the generated URL is no longer valid.
 
         Returns
         -------
-            url : `str`
-                HTTP URL signed for PUT
+        url : `str`
+            HTTP URL signed for PUT.
         """
         raise NotImplementedError(f"URL signing is not supported for '{self.scheme}'")
 

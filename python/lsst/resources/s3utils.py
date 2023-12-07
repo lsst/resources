@@ -135,6 +135,10 @@ def clean_test_environment_for_s3() -> Iterator[None]:
             "AWS_CONFIG_FILE",
         ):
             patched_environ.pop(var, None)
+        # Clear the cached boto3 S3 client instances.
+        # This helps us avoid a potential situation where the client could be
+        # instantiated before moto mocks are installed, which would prevent the
+        # mocks from taking effect.
         _get_s3_client.cache_clear()
         yield
 
