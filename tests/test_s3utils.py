@@ -23,8 +23,6 @@ import os
 import unittest
 from unittest import mock
 
-from lsst.resources.s3utils import clean_test_environment
-
 try:
     import boto3
     from botocore.exceptions import ParamValidationError
@@ -32,24 +30,12 @@ try:
 except ImportError:
     boto3 = None
 
-    def mock_s3(cls):
-        """No-op decorator in case moto mock_s3 can not be imported."""
-        return cls
-
-
 from lsst.resources import ResourcePath
 from lsst.resources.location import Location
-from lsst.resources.s3utils import (
-    bucketExists,
-    getS3Client,
-    s3CheckFileExists,
-    setAwsEnvCredentials,
-    unsetAwsEnvCredentials,
-)
+from lsst.resources.s3utils import bucketExists, clean_test_environment_for_s3, getS3Client, s3CheckFileExists
 
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
-@mock_s3
 class S3UtilsTestCase(unittest.TestCase):
     """Test for the S3 related utilities."""
 
@@ -57,10 +43,8 @@ class S3UtilsTestCase(unittest.TestCase):
     fileName = "testFileName"
 
     def setUp(self):
-        # set up some fake credentials if they do not exist
-        self.usingDummyCredentials = setAwsEnvCredentials()
-
-        clean_test_environment(self)
+        self.enterContext(clean_test_environment_for_s3())
+        self.enterContext(mock_s3())
 
         self.client = getS3Client()
         try:
@@ -76,10 +60,6 @@ class S3UtilsTestCase(unittest.TestCase):
                 self.client.delete_object(Bucket=self.bucketName, Key=item["Key"])
 
         self.client.delete_bucket(Bucket=self.bucketName)
-
-        # unset any potentially set dummy credentials
-        if self.usingDummyCredentials:
-            unsetAwsEnvCredentials()
 
     def testBucketExists(self):
         self.assertTrue(bucketExists(f"{self.bucketName}"))

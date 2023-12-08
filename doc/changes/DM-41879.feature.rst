@@ -1,0 +1,1 @@
+Added methods to ResourcePath for generating presigned HTTP URLs: `generate_presigned_get_url` and `generate_presigned_put_url`.  These are currently only implemented for S3.

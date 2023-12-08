@@ -1428,6 +1428,38 @@ class ResourcePath:
         if "r" not in mode or "+" in mode:
             self.write(out_bytes, overwrite=("x" not in mode))
 
+    def generate_presigned_get_url(self, *, expiration_time_seconds: int) -> str:
+        """Return a pre-signed URL that can be used to retrieve this resource
+        using an HTTP GET without supplying any access credentials.
+
+        Parameters
+        ----------
+        expiration_time_seconds : `int`
+            Number of seconds until the generated URL is no longer valid.
+
+        Returns
+        -------
+        url : `str`
+            HTTP URL signed for GET.
+        """
+        raise NotImplementedError(f"URL signing is not supported for '{self.scheme}'")
+
+    def generate_presigned_put_url(self, *, expiration_time_seconds: int) -> str:
+        """Return a pre-signed URL that can be used to upload a file to this
+        path using an HTTP PUT without supplying any access credentials.
+
+        Parameters
+        ----------
+        expiration_time_seconds : `int`
+            Number of seconds until the generated URL is no longer valid.
+
+        Returns
+        -------
+        url : `str`
+            HTTP URL signed for PUT.
+        """
+        raise NotImplementedError(f"URL signing is not supported for '{self.scheme}'")
+
 
 ResourcePathExpression = str | urllib.parse.ParseResult | ResourcePath | Path
 """Type-annotation alias for objects that can be coerced to ResourcePath.

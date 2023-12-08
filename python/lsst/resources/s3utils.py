@@ -24,22 +24,27 @@ __all__ = (
     "retryable_io_errors",
     "retryable_client_errors",
     "_TooManyRequestsError",
+    "clean_test_environment_for_s3",
 )
 
 import functools
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
+from deprecated.sphinx import deprecated
 from urllib3.exceptions import HTTPError, RequestError
 
 if TYPE_CHECKING:
     from unittest import TestCase
+
 
 try:
     import boto3
@@ -117,6 +122,12 @@ all_retryable_errors = retryable_io_errors
 max_retry_time = 60
 
 
+@deprecated(
+    reason="This has been replaced by a new function, clean_test_environment_for_s3()."
+    " Will be removed after v26.2023.5000",
+    version="26.2023.5000",
+    category=FutureWarning,
+)
 def clean_test_environment(testcase: TestCase) -> None:
     """Clear S3_ENDPOINT_URL then restore it at the end of a test.
 
@@ -136,6 +147,35 @@ def clean_test_environment(testcase: TestCase) -> None:
             os.environ["S3_ENDPOINT_URL"] = endpoint
 
     testcase.addCleanup(cleanup)
+
+
+@contextmanager
+def clean_test_environment_for_s3() -> Iterator[None]:
+    """Reset S3 environment to ensure that unit tests with a mock S3 can't
+    accidentally reference real infrastructure
+    """
+    with patch.dict(
+        os.environ,
+        {
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-access-key",
+        },
+    ) as patched_environ:
+        for var in (
+            "S3_ENDPOINT_URL",
+            "AWS_SECURITY_TOKEN",
+            "AWS_SESSION_TOKEN",
+            "AWS_PROFILE",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "AWS_CONFIG_FILE",
+        ):
+            patched_environ.pop(var, None)
+        # Clear the cached boto3 S3 client instances.
+        # This helps us avoid a potential situation where the client could be
+        # instantiated before moto mocks are installed, which would prevent the
+        # mocks from taking effect.
+        _get_s3_client.cache_clear()
+        yield
 
 
 def getS3Client() -> boto3.client:
@@ -292,6 +332,13 @@ def bucketExists(bucketName: str, client: boto3.client | None = None) -> bool:
         return False
 
 
+@deprecated(
+    reason="This function could accidentally leave real credentials in the environment during testing."
+    " A new function, clean_test_environment_for_s3(), can be used to set up mock credentials."
+    " Will be removed after v26.2023.5000",
+    version="26.2023.5000",
+    category=FutureWarning,
+)
 def setAwsEnvCredentials(
     accessKeyId: str = "dummyAccessKeyId", secretAccessKey: str = "dummySecretAccessKey"
 ) -> bool:
@@ -323,6 +370,12 @@ def setAwsEnvCredentials(
     return False
 
 
+@deprecated(
+    reason="This has been replaced by a new function, clean_test_environment_for_s3()."
+    " Will be removed after v26.2023.5000",
+    version="26.2023.5000",
+    category=FutureWarning,
+)
 def unsetAwsEnvCredentials() -> None:
     """Unset AWS credential environment variables.
 

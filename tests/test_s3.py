@@ -9,10 +9,12 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import time
 import unittest
+from urllib.parse import parse_qs, urlparse
 
 from lsst.resources import ResourcePath
-from lsst.resources.s3utils import clean_test_environment
+from lsst.resources.s3utils import clean_test_environment_for_s3
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 try:
@@ -45,13 +47,9 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     """The mocked s3 interface from moto."""
 
     def setUp(self):
+        self.enterContext(clean_test_environment_for_s3())
         # Enable S3 mocking of tests.
         self.mock_s3.start()
-
-        clean_test_environment(self)
-
-        # set up some fake credentials if they do not exist
-        # self.usingDummyCredentials = setAwsEnvCredentials()
 
         # MOTO needs to know that we expect Bucket bucketname to exist
         s3 = boto3.resource("s3")
@@ -138,6 +136,33 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             handle.seek(0)
             result = handle.read(1024)
             self.assertEqual(result, 1024 * b"a")
+
+    def test_url_signing(self):
+        s3_path = self.root_uri.join("url-signing-test.txt")
+
+        put_url = s3_path.generate_presigned_put_url(expiration_time_seconds=1800)
+        self._check_presigned_url(put_url, 1800)
+        get_url = s3_path.generate_presigned_get_url(expiration_time_seconds=3600)
+        self._check_presigned_url(get_url, 3600)
+
+        # Moto monkeypatches the 'requests' library to mock access to presigned
+        # URLs, so we are able to use HttpResourcePath to access the URLs in
+        # this test
+        test_data = b"test123"
+        ResourcePath(put_url).write(test_data)
+        retrieved = ResourcePath(get_url).read()
+        self.assertEqual(retrieved, test_data)
+
+    def _check_presigned_url(self, url: str, expiration_time_seconds: int):
+        parsed = urlparse(url)
+        self.assertEqual(parsed.scheme, "https")
+
+        actual_expiration_timestamp = int(parse_qs(parsed.query)["Expires"][0])
+        current_time = int(time.time())
+        expected_expiration_timestamp = current_time + expiration_time_seconds
+        # Allow some flex in the expiration time in case this test process goes
+        # out to lunch for a while on a busy CI machine
+        self.assertLessEqual(abs(expected_expiration_timestamp - actual_expiration_timestamp), 120)
 
 
 if __name__ == "__main__":

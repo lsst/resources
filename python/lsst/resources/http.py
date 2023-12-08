@@ -920,7 +920,11 @@ class HttpResourcePath(ResourcePath):
             raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
 
         # Ensure the parent directory exists.
-        self.parent().mkdir()
+        # This is only meaningful and appropriate for WebDAV, not the general
+        # HTTP case.  e.g. for S3 HTTP URLs, the underlying service has no
+        # concept of 'directories' at all.
+        if self.is_webdav_endpoint:
+            self.parent().mkdir()
 
         # Upload the data.
         log.debug("Writing data to remote resource: %s", self.geturl())
