@@ -1,3 +1,4 @@
+types-Deprecated
 types-requests
 types-setuptools
 types-urllib3

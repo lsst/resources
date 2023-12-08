@@ -12,9 +12,12 @@
 from __future__ import annotations
 
 __all__ = (
+    "clean_test_environment",
     "getS3Client",
     "s3CheckFileExists",
     "bucketExists",
+    "setAwsEnvCredentials",
+    "unsetAwsEnvCredentials",
     "backoff",
     "all_retryable_errors",
     "max_retry_time",
@@ -31,12 +34,17 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
+from deprecated.sphinx import deprecated
 from urllib3.exceptions import HTTPError, RequestError
+
+if TYPE_CHECKING:
+    from unittest import TestCase
+
 
 try:
     import boto3
@@ -112,6 +120,33 @@ retryable_client_errors = (
 # are not included.
 all_retryable_errors = retryable_io_errors
 max_retry_time = 60
+
+
+@deprecated(
+    reason="This has been replaced by a new function, clean_test_environment_for_s3()."
+    " Will be removed after v26.2023.5000",
+    version="26.2023.5000",
+    category=FutureWarning,
+)
+def clean_test_environment(testcase: TestCase) -> None:
+    """Clear S3_ENDPOINT_URL then restore it at the end of a test.
+
+    Parameters
+    ----------
+    testcase: `unittest.TestCase`
+        Reference to the test being run; used to add a cleanup function.
+    """
+    endpoint = os.environ.get("S3_ENDPOINT_URL")
+
+    if not endpoint:
+        return
+    os.environ["S3_ENDPOINT_URL"] = ""
+
+    def cleanup() -> None:
+        if endpoint is not None:
+            os.environ["S3_ENDPOINT_URL"] = endpoint
+
+    testcase.addCleanup(cleanup)
 
 
 @contextmanager
@@ -295,3 +330,59 @@ def bucketExists(bucketName: str, client: boto3.client | None = None) -> bool:
         return True
     except client.exceptions.NoSuchBucket:
         return False
+
+
+@deprecated(
+    reason="This function could accidentally leave real credentials in the environment during testing."
+    " A new function, clean_test_environment_for_s3(), can be used to set up mock credentials."
+    " Will be removed after v26.2023.5000",
+    version="26.2023.5000",
+    category=FutureWarning,
+)
+def setAwsEnvCredentials(
+    accessKeyId: str = "dummyAccessKeyId", secretAccessKey: str = "dummySecretAccessKey"
+) -> bool:
+    """Set AWS credentials environmental variables.
+
+    Parameters
+    ----------
+    accessKeyId : `str`
+        Value given to AWS_ACCESS_KEY_ID environmental variable. Defaults to
+        `dummyAccessKeyId`.
+    secretAccessKey : `str`
+        Value given to AWS_SECRET_ACCESS_KEY environmental variable. Defaults
+        to `dummySecretAccessKey`.
+
+    Returns
+    -------
+    setEnvCredentials : `bool`
+        True when environmental variables were set, False otherwise.
+
+    Notes
+    -----
+    If either AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY are not set, both
+    values are overwritten to ensure that the values are consistent.
+    """
+    if "AWS_ACCESS_KEY_ID" not in os.environ or "AWS_SECRET_ACCESS_KEY" not in os.environ:
+        os.environ["AWS_ACCESS_KEY_ID"] = accessKeyId
+        os.environ["AWS_SECRET_ACCESS_KEY"] = secretAccessKey
+        return True
+    return False
+
+
+@deprecated(
+    reason="This has been replaced by a new function, clean_test_environment_for_s3()."
+    " Will be removed after v26.2023.5000",
+    version="26.2023.5000",
+    category=FutureWarning,
+)
+def unsetAwsEnvCredentials() -> None:
+    """Unset AWS credential environment variables.
+
+    Unsets the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environmental
+    variables.
+    """
+    if "AWS_ACCESS_KEY_ID" in os.environ:
+        del os.environ["AWS_ACCESS_KEY_ID"]
+    if "AWS_SECRET_ACCESS_KEY" in os.environ:
+        del os.environ["AWS_SECRET_ACCESS_KEY"]
