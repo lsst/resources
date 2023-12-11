@@ -25,7 +25,27 @@ from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 
 class HttpReadResourceHandle(BaseResourceHandle[bytes]):
-    """HTTP-based specialization of `.BaseResourceHandle`."""
+    """HTTP-based specialization of `.BaseResourceHandle`.
+
+    Parameters
+    ----------
+    mode : `str`
+        Handle modes as described in the python `io` module.
+    log : `~logging.Logger`
+        Logger to used when writing messages.
+    session : `requests.Session`
+        The session to use for this handle.
+    url : `str`
+        URL of remote resource.
+    timeout : `tuple` [`int`, `int`]
+        Timeout to use for connections: connection timeout and read timeout
+        in a tuple.
+    newline : `str` or `None`, optional
+        When doing multiline operations, break the stream on given character.
+        Defaults to newline. If a file is opened in binary mode, this argument
+        is not used, as binary files will only split lines on the binary
+        newline representation.
+    """
 
     def __init__(
         self,

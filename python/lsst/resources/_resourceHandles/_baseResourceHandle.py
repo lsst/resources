@@ -132,9 +132,9 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
     Parameters
     ----------
     mode : `str`
-        Handle modes as described in the python `io` module
+        Handle modes as described in the python `io` module.
     log : `~logging.Logger`
-        Logger to used when writing messages
+        Logger to used when writing messages.
     newline : `str`
         When doing multiline operations, break the stream on given character
         Defaults to newline.

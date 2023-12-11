@@ -23,14 +23,14 @@ U = TypeVar("U", str, bytes)
 
 
 class FileResourceHandle(BaseResourceHandle[U]):
-    """File based specialization of `.BaseResourceHandle`
+    """File based specialization of `.BaseResourceHandle`.
 
     Parameters
     ----------
     mode : `str`
-        Handle modes as described in the python `io` module
+        Handle modes as described in the python `io` module.
     log : `~logging.Logger`
-        Logger to used when writing messages
+        Logger to used when writing messages.
     filename : `str`
         Name of the file on the filesystem to use.
     encoding : `str` or None

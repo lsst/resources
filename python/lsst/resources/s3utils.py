@@ -152,7 +152,7 @@ def clean_test_environment(testcase: TestCase) -> None:
 @contextmanager
 def clean_test_environment_for_s3() -> Iterator[None]:
     """Reset S3 environment to ensure that unit tests with a mock S3 can't
-    accidentally reference real infrastructure
+    accidentally reference real infrastructure.
     """
     with patch.dict(
         os.environ,
@@ -306,19 +306,16 @@ def bucketExists(bucketName: str, client: boto3.client | None = None) -> bool:
     Parameters
     ----------
     bucketName : `str`
-        Name of the S3 Bucket
+        Name of the S3 Bucket.
     client : `boto3.client`, optional
         S3 Client object to query, if not supplied boto3 will try to resolve
-        the credentials as in order described in its manual_.
+        the credentials by calling `getS3Client`.
 
     Returns
     -------
     exists : `bool`
         True if it exists, False if no Bucket with specified parameters is
         found.
-
-    .. _manual: https://boto3.amazonaws.com/v1/documentation/api/latest/guide/\
-    configuration.html#configuring-credentials
     """
     if boto3 is None:
         raise ModuleNotFoundError("Could not find boto3. Are you sure it is installed?")

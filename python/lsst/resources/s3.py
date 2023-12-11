@@ -51,7 +51,19 @@ log = logging.getLogger(__name__)
 
 
 class ProgressPercentage:
-    """Progress bar for S3 file uploads."""
+    """Progress bar for S3 file uploads.
+
+    Parameters
+    ----------
+    file : `ResourcePath`
+        Resource that is relevant to the progress percentage. The size of this
+        resource will be used to determine progress. The name will be used
+        in the log messages unless overridden by ``file_for_msg``.
+    file_for_msg : `ResourcePath` or `None`, optional
+        Resource name to include in log messages in preference to ``file``.
+    msg : `str`, optional
+        Message text to be included in every progress log message.
+    """
 
     log_level = logging.DEBUG
     """Default log level to use when issuing a message."""
@@ -152,7 +164,6 @@ class S3ResourcePath(ResourcePath):
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def read(self, size: int = -1) -> bytes:
-        """Read the contents of the resource."""
         args = {}
         if size > 0:
             args["Range"] = f"bytes=0-{size-1}"
@@ -170,7 +181,6 @@ class S3ResourcePath(ResourcePath):
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def write(self, data: bytes, overwrite: bool = True) -> None:
-        """Write the supplied data to the resource."""
         if not overwrite and self.exists():
             raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
         with time_this(log, msg="Write to %s", args=(self,)):

@@ -203,7 +203,7 @@ class LocationTestCase(unittest.TestCase):
         self.assertEqual(str(uri2), "s3://bucket/a/b/c/d/newpath/newfile.txt")
 
     def testResourcePathSerialization(self):
-        """Test that we can pickle and yaml"""
+        """Test that we can pickle and yaml."""
         uri = ResourcePath("a/b/c/d")
         uri2 = pickle.loads(pickle.dumps(uri))
         self.assertEqual(uri, uri2)

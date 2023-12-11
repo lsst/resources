@@ -99,7 +99,6 @@ class PackageResourcePath(ResourcePath):
         return ref.is_file() or ref.is_dir()
 
     def read(self, size: int = -1) -> bytes:
-        """Read the contents of the resource."""
         ref = self._get_ref()
         if not ref:
             raise FileNotFoundError(f"Unable to locate resource {self}.")
