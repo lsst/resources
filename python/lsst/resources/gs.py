@@ -89,7 +89,19 @@ _RETRIEVABLE_TYPES = (
 
 
 def is_retryable(exc: Exception) -> bool:
-    """Report if the given exception is a condition that can be retried."""
+    """Report if the given exception is a condition that can be retried.
+
+    Parameters
+    ----------
+    exc : `Exception`
+        Exception to check.
+
+    Returns
+    -------
+    `bool`
+        Returns `True` if the given exception is a condition that can be
+        retried.
+    """
     return isinstance(exc, _RETRIEVABLE_TYPES)
 
 

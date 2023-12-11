@@ -87,12 +87,10 @@ class FileResourcePath(ResourcePath):
         return self.ospath, self.isTemporary
 
     def read(self, size: int = -1) -> bytes:
-        """Return the entire content of the file as bytes."""
         with open(self.ospath, "rb") as fh:
             return fh.read(size)
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
-        """Write the supplied data to the file."""
         dir = os.path.dirname(self.ospath)
         if not os.path.exists(dir):
             _create_directories(dir)
@@ -488,7 +486,7 @@ def _create_directories(name: str | bytes) -> None:
 
     Parameters
     ----------
-    name: `str` or `bytes`
+    name : `str` or `bytes`
         Path to the directory to be created
 
     Notes

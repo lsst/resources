@@ -71,7 +71,7 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
         self.assertNotIn("???", file.path)
 
     def test_path_lib(self):
-        """File URIs can be created from pathlib"""
+        """File URIs can be created from pathlib."""
         file = ResourcePath(self._make_uri("a/test.txt"))
 
         path_file = pathlib.Path(file.ospath)

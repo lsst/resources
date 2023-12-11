@@ -52,7 +52,7 @@ ESCAPED_HASH = urllib.parse.quote("#")
 MAX_WORKERS = 10
 
 
-class ResourcePath:
+class ResourcePath:  # numpydoc ignore=PR02
     """Convenience wrapper around URI parsers.
 
     Provides access to URI components and can convert file
@@ -63,7 +63,7 @@ class ResourcePath:
 
     Parameters
     ----------
-    uri : `str`, `pathlib.Path`, `urllib.parse.ParseResult`, or `ResourcePath`.
+    uri : `str`, `pathlib.Path`, `urllib.parse.ParseResult`, or `ResourcePath`
         URI in string form.  Can be scheme-less if referring to a relative
         path or an absolute path on the local file system.
     root : `str` or `ResourcePath`, optional
@@ -77,7 +77,7 @@ class ResourcePath:
         scheme-less and will not be updated to ``file`` or absolute path unless
         it is already an absolute path, in which case it will be updated to
         a ``file`` scheme.
-    forceDirectory: `bool`, optional
+    forceDirectory : `bool`, optional
         If `True` forces the URI to end with a separator, otherwise given URI
         is interpreted as is.
     isTemporary : `bool`, optional
@@ -404,7 +404,7 @@ class ResourcePath:
         Returns
         -------
         uri : `ResourcePath`
-            root URI.
+            Root URI.
         """
         return self.replace(path="", forceDirectory=True)
 
@@ -534,6 +534,7 @@ class ResourcePath:
         Returns
         -------
         updated : `ResourcePath`
+            Updated `ResourcePath` with new updated final component.
 
         Notes
         -----

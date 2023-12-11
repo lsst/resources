@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 class S3ResourceHandle(BaseResourceHandle[bytes]):
-    """S3 specialization of `.BaseResourceHandle`
+    """S3 specialization of `.BaseResourceHandle`.
 
     Parameters
     ----------
@@ -50,8 +50,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         When doing multiline operations, break the stream on given character.
         Defaults to newline.
 
-    Note
-    ----
+    Notes
+    -----
     It is only possible to incrementally flush this object if each chunk that
     is flushed is above 5MB in size. The flush command is ignored until the
     internal buffer reaches this size, or until close is called, whichever

@@ -60,7 +60,7 @@ def _timeout_from_environment(env_var: str, default_value: float) -> float:
     ----------
     env_var : `str`
         Environment variable to look for.
-    default_value: `float``
+    default_value : `float``
         Value to return if `env_var` is not defined in the environment.
 
     Returns
@@ -426,7 +426,23 @@ class BearerTokenAuth(AuthBase):
 
 
 class SessionStore:
-    """Cache a reusable HTTP client session per endpoint."""
+    """Cache a reusable HTTP client session per endpoint.
+
+    Parameters
+    ----------
+    num_pools : `int`, optional
+        Number of connection pools to keep: there is one pool per remote
+        host.
+    max_persistent_connections : `int`, optional
+        Maximum number of connections per remote host to persist in each
+        connection pool.
+    backoff_min : `float`, optional
+        Minimum value of the interval to compute the exponential
+        backoff factor when retrying requests (seconds).
+    backoff_max : `float`, optional
+        Maximum value of the interval to compute the exponential
+        backoff factor when retrying requests (seconds).
+    """
 
     def __init__(
         self,
@@ -439,17 +455,15 @@ class SessionStore:
         # of the dictionary is a root URI and the value is the session.
         self._sessions: dict[str, requests.Session] = {}
 
-        # Number of connection pools to keep: there is one pool per remote
-        # host. See documentation of urllib3 PoolManager class:
+        # See documentation of urllib3 PoolManager class:
         # https://urllib3.readthedocs.io
         self._num_pools: int = num_pools
 
-        # Maximum number of connections per remote host to persist in each
-        # connection pool. See urllib3 Advanced Usage documentation:
+        # See urllib3 Advanced Usage documentation:
         # https://urllib3.readthedocs.io/en/stable/advanced-usage.html
         self._max_persistent_connections: int = max_persistent_connections
 
-        # Minimum and maximum values of the inverval to compute the exponential
+        # Minimum and maximum values of the interval to compute the exponential
         # backoff factor when retrying requests (seconds).
         self._backoff_min: float = backoff_min
         self._backoff_max: float = backoff_max if backoff_max > backoff_min else backoff_min + 1.0
@@ -946,6 +960,8 @@ class HttpResourcePath(ResourcePath):
         transfer : `str`
             Mode to use for transferring the resource. Supports the following
             options: copy.
+        overwrite : `bool`, optional
+            Whether overwriting the remote resource is allowed or not.
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             Currently unused.
         """
@@ -1119,7 +1135,7 @@ class HttpResourcePath(ResourcePath):
         headers : `dict`, optional
             A dictionary of key-value pairs (both strings) to include as
             headers in the request.
-        body: `str`, optional
+        body : `str`, optional
             The body of the request.
 
         Notes
@@ -1322,7 +1338,6 @@ class HttpResourcePath(ResourcePath):
         method : `str`
             The method to perform. Valid values are "COPY" or "MOVE" (in
             uppercase).
-
         src : `HttpResourcePath`
             The source of the contents to move to `self`.
         """
@@ -1607,6 +1622,11 @@ def _parse_propfind_response_body(body: str) -> list[DavProperty]:
 class DavProperty:
     """Helper class to encapsulate select live DAV properties of a single
     resource, as retrieved via a PROPFIND request.
+
+    Parameters
+    ----------
+    response : `eTree.Element` or `None`
+        The XML response defining the DAV property.
     """
 
     # Regular expression to compare against the 'status' element of a

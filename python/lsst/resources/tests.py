@@ -205,7 +205,7 @@ class _GenericTestCase(TestCaseMixin):
 
 
 class GenericTestCase(_GenericTestCase):
-    """Test cases for generic manipulation of a `ResourcePath`"""
+    """Test cases for generic manipulation of a `ResourcePath`."""
 
     def setUp(self) -> None:
         if self.scheme is None:
@@ -257,7 +257,7 @@ class GenericTestCase(_GenericTestCase):
         self.assertEqual(extension.getExtension(), ".fits")
 
     def test_relative(self) -> None:
-        """Check that we can get subpaths back from two URIs"""
+        """Check that we can get subpaths back from two URIs."""
         parent = ResourcePath(self._make_uri(self.path1), forceDirectory=True)
         self.assertTrue(parent.isdir())
         child = parent.join("dir1/file.txt")
@@ -333,7 +333,7 @@ class GenericTestCase(_GenericTestCase):
         self.assertEqual(child_file.parent().parent(), parent)
 
     def test_escapes(self) -> None:
-        """Special characters in file paths"""
+        """Special characters in file paths."""
         src = self.root_uri.join("bbb/???/test.txt")
         self.assertNotIn("???", src.path)
         self.assertIn("???", src.unquoted_path)

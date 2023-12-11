@@ -46,7 +46,7 @@ def os2posix(ospath: str) -> str:
     Returns
     -------
     posix : `str`
-        Path using POSIX path separator
+        Path using POSIX path separator.
     """
     if IS_POSIX:
         return ospath
@@ -73,7 +73,7 @@ def posix2os(posix: PurePath | str) -> str:
     Returns
     -------
     ospath : `str`
-        Path using OS path separator
+        Path using OS path separator.
     """
     if IS_POSIX:
         return str(posix)
@@ -110,6 +110,23 @@ class NoTransaction:
     def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Iterator[None]:
         """No-op context manager to replace
         `~lsst.daf.butler.core.datastore.DatastoreTransaction`.
+
+        Parameters
+        ----------
+        name : `str`
+            The name of this undo request.
+        undoFunc : `~collections.abc.Callable`
+            Function to call if there is an exception. Not used.
+        *args : `~typing.Any`
+            Parameters to pass to ``undoFunc``.
+        **kwargs : `~typing.Any`
+            Keyword parameters to pass to ``undoFunc``.
+
+        Yields
+        ------
+        `None`
+            Context manager returns nothing since transactions are disabled
+            by definition.
         """
         yield None
 
@@ -166,13 +183,15 @@ def removeTestTempDir(root: str | None) -> None:
 
 def ensure_directory_is_writeable(directory_path: str | bytes) -> None:
     """Given the path to a directory, ensures that we are able to write it and
-    access files in it.  Alters the directory permissions by adding the
-    owner-write and owner-traverse permission bits if they aren't already set
+    access files in it.
+
+    Alters the directory permissions by adding the owner-write and
+    owner-traverse permission bits if they aren't already set
 
     Parameters
     ----------
     directory_path : `str` or `bytes`
-        Path to the directory that will be made writeable
+        Path to the directory that will be made writeable.
     """
     current_mode = os.stat(directory_path).st_mode
     desired_mode = current_mode | stat.S_IWUSR | stat.S_IXUSR
