@@ -60,7 +60,7 @@ def _timeout_from_environment(env_var: str, default_value: float) -> float:
     ----------
     env_var : `str`
         Environment variable to look for.
-    default_value: `float``
+    default_value : `float``
         Value to return if `env_var` is not defined in the environment.
 
     Returns
@@ -1119,7 +1119,7 @@ class HttpResourcePath(ResourcePath):
         headers : `dict`, optional
             A dictionary of key-value pairs (both strings) to include as
             headers in the request.
-        body: `str`, optional
+        body : `str`, optional
             The body of the request.
 
         Notes
@@ -1322,7 +1322,6 @@ class HttpResourcePath(ResourcePath):
         method : `str`
             The method to perform. Valid values are "COPY" or "MOVE" (in
             uppercase).
-
         src : `HttpResourcePath`
             The source of the contents to move to `self`.
         """

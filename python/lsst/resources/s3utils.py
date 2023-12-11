@@ -133,7 +133,7 @@ def clean_test_environment(testcase: TestCase) -> None:
 
     Parameters
     ----------
-    testcase: `unittest.TestCase`
+    testcase : `unittest.TestCase`
         Reference to the test being run; used to add a cleanup function.
     """
     endpoint = os.environ.get("S3_ENDPOINT_URL")

@@ -488,7 +488,7 @@ def _create_directories(name: str | bytes) -> None:
 
     Parameters
     ----------
-    name: `str` or `bytes`
+    name : `str` or `bytes`
         Path to the directory to be created
 
     Notes
