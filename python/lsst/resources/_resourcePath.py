@@ -353,15 +353,14 @@ class ResourcePath:  # numpydoc ignore=PR02
     def relativeToPathRoot(self) -> str:
         """Return path relative to network location.
 
-        Effectively, this is the path property with posix separator stripped
+        This is the path property with posix separator stripped
         from the left hand side of the path.
 
         Always unquotes.
         """
-        p = self._pathLib(self.path)
-        relToRoot = str(p.relative_to(p.root))
-        if self.isdir() and not relToRoot.endswith("/"):
-            relToRoot += "/"
+        relToRoot = self.path.lstrip("/")
+        if relToRoot == "":
+            return "./"
         return urllib.parse.unquote(relToRoot)
 
     @property
