@@ -123,7 +123,10 @@ class FileResourcePath(ResourcePath):
             `True` if this URI is a directory or looks like a directory,
             else `False`.
         """
-        return self.dirLike or os.path.isdir(self.ospath)
+        if self.dirLike is None:
+            # Cache state for next time.
+            self.dirLike = os.path.isdir(self.ospath)
+        return self.dirLike
 
     def transfer_from(
         self,
@@ -382,7 +385,7 @@ class FileResourcePath(ResourcePath):
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Fix up relative paths in URI instances.
 
         Parameters
@@ -416,7 +419,7 @@ class FileResourcePath(ResourcePath):
         always done regardless of the ``forceAbsolute`` parameter.
         """
         # assume we are not dealing with a directory like URI
-        dirLike = False
+        dirLike = None
 
         # file URI implies POSIX path separators so split as POSIX,
         # then join as os, and convert to abspath. Do not handle

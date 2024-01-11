@@ -76,20 +76,23 @@ class PackageResourcePath(ResourcePath):
             associated with the resources is not accessible. This can happen
             if Python can't import the Python package defining the resource.
         """
+        # Need the path without the leading /.
+        path = self.path.lstrip("/")
         try:
-            ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+            ref = resources.files(self.netloc).joinpath(path)
         except ModuleNotFoundError:
             return None
         return ref
 
     def isdir(self) -> bool:
         """Return True if this URI is a directory, else False."""
-        if self.dirLike:  # Always bypass if we guessed the resource is a directory.
-            return True
-        ref = self._get_ref()
-        if ref is None:
-            return False  # Does not seem to exist so assume not a directory.
-        return ref.is_dir()
+        if self.dirLike is None:
+            ref = self._get_ref()
+            if ref is not None:
+                self.dirLike = ref.is_dir()
+            else:
+                return False
+        return self.dirLike
 
     def exists(self) -> bool:
         """Check that the python resource exists."""

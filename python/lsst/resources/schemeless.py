@@ -74,6 +74,22 @@ class SchemelessResourcePath(FileResourcePath):
             str(self), forceAbsolute=True, forceDirectory=self.isdir(), isTemporary=self.isTemporary
         )
 
+    def isdir(self) -> bool:
+        """Return whether this URI is a directory.
+
+        Returns
+        -------
+        isdir : `bool`
+            `True` if this URI is a directory or looks like a directory,
+            else `False`.
+
+        Notes
+        -----
+        Always returns the result relative to the current directory unless
+        it has been pre-declared that this URI refers to a directory.
+        """
+        return self.dirLike or os.path.isdir(self.ospath)
+
     def relative_to(self, other: ResourcePath) -> str | None:
         """Return the relative path from this URI to the other URI.
 
@@ -135,7 +151,7 @@ class SchemelessResourcePath(FileResourcePath):
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Fix up relative paths for local file system.
 
         Parameters
@@ -175,7 +191,7 @@ class SchemelessResourcePath(FileResourcePath):
         expanded.
         """
         # assume we are not dealing with a directory URI
-        dirLike = False
+        dirLike = None
 
         # Replacement values for the URI
         replacements = {}

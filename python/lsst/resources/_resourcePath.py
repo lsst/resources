@@ -128,7 +128,9 @@ class ResourcePath:  # numpydoc ignore=PR02
     # mypy is confused without these
     _uri: urllib.parse.ParseResult
     isTemporary: bool
-    dirLike: bool
+    dirLike: bool | None
+    """Whether the resource looks like a directory resource. `None` means that
+    the status is uncertain."""
 
     def __new__(
         cls,
@@ -140,7 +142,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     ) -> ResourcePath:
         """Create and return new specialist ResourcePath subclass."""
         parsed: urllib.parse.ParseResult
-        dirLike: bool = False
+        dirLike: bool | None = None
         subclass: type[ResourcePath] | None = None
 
         # Force root to be a ResourcePath -- this simplifies downstream
@@ -206,7 +208,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             # We invoke __new__ again with str(self) to add a scheme for
             # forceAbsolute, but for the others that seems more likely to paper
             # over logic errors than do something useful, so we just raise.
-            if forceDirectory and not uri.dirLike:
+            if forceDirectory and not uri.isdir():
                 raise RuntimeError(
                     f"{uri} is already a file-like ResourcePath; cannot force it to directory."
                 )
@@ -220,7 +222,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                     str(uri),
                     root=root,
                     forceAbsolute=True,
-                    forceDirectory=uri.dirLike,
+                    forceDirectory=bool(uri.dirLike),
                     isTemporary=uri.isTemporary,
                 )
             return uri
@@ -239,7 +241,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                     and root_uri.scheme != "file"  # file scheme has different code path
                     and not parsed.path.startswith("/")  # Not already absolute path
                 ):
-                    if not root_uri.dirLike:
+                    if not root_uri.isdir():
                         raise ValueError(
                             f"Root URI ({root}) was not a directory so can not be joined with"
                             f" path {parsed.path!r}"
@@ -358,7 +360,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         p = self._pathLib(self.path)
         relToRoot = str(p.relative_to(p.root))
-        if self.dirLike and not relToRoot.endswith("/"):
+        if self.isdir() and not relToRoot.endswith("/"):
             relToRoot += "/"
         return urllib.parse.unquote(relToRoot)
 
@@ -426,6 +428,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         Equivalent to `os.path.split` where head preserves the URI
         components.
         """
+        if self.isdir():
+            # This is a directory so must return itself and the empty string.
+            return self, ""
+
         head, tail = self._pathModule.split(self.path)
         headuri = self._uri._replace(path=head)
 
@@ -435,7 +441,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         # Schemeless is special in that it can be a relative path
         # We need to ensure that it stays that way. All other URIs will
         # be absolute already.
-        forceAbsolute = self._pathModule.isabs(self.path)
+        forceAbsolute = self.isabs()
         return ResourcePath(headuri, forceDirectory=True, forceAbsolute=forceAbsolute), tail
 
     def basename(self) -> str:
@@ -485,7 +491,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         For a file-like URI this will be the same as calling `dirname()`.
         """
         # When self is file-like, return self.dirname()
-        if not self.dirLike:
+        if not self.isdir():
             return self.dirname()
         # When self is dir-like, return its parent directory,
         # regardless of the presence of a trailing separator
@@ -894,7 +900,7 @@ class ResourcePath:  # numpydoc ignore=PR02
            with uri.as_local() as local:
                ospath = local.ospath
         """
-        if self.dirLike:
+        if self.isdir():
             raise IsADirectoryError(f"Directory-like URI {self} cannot be fetched as local.")
         local_src, is_temporary = self._as_local()
         local_uri = ResourcePath(local_src, isTemporary=is_temporary)
@@ -954,7 +960,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         if suffix:
             tempname += suffix
         temporary_uri = prefix.join(tempname, isTemporary=True)
-        if temporary_uri.dirLike:
+        if temporary_uri.isdir():
             # If we had a safe way to clean up a remote temporary directory, we
             # could support this.
             raise NotImplementedError("temporary_uri cannot be used to create a temporary directory.")
@@ -1000,7 +1006,7 @@ class ResourcePath:  # numpydoc ignore=PR02
 
     def isdir(self) -> bool:
         """Return True if this URI looks like a directory, else False."""
-        return self.dirLike
+        return bool(self.dirLike)
 
     def size(self) -> int:
         """For non-dir-like URI, return the size of the resource.
@@ -1110,7 +1116,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
         forceDirectory: bool = False,
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Correct any issues with the supplied URI.
 
         Parameters
@@ -1360,7 +1366,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         required to reimplement `open`, though they may delegate to `super`
         when ``prefer_file_temporary`` is `False`.
         """
-        if self.dirLike:
+        if self.isdir():
             raise IsADirectoryError(f"Directory-like URI {self} cannot be opened.")
         if "x" in mode and self.exists():
             raise FileExistsError(f"File at {self} already exists.")
