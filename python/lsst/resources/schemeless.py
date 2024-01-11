@@ -46,9 +46,10 @@ class SchemelessResourcePath(FileResourcePath):
         Returns
         -------
         isabs : `bool`
-            `True` if the file is absolute, `False` otherwise.
+            `True` if the file is absolute, `False` otherwise. Will always
+            be `False` for schemeless URIs.
         """
-        return os.path.isabs(self.ospath)
+        return False
 
     def abspath(self) -> ResourcePath:
         """Force a schemeless URI to a file URI.
