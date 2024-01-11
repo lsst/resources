@@ -483,7 +483,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         if self.scheme == "file":
             # Use a local tempdir because on macOS the temp dirs use symlinks
             # so relsymlink gets quite confused.
-            self.tmpdir = ResourcePath(makeTestTempDir(self.testdir))
+            self.tmpdir = ResourcePath(makeTestTempDir(self.testdir), forceDirectory=True)
         else:
             # Create random tmp directory relative to the test root.
             self.tmpdir = self.root_uri.join(

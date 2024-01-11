@@ -389,7 +389,7 @@ class LocationTestCase(unittest.TestCase):
         head, tail = uri.split()
         self.assertEqual((head.geturl(), tail), ("./", ""))
 
-        uri = ResourcePath(".", forceAbsolute=False)
+        uri = ResourcePath(".", forceAbsolute=False, forceDirectory=True)
         head, tail = uri.split()
         self.assertEqual((head.geturl(), tail), ("./", ""))
 
