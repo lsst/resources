@@ -16,6 +16,7 @@ __all__ = ("S3ResourcePath",)
 import contextlib
 import io
 import logging
+import os
 import re
 import sys
 import tempfile
@@ -23,6 +24,7 @@ import threading
 from collections.abc import Iterable, Iterator
 from typing import IO, TYPE_CHECKING, cast
 
+import yaml
 from botocore.exceptions import ClientError
 from lsst.utils.timer import time_this
 
@@ -39,6 +41,11 @@ from .s3utils import (
     retryable_io_errors,
     s3CheckFileExists,
 )
+
+try:
+    from boto3.s3.transfer import TransferConfig
+except ImportError:
+    TransferConfig = None
 
 if TYPE_CHECKING:
     with contextlib.suppress(ImportError):
@@ -117,6 +124,25 @@ def _translate_client_error(err: ClientError) -> None:
 
 class S3ResourcePath(ResourcePath):
     """S3 URI resource path implementation class."""
+
+    use_threads: bool | None = None
+
+    @property
+    def _transfer_config(self) -> TransferConfig:
+        if self.use_threads is None:
+            try:
+                # Use yaml.safe_load to be flexible with what is accepted.
+                self.use_threads = bool(yaml.safe_load(os.environ["LSST_S3_USE_THREADS"]))
+            except KeyError:
+                # Set it to None to use boto's default.
+                self.use_threads = None
+
+        if self.use_threads is None:
+            transfer_config = TransferConfig()
+        else:
+            transfer_config = TransferConfig(use_threads=self.use_threads)
+
+        return transfer_config
 
     @property
     def client(self) -> boto3.client:
@@ -207,7 +233,13 @@ class S3ResourcePath(ResourcePath):
         the temporary file.
         """
         try:
-            self.client.download_fileobj(self.netloc, self.relativeToPathRoot, local_file, Callback=progress)
+            self.client.download_fileobj(
+                self.netloc,
+                self.relativeToPathRoot,
+                local_file,
+                Callback=progress,
+                Config=self._transfer_config,
+            )
         except (
             self.client.exceptions.NoSuchKey,
             self.client.exceptions.NoSuchBucket,

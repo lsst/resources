@@ -14,6 +14,7 @@ import unittest
 from urllib.parse import parse_qs, urlparse
 
 from lsst.resources import ResourcePath
+from lsst.resources.s3 import S3ResourcePath
 from lsst.resources.s3utils import clean_test_environment_for_s3
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
@@ -163,6 +164,11 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Allow some flex in the expiration time in case this test process goes
         # out to lunch for a while on a busy CI machine
         self.assertLessEqual(abs(expected_expiration_timestamp - actual_expiration_timestamp), 120)
+
+    def test_unthreaded_local(self):
+        S3ResourcePath.use_threads = False
+        self.test_local()
+        S3ResourcePath.use_threads = None
 
 
 if __name__ == "__main__":
