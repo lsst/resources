@@ -595,7 +595,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         # .fits.gz counts as one extension do not use os.path.splitext
         path = self.path
         if current:
-            path = path[: -len(current)]
+            path = path.removesuffix(current)
 
         # Ensure that we have a leading "." on file extension (and we do not
         # try to modify the empty string)
