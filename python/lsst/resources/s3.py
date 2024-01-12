@@ -24,7 +24,6 @@ import threading
 from collections.abc import Iterable, Iterator
 from typing import IO, TYPE_CHECKING, cast
 
-import yaml
 from botocore.exceptions import ClientError
 from lsst.utils.timer import time_this
 
@@ -131,11 +130,20 @@ class S3ResourcePath(ResourcePath):
     def _transfer_config(self) -> TransferConfig:
         if self.use_threads is None:
             try:
-                # Use yaml.safe_load to be flexible with what is accepted.
-                self.use_threads = bool(yaml.safe_load(os.environ["LSST_S3_USE_THREADS"]))
+                s3_use_threads = os.environ["LSST_S3_USE_THREADS"]
             except KeyError:
-                # Set it to None to use boto's default.
+                s3_use_threads = None
+
+            if s3_use_threads is None:
                 self.use_threads = None
+            elif s3_use_threads.lower() in ["t", "true", "yes", "y", "1"]:
+                self.use_threads = True
+            elif s3_use_threads.lower() in ["f", "false", "no", "n", "0"]:
+                self.use_threads = False
+            elif s3_use_threads.lower() in ["none", ""]:
+                self.use_threads = None
+            else:
+                raise ValueError(f'LSST_S3_USE_THREADS value of "{s3_use_threads}" is not boolean.')
 
         if self.use_threads is None:
             transfer_config = TransferConfig()
