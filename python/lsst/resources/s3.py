@@ -43,7 +43,7 @@ from .s3utils import (
 )
 
 try:
-    from boto3.s3.transfer import TransferConfig
+    from boto3.s3.transfer import TransferConfig  # type: ignore
 except ImportError:
     TransferConfig = None
 
