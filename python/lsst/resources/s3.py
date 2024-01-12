@@ -125,6 +125,8 @@ class S3ResourcePath(ResourcePath):
     """S3 URI resource path implementation class."""
 
     use_threads: bool | None = None
+    """Explicitly turn on or off threading in use of boto's download_fileobj.
+    Setting this to None results in boto's default behavior."""
 
     @property
     def _transfer_config(self) -> TransferConfig:
