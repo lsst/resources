@@ -551,6 +551,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         Forces the ResourcePath.dirLike attribute to be false. The new file
         path will be quoted if necessary.
         """
+        if self.dirLike:
+            # This is a directory so we can append the new file directly.
+            return self.join(newfile)
+
         if self.quotePaths:
             newfile = urllib.parse.quote(newfile)
         dir, _ = self._pathModule.split(self.path)
