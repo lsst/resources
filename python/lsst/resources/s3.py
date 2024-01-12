@@ -122,7 +122,18 @@ def _translate_client_error(err: ClientError) -> None:
 
 
 class S3ResourcePath(ResourcePath):
-    """S3 URI resource path implementation class."""
+    """S3 URI resource path implementation class.
+
+    Notes
+    -----
+    In order to configure the behavior of instances of this class, the
+    environment variable is inspected:
+
+    - LSST_S3_USE_THREADS: May be True, False, or None. Sets whether threading
+    is used for downloads, with a value of None defaulting to boto's default
+    value. Users may wish to set it to False when the downloads will be started
+    within threads other than python's main thread.
+    """
 
     use_threads: bool | None = None
     """Explicitly turn on or off threading in use of boto's download_fileobj.
@@ -145,7 +156,9 @@ class S3ResourcePath(ResourcePath):
             elif s3_use_threads.lower() in ["none", ""]:
                 self.use_threads = None
             else:
-                raise ValueError(f'LSST_S3_USE_THREADS value of "{s3_use_threads}" is not boolean.')
+                raise ValueError(
+                    f'LSST_S3_USE_THREADS value of "{s3_use_threads}" is not True, False, or None.'
+                )
 
         if self.use_threads is None:
             transfer_config = TransferConfig()
