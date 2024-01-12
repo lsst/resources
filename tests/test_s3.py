@@ -9,8 +9,10 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import os
 import time
 import unittest
+from inspect import signature
 from urllib.parse import parse_qs, urlparse
 
 from lsst.resources import ResourcePath
@@ -75,6 +77,15 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Stop the S3 mock.
         self.mock_s3.stop()
+
+        # Make user environ is cleaned up after testing different values
+        # of LSST_S3_USE_THREADS
+        try:
+            del os.environ["LSST_S3_USE_THREADS"]
+        except KeyError:
+            pass
+
+        S3ResourcePath.use_threads = None
 
         super().tearDown()
 
@@ -165,10 +176,32 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # out to lunch for a while on a busy CI machine
         self.assertLessEqual(abs(expected_expiration_timestamp - actual_expiration_timestamp), 120)
 
-    def test_unthreaded_local(self):
-        S3ResourcePath.use_threads = False
-        self.test_local()
+    def test_threading_true(self):
+        os.environ["LSST_S3_USE_THREADS"] = "True"
         S3ResourcePath.use_threads = None
+        test_resource_path = self.root_uri.join("test_file.dat")
+        self.assertTrue(test_resource_path._transfer_config.use_threads)
+
+    def test_implicit_default_threading(self):
+        S3ResourcePath.use_threads = None
+        boto_default = signature(boto3.s3.transfer.TransferConfig).parameters["use_threads"].default
+        test_resource_path = self.root_uri.join("test_file.dat")
+        self.assertEqual(test_resource_path._transfer_config.use_threads, boto_default)
+
+    def test_explicit_default_threading(self):
+        os.environ["LSST_S3_USE_THREADS"] = "None"
+        S3ResourcePath.use_threads = None
+        boto_default = signature(boto3.s3.transfer.TransferConfig).parameters["use_threads"].default
+        test_resource_path = self.root_uri.join("test_file.dat")
+        self.assertEqual(test_resource_path._transfer_config.use_threads, boto_default)
+
+    def test_threading_false(self):
+        os.environ["LSST_S3_USE_THREADS"] = "False"
+        S3ResourcePath.use_threads = None
+        test_resource_path = self.root_uri.join("test_file.dat")
+        self.assertFalse(test_resource_path._transfer_config.use_threads)
+
+        self.test_local()
 
 
 if __name__ == "__main__":
