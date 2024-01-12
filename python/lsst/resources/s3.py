@@ -141,7 +141,7 @@ class S3ResourcePath(ResourcePath):
     Setting this to None results in boto's default behavior."""
 
     @cached_property
-    def _environ_use_threads(self):
+    def _environ_use_threads(self) -> bool | None:
         try:
             use_threads_str = os.environ["LSST_S3_USE_THREADS"]
         except KeyError:
