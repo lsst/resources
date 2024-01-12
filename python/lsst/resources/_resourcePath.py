@@ -145,7 +145,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     ) -> ResourcePath:
         """Create and return new specialist ResourcePath subclass."""
         parsed: urllib.parse.ParseResult
-        dirLike: bool | None = None
+        dirLike: bool | None = forceDirectory
         subclass: type[ResourcePath] | None = None
 
         # Force root to be a ResourcePath -- this simplifies downstream
@@ -510,7 +510,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         ----------
         forceDirectory : `bool` or `None`, optional
             Parameter passed to ResourcePath constructor to force this
-            new URI to be dir-like.
+            new URI to be dir-like or file-like.
         isTemporary : `bool`, optional
             Indicate that the resulting URI is temporary resource.
         **kwargs
@@ -602,7 +602,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         if ext and not ext.startswith("."):
             ext = "." + ext
 
-        return self.replace(path=path + ext)
+        return self.replace(path=path + ext, forceDirectory=False)
 
     def getExtension(self) -> str:
         """Return the file extension(s) associated with this URI path.
@@ -695,6 +695,13 @@ class ResourcePath:  # numpydoc ignore=PR02
         path_uri = ResourcePath(
             path, forceAbsolute=False, forceDirectory=forceDirectory, isTemporary=isTemporary
         )
+        if forceDirectory is not None and path_uri.dirLike is not forceDirectory:
+            raise ValueError(
+                "The supplied path URI to join has inconsistent directory state "
+                f"with forceDirectory parameter: {path_uri.dirLike} vs {forceDirectory}"
+            )
+        forceDirectory = path_uri.dirLike
+
         if path_uri.scheme:
             # Check for scheme so can distinguish explicit URIs from
             # absolute scheme-less URIs.
@@ -721,9 +728,14 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         # normpath can strip trailing / so we force directory if the supplied
         # path ended with a /
+        has_dir_sep = path.endswith(self._pathModule.sep)
+        if forceDirectory is None and has_dir_sep:
+            forceDirectory = True
+        elif forceDirectory is False and has_dir_sep:
+            raise ValueError("Path to join has trailing / but is being forced to be a file.")
         return new.replace(
             path=newpath,
-            forceDirectory=(forceDirectory or path.endswith(self._pathModule.sep)),
+            forceDirectory=forceDirectory,
             isTemporary=isTemporary,
         )
 
@@ -1103,8 +1115,8 @@ class ResourcePath:  # numpydoc ignore=PR02
             ``forceDirectory`` is `True`. Otherwise returns the given value of
             ``forceDirectory``.
         """
-        # assume we are not dealing with a directory like URI
-        dirLike = None
+        # Assume the forceDirectory flag can give us a clue.
+        dirLike = forceDirectory
 
         # Directory separator
         sep = cls._pathModule.sep
