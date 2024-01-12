@@ -616,12 +616,13 @@ class ResourcePath:  # numpydoc ignore=PR02
             indicating file compression, in which case the combined
             extension (e.g. ``.fits.gz``) will be returned.
         """
+        if self.dirLike:
+            return ""
+
         special = {".gz", ".bz2", ".xz", ".fz"}
 
-        # Get the file part of the path so as not to be confused by
-        # "." in directory names.
-        basename = self.basename()
-        extensions = self._pathLib(basename).suffixes
+        # path lib will ignore any "." in directories.
+        extensions = self._pathLib(self.path).suffixes
 
         if not extensions:
             return ""
