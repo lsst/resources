@@ -49,11 +49,11 @@ class PackageResourcePath(ResourcePath):
 
     @classmethod
     def _fixDirectorySep(
-        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool = False
+        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool | None = None
     ) -> tuple[urllib.parse.ParseResult, bool]:
         """Ensure that a path separator is present on directory paths."""
         parsed, dirLike = super()._fixDirectorySep(parsed, forceDirectory=forceDirectory)
-        if not dirLike:
+        if dirLike is None:
             try:
                 # If the resource location does not exist this can
                 # fail immediately. It is possible we are doing path

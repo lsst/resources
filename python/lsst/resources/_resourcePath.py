@@ -77,9 +77,12 @@ class ResourcePath:  # numpydoc ignore=PR02
         scheme-less and will not be updated to ``file`` or absolute path unless
         it is already an absolute path, in which case it will be updated to
         a ``file`` scheme.
-    forceDirectory : `bool`, optional
-        If `True` forces the URI to end with a separator, otherwise given URI
-        is interpreted as is.
+    forceDirectory : `bool` or `None`, optional
+        If `True` forces the URI to end with a separator. If `False` the URI
+        is interpreted as a file-like entity. Default, `None`, is that the
+        given URI is interpreted as a directory if there is a trailing `/` or
+        for some schemes the system will check to see if it is a file or a
+        directory.
     isTemporary : `bool`, optional
         If `True` indicates that this URI points to a temporary resource.
         The default is `False`, unless ``uri`` is already a `ResourcePath`
@@ -137,7 +140,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         uri: ResourcePathExpression,
         root: str | ResourcePath | None = None,
         forceAbsolute: bool = True,
-        forceDirectory: bool = False,
+        forceDirectory: bool | None = None,
         isTemporary: bool | None = None,
     ) -> ResourcePath:
         """Create and return new specialist ResourcePath subclass."""
@@ -222,7 +225,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                     str(uri),
                     root=root,
                     forceAbsolute=True,
-                    forceDirectory=bool(uri.dirLike),
+                    forceDirectory=uri.dirLike,
                     isTemporary=uri.isTemporary,
                 )
             return uri
@@ -498,12 +501,14 @@ class ResourcePath:  # numpydoc ignore=PR02
         parentPath = originalPath.parent
         return self.replace(path=str(parentPath), forceDirectory=True)
 
-    def replace(self, forceDirectory: bool = False, isTemporary: bool = False, **kwargs: Any) -> ResourcePath:
+    def replace(
+        self, forceDirectory: bool | None = None, isTemporary: bool = False, **kwargs: Any
+    ) -> ResourcePath:
         """Return new `ResourcePath` with specified components replaced.
 
         Parameters
         ----------
-        forceDirectory : `bool`, optional
+        forceDirectory : `bool` or `None`, optional
             Parameter passed to ResourcePath constructor to force this
             new URI to be dir-like.
         isTemporary : `bool`, optional
@@ -626,7 +631,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         return ext
 
     def join(
-        self, path: str | ResourcePath, isTemporary: bool | None = None, forceDirectory: bool = False
+        self, path: str | ResourcePath, isTemporary: bool | None = None, forceDirectory: bool | None = None
     ) -> ResourcePath:
         """Return new `ResourcePath` with additional path components.
 
@@ -642,7 +647,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         isTemporary : `bool`, optional
             Indicate that the resulting URI represents a temporary resource.
             Default is ``self.isTemporary``.
-        forceDirectory : `bool`, optional
+        forceDirectory : `bool` or `None`, optional
             If `True` forces the URI to end with a separator, otherwise given
             URI is interpreted as is.
 
@@ -1070,15 +1075,15 @@ class ResourcePath:  # numpydoc ignore=PR02
 
     @classmethod
     def _fixDirectorySep(
-        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool = False
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool | None = None
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Ensure that a path separator is present on directory paths.
 
         Parameters
         ----------
         parsed : `~urllib.parse.ParseResult`
             The result from parsing a URI using `urllib.parse`.
-        forceDirectory : `bool`, optional
+        forceDirectory : `bool` or `None`, optional
             If `True` forces the URI to end with a separator, otherwise given
             URI is interpreted as is. Specifying that the URI is conceptually
             equivalent to a directory can break some ambiguities when
@@ -1088,12 +1093,13 @@ class ResourcePath:  # numpydoc ignore=PR02
         -------
         modified : `~urllib.parse.ParseResult`
             Update result if a URI is being handled.
-        dirLike : `bool`
+        dirLike : `bool` or `None`
             `True` if given parsed URI has a trailing separator or
-            forceDirectory is True. Otherwise `False`.
+            ``forceDirectory`` is `True`. Otherwise returns the given value of
+            ``forceDirectory``.
         """
         # assume we are not dealing with a directory like URI
-        dirLike = False
+        dirLike = None
 
         # Directory separator
         sep = cls._pathModule.sep
@@ -1114,7 +1120,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         parsed: urllib.parse.ParseResult,
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
-        forceDirectory: bool = False,
+        forceDirectory: bool | None = None,
     ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Correct any issues with the supplied URI.
 
@@ -1128,7 +1134,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         forceAbsolute : `bool`, ignored.
             Not used by this implementation. URIs are generally always
             absolute.
-        forceDirectory : `bool`, optional
+        forceDirectory : `bool` or `None`, optional
             If `True` forces the URI to end with a separator, otherwise given
             URI is interpreted as is. Specifying that the URI is conceptually
             equivalent to a directory can break some ambiguities when
@@ -1140,7 +1146,8 @@ class ResourcePath:  # numpydoc ignore=PR02
             Update result if a URI is being handled.
         dirLike : `bool`
             `True` if given parsed URI has a trailing separator or
-            forceDirectory is True. Otherwise `False`.
+            ``forceDirectory`` is `True`. Otherwise returns the given value
+            of ``forceDirectory``.
 
         Notes
         -----
@@ -1150,7 +1157,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         always done regardless of the ``forceAbsolute`` parameter.
 
         AWS S3 differentiates between keys with trailing POSIX separators (i.e
-        `/dir` and `/dir/`) whereas POSIX does not neccessarily.
+        `/dir` and `/dir/`) whereas POSIX does not necessarily.
 
         Scheme-less paths are normalized.
         """

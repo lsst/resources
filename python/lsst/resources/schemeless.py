@@ -71,7 +71,7 @@ class SchemelessResourcePath(FileResourcePath):
         # the options that will force the code below in _fixupPathUri to
         # return a file URI from a scheme-less one.
         return ResourcePath(
-            str(self), forceAbsolute=True, forceDirectory=self.isdir(), isTemporary=self.isTemporary
+            str(self), forceAbsolute=True, forceDirectory=self.dirLike, isTemporary=self.isTemporary
         )
 
     def isdir(self) -> bool:
@@ -150,7 +150,7 @@ class SchemelessResourcePath(FileResourcePath):
         parsed: urllib.parse.ParseResult,
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
-        forceDirectory: bool = False,
+        forceDirectory: bool | None = None,
     ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Fix up relative paths for local file system.
 
@@ -170,7 +170,9 @@ class SchemelessResourcePath(FileResourcePath):
             absolute path.
         forceDirectory : `bool`, optional
             If `True` forces the URI to end with a separator, otherwise given
-            URI is interpreted as is.
+            URI is interpreted as is. `False` can be used to indicate that
+            the URI is known to correspond to a file. `None` means that the
+            status is unknown.
 
         Returns
         -------
@@ -191,7 +193,7 @@ class SchemelessResourcePath(FileResourcePath):
         expanded.
         """
         # assume we are not dealing with a directory URI
-        dirLike = None
+        dirLike = forceDirectory
 
         # Replacement values for the URI
         replacements = {}

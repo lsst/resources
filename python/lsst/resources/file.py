@@ -407,9 +407,10 @@ class FileResourcePath(ResourcePath):
         -------
         modified : `~urllib.parse.ParseResult`
             Update result if a URI is being handled.
-        dirLike : `bool`
+        dirLike : `bool` or `None`
             `True` if given parsed URI has a trailing separator or
-            forceDirectory is True. Otherwise `False`.
+            ``forceDirectory`` is `True`. Otherwise can return the given
+            value of ``forceDirectory``.
 
         Notes
         -----
@@ -419,7 +420,7 @@ class FileResourcePath(ResourcePath):
         always done regardless of the ``forceAbsolute`` parameter.
         """
         # assume we are not dealing with a directory like URI
-        dirLike = None
+        dirLike = forceDirectory
 
         # file URI implies POSIX path separators so split as POSIX,
         # then join as os, and convert to abspath. Do not handle
