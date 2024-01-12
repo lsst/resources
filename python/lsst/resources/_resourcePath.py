@@ -551,7 +551,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         Forces the ResourcePath.dirLike attribute to be false. The new file
         path will be quoted if necessary.
         """
-        if self.dirLike:
+        if self.isdir():
             # This is a directory so we can append the new file directly.
             return self.join(newfile)
 
@@ -616,7 +616,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             indicating file compression, in which case the combined
             extension (e.g. ``.fits.gz``) will be returned.
         """
-        if self.dirLike:
+        if self.isdir():
             return ""
 
         special = {".gz", ".bz2", ".xz", ".fz"}
