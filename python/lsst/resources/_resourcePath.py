@@ -622,10 +622,16 @@ class ResourcePath:  # numpydoc ignore=PR02
         special = {".gz", ".bz2", ".xz", ".fz"}
 
         # path lib will ignore any "." in directories.
-        extensions = self._pathLib(self.path).suffixes
+        # path lib works well:
+        # extensions = self._pathLib(self.path).suffixes
+        # But the constructor is slow. Therefore write our own implementation.
+        parts = self.path.split(self._pathModule.sep)
+        filename = parts[-1]
+        _, *extensions = filename.split(".")
 
         if not extensions:
             return ""
+        extensions = ["." + x for x in extensions]
 
         ext = extensions.pop()
 
