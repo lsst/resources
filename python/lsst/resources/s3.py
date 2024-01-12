@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 from collections.abc import Iterable, Iterator
+from functools import cached_property
 from typing import IO, TYPE_CHECKING, cast
 
 from botocore.exceptions import ClientError
@@ -139,26 +140,30 @@ class S3ResourcePath(ResourcePath):
     """Explicitly turn on or off threading in use of boto's download_fileobj.
     Setting this to None results in boto's default behavior."""
 
+    @cached_property
+    def _environ_use_threads(self):
+        try:
+            use_threads_str = os.environ["LSST_S3_USE_THREADS"]
+        except KeyError:
+            use_threads_str = None
+
+        if use_threads_str is None:
+            use_threads = None
+        elif use_threads_str.lower() in ["t", "true", "yes", "y", "1"]:
+            use_threads = True
+        elif use_threads_str.lower() in ["f", "false", "no", "n", "0"]:
+            use_threads = False
+        elif use_threads_str.lower() in ["none", ""]:
+            use_threads = None
+        else:
+            raise ValueError(f'LSST_S3_USE_THREADS value of "{use_threads_str}" is not True, False, or None.')
+
+        return use_threads
+
     @property
     def _transfer_config(self) -> TransferConfig:
         if self.use_threads is None:
-            try:
-                s3_use_threads = os.environ["LSST_S3_USE_THREADS"]
-            except KeyError:
-                s3_use_threads = None
-
-            if s3_use_threads is None:
-                self.use_threads = None
-            elif s3_use_threads.lower() in ["t", "true", "yes", "y", "1"]:
-                self.use_threads = True
-            elif s3_use_threads.lower() in ["f", "false", "no", "n", "0"]:
-                self.use_threads = False
-            elif s3_use_threads.lower() in ["none", ""]:
-                self.use_threads = None
-            else:
-                raise ValueError(
-                    f'LSST_S3_USE_THREADS value of "{s3_use_threads}" is not True, False, or None.'
-                )
+            self.use_threads = self._environ_use_threads
 
         if self.use_threads is None:
             transfer_config = TransferConfig()
