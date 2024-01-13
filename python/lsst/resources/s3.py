@@ -22,7 +22,7 @@ import sys
 import tempfile
 import threading
 from collections.abc import Iterable, Iterator
-from functools import cached_property
+from functools import cache, cached_property
 from typing import IO, TYPE_CHECKING, cast
 
 from botocore.exceptions import ClientError
@@ -122,6 +122,32 @@ def _translate_client_error(err: ClientError) -> None:
         raise FileNotFoundError("Resource not found: {self}")
 
 
+@cache
+def _parse_string_to_maybe_bool(maybe_bool_str: str) -> bool | None:
+    """Map a string to either a boolean value or None.
+
+    Parameters
+    ----------
+    maybe_bool_str : `str`
+        The value to parse
+
+    Results
+    -------
+    maybe_bool : `bool` or `None`
+        The parsed value.
+    """
+    if maybe_bool_str.lower() in ["t", "true", "yes", "y", "1"]:
+        maybe_bool = True
+    elif maybe_bool_str.lower() in ["f", "false", "no", "n", "0"]:
+        maybe_bool = False
+    elif maybe_bool_str.lower() in ["none", ""]:
+        maybe_bool = None
+    else:
+        raise ValueError(f'Value of "{maybe_bool_str}" is not True, False, or None.')
+
+    return maybe_bool
+
+
 class S3ResourcePath(ResourcePath):
     """S3 URI resource path implementation class.
 
@@ -145,18 +171,9 @@ class S3ResourcePath(ResourcePath):
         try:
             use_threads_str = os.environ["LSST_S3_USE_THREADS"]
         except KeyError:
-            use_threads_str = None
+            use_threads_str = "None"
 
-        if use_threads_str is None:
-            use_threads = None
-        elif use_threads_str.lower() in ["t", "true", "yes", "y", "1"]:
-            use_threads = True
-        elif use_threads_str.lower() in ["f", "false", "no", "n", "0"]:
-            use_threads = False
-        elif use_threads_str.lower() in ["none", ""]:
-            use_threads = None
-        else:
-            raise ValueError(f'LSST_S3_USE_THREADS value of "{use_threads_str}" is not True, False, or None.')
+        use_threads = _parse_string_to_maybe_bool(use_threads_str)
 
         return use_threads
 

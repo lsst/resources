@@ -13,6 +13,7 @@ import os
 import time
 import unittest
 from inspect import signature
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 from lsst.resources import ResourcePath
@@ -77,13 +78,6 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Stop the S3 mock.
         self.mock_s3.stop()
-
-        # Make user environ is cleaned up after testing different values
-        # of LSST_S3_USE_THREADS
-        try:
-            del os.environ["LSST_S3_USE_THREADS"]
-        except KeyError:
-            pass
 
         S3ResourcePath.use_threads = None
 
@@ -177,10 +171,10 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertLessEqual(abs(expected_expiration_timestamp - actual_expiration_timestamp), 120)
 
     def test_threading_true(self):
-        os.environ["LSST_S3_USE_THREADS"] = "True"
-        S3ResourcePath.use_threads = None
-        test_resource_path = self.root_uri.join("test_file.dat")
-        self.assertTrue(test_resource_path._transfer_config.use_threads)
+        with mock.patch.dict(os.environ, {"LSST_S3_USE_THREADS": "True"}):
+            S3ResourcePath.use_threads = None
+            test_resource_path = self.root_uri.join("test_file.dat")
+            self.assertTrue(test_resource_path._transfer_config.use_threads)
 
     def test_implicit_default_threading(self):
         S3ResourcePath.use_threads = None
@@ -189,19 +183,19 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertEqual(test_resource_path._transfer_config.use_threads, boto_default)
 
     def test_explicit_default_threading(self):
-        os.environ["LSST_S3_USE_THREADS"] = "None"
-        S3ResourcePath.use_threads = None
-        boto_default = signature(boto3.s3.transfer.TransferConfig).parameters["use_threads"].default
-        test_resource_path = self.root_uri.join("test_file.dat")
-        self.assertEqual(test_resource_path._transfer_config.use_threads, boto_default)
+        with mock.patch.dict(os.environ, {"LSST_S3_USE_THREADS": "None"}):
+            S3ResourcePath.use_threads = None
+            boto_default = signature(boto3.s3.transfer.TransferConfig).parameters["use_threads"].default
+            test_resource_path = self.root_uri.join("test_file.dat")
+            self.assertEqual(test_resource_path._transfer_config.use_threads, boto_default)
 
     def test_threading_false(self):
-        os.environ["LSST_S3_USE_THREADS"] = "False"
-        S3ResourcePath.use_threads = None
-        test_resource_path = self.root_uri.join("test_file.dat")
-        self.assertFalse(test_resource_path._transfer_config.use_threads)
+        with mock.patch.dict(os.environ, {"LSST_S3_USE_THREADS": "False"}):
+            S3ResourcePath.use_threads = None
+            test_resource_path = self.root_uri.join("test_file.dat")
+            self.assertFalse(test_resource_path._transfer_config.use_threads)
 
-        self.test_local()
+            self.test_local()
 
 
 if __name__ == "__main__":
