@@ -435,14 +435,6 @@ class FileResourcePath(ResourcePath):
                 "forceDirectory parameter declares it to be a file."
             )
 
-        # For local file system we can explicitly check to see if this
-        # really is a directory. The URI might point to a location that
-        # does not exists yet but all that matters is if it is a directory
-        # then we make sure use that fact. No need to do the check if
-        # we are already being told.
-        if not forceDirectory and posixpath.isdir(parsed.path):
-            forceDirectory = True
-
         # For an absolute path all we need to do is check if we need
         # to force the directory separator
         if posixpath.isabs(parsed.path):
