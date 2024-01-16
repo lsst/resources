@@ -50,7 +50,7 @@ class PackageResourcePath(ResourcePath):
     @classmethod
     def _fixDirectorySep(
         cls, parsed: urllib.parse.ParseResult, forceDirectory: bool | None = None
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Ensure that a path separator is present on directory paths."""
         parsed, dirLike = super()._fixDirectorySep(parsed, forceDirectory=forceDirectory)
         if dirLike is None:

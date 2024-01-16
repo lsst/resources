@@ -384,7 +384,7 @@ class FileResourcePath(ResourcePath):
         parsed: urllib.parse.ParseResult,
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
-        forceDirectory: bool = False,
+        forceDirectory: bool | None = None,
     ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Fix up relative paths in URI instances.
 
