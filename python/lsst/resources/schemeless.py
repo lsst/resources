@@ -244,6 +244,14 @@ class SchemelessResourcePath(FileResourcePath):
         # if it was stripped by normpath. Acknowledge that trailing
         # separator exists.
         endsOnSep = expandedPath.endswith(os.sep) and not replacements["path"].endswith(os.sep)
+
+        # Consistency check.
+        if forceDirectory is False and endsOnSep:
+            raise ValueError(
+                f"URI {parsed.geturl()} ends with {os.sep} but "
+                "forceDirectory parameter declares it to be a file."
+            )
+
         if forceDirectory or endsOnSep or dirLike:
             dirLike = True
             if not replacements["path"].endswith(os.sep):

@@ -50,7 +50,7 @@ class LocationTestCase(unittest.TestCase):
                 ("/rootDir/absolute/file.ext", True, False, "file", "", "/rootDir/absolute/file.ext"),
                 ("~/relative/file.ext", True, False, "file", "", os.path.expanduser("~/relative/file.ext")),
                 ("~/relative/file.ext", False, False, "file", "", os.path.expanduser("~/relative/file.ext")),
-                ("/rootDir/absolute/", True, False, "file", "", "/rootDir/absolute/"),
+                ("/rootDir/absolute/", True, None, "file", "", "/rootDir/absolute/"),
                 ("/rootDir/absolute", True, True, "file", "", "/rootDir/absolute/"),
                 ("~/rootDir/absolute", True, True, "file", "", os.path.expanduser("~/rootDir/absolute/")),
             )
@@ -61,14 +61,14 @@ class LocationTestCase(unittest.TestCase):
             (
                 ("file:///rootDir/absolute/file.ext", True, False, "file", "", "/rootDir/absolute/file.ext"),
                 ("file:relative/file.ext", True, False, "file", "", posixRelFilePath),
-                ("file:///absolute/directory/", True, False, "file", "", "/absolute/directory/"),
+                ("file:///absolute/directory/", True, None, "file", "", "/absolute/directory/"),
                 ("file:///absolute/directory", True, True, "file", "", "/absolute/directory/"),
             )
         )
         # 4) S3 scheme (ensured Keys as dirs and fully specified URIs work)
         uriStrings.extend(
             (
-                ("s3://bucketname/rootDir/", True, False, "s3", "bucketname", "/rootDir/"),
+                ("s3://bucketname/rootDir/", True, None, "s3", "bucketname", "/rootDir/"),
                 ("s3://bucketname/rootDir", True, True, "s3", "bucketname", "/rootDir/"),
                 (
                     "s3://bucketname/rootDir/relative/file.ext",
@@ -83,7 +83,7 @@ class LocationTestCase(unittest.TestCase):
         # 5) HTTPS scheme
         uriStrings.extend(
             (
-                ("https://www.lsst.org/rootDir/", True, False, "https", "www.lsst.org", "/rootDir/"),
+                ("https://www.lsst.org/rootDir/", True, None, "https", "www.lsst.org", "/rootDir/"),
                 ("https://www.lsst.org/rootDir", True, True, "https", "www.lsst.org", "/rootDir/"),
                 (
                     "https://www.lsst.org/rootDir/relative/file.ext",

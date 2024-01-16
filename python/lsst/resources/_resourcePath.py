@@ -1129,6 +1129,13 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         # URI is dir-like if explicitly stated or if it ends on a separator
         endsOnSep = parsed.path.endswith(sep)
+
+        if forceDirectory is False and endsOnSep:
+            raise ValueError(
+                f"URI {parsed.geturl()} ends with {sep} but "
+                "forceDirectory parameter declares it to be a file."
+            )
+
         if forceDirectory or endsOnSep:
             dirLike = True
             # only add the separator if it's not already there

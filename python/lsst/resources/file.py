@@ -428,6 +428,13 @@ class FileResourcePath(ResourcePath):
         # to not do tilde expansion.
         sep = posixpath.sep
 
+        # Consistency check.
+        if forceDirectory is False and parsed.path.endswith(sep):
+            raise ValueError(
+                f"URI {parsed.geturl()} ends with {sep} but "
+                "forceDirectory parameter declares it to be a file."
+            )
+
         # For local file system we can explicitly check to see if this
         # really is a directory. The URI might point to a location that
         # does not exists yet but all that matters is if it is a directory

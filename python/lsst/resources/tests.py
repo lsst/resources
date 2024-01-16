@@ -229,6 +229,10 @@ class GenericTestCase(_GenericTestCase):
         with self.assertRaises(RuntimeError):
             ResourcePath(file, forceDirectory=True)
 
+        dir = self._make_uri("a/b/c/")
+        with self.assertRaises(ValueError):
+            ResourcePath(dir, forceDirectory=False)
+
         with self.assertRaises(NotImplementedError):
             ResourcePath("unknown://netloc")
 
@@ -441,6 +445,9 @@ class GenericTestCase(_GenericTestCase):
         qgraph = ResourcePath("test.qgraph")  # Absolute URI
         joined = ResourcePath(f"{self.root}hsc/payload/").join(qgraph)
         self.assertEqual(joined, qgraph)
+
+        with self.assertRaises(ValueError):
+            root.join("dir/", forceDirectory=False)
 
     def test_quoting(self) -> None:
         """Check that quoting works."""
