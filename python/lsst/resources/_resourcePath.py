@@ -80,7 +80,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     forceDirectory : `bool` or `None`, optional
         If `True` forces the URI to end with a separator. If `False` the URI
         is interpreted as a file-like entity. Default, `None`, is that the
-        given URI is interpreted as a directory if there is a trailing `/` or
+        given URI is interpreted as a directory if there is a trailing ``/`` or
         for some schemes the system will check to see if it is a file or a
         directory.
     isTemporary : `bool`, optional
@@ -1180,7 +1180,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         always done regardless of the ``forceAbsolute`` parameter.
 
         AWS S3 differentiates between keys with trailing POSIX separators (i.e
-        `/dir` and `/dir/`) whereas POSIX does not necessarily.
+        ``/dir`` and ``/dir/``) whereas POSIX does not necessarily.
 
         Scheme-less paths are normalized.
         """
