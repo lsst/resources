@@ -16,6 +16,7 @@ __all__ = ("SchemelessResourcePath",)
 import logging
 import os
 import os.path
+import stat
 import urllib.parse
 from pathlib import PurePath
 
@@ -85,10 +86,24 @@ class SchemelessResourcePath(FileResourcePath):
 
         Notes
         -----
-        Always returns the result relative to the current directory unless
-        it has been pre-declared that this URI refers to a directory.
+        If the URI is not known to refer to a file or a directory the file
+        system will be checked. The relative path will be resolved using
+        the current working directory. If the path can not be found, `False`
+        will be returned (matching `os.path.isdir` semantics) but the result
+        will not be stored in ``dirLike`` and will be checked again on request
+        in case the working directory has been updated.
         """
-        return self.dirLike or os.path.isdir(self.ospath)
+        if self.dirLike is None:
+            try:
+                status = os.stat(self.ospath)
+            except FileNotFoundError:
+                # Do not update dirLike flag.
+                return False
+
+            # Do not cache. We do not know if this really refers to a file or
+            # not and changing directory might change the answer.
+            return stat.S_ISDIR(status.st_mode)
+        return self.dirLike
 
     def relative_to(self, other: ResourcePath) -> str | None:
         """Return the relative path from this URI to the other URI.
