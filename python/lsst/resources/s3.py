@@ -16,11 +16,13 @@ __all__ = ("S3ResourcePath",)
 import contextlib
 import io
 import logging
+import os
 import re
 import sys
 import tempfile
 import threading
 from collections.abc import Iterable, Iterator
+from functools import cache, cached_property
 from typing import IO, TYPE_CHECKING, cast
 
 from botocore.exceptions import ClientError
@@ -39,6 +41,11 @@ from .s3utils import (
     retryable_io_errors,
     s3CheckFileExists,
 )
+
+try:
+    from boto3.s3.transfer import TransferConfig  # type: ignore
+except ImportError:
+    TransferConfig = None
 
 if TYPE_CHECKING:
     with contextlib.suppress(ImportError):
@@ -115,8 +122,72 @@ def _translate_client_error(err: ClientError) -> None:
         raise FileNotFoundError("Resource not found: {self}")
 
 
+@cache
+def _parse_string_to_maybe_bool(maybe_bool_str: str) -> bool | None:
+    """Map a string to either a boolean value or None.
+
+    Parameters
+    ----------
+    maybe_bool_str : `str`
+        The value to parse
+
+    Results
+    -------
+    maybe_bool : `bool` or `None`
+        The parsed value.
+    """
+    if maybe_bool_str.lower() in ["t", "true", "yes", "y", "1"]:
+        maybe_bool = True
+    elif maybe_bool_str.lower() in ["f", "false", "no", "n", "0"]:
+        maybe_bool = False
+    elif maybe_bool_str.lower() in ["none", ""]:
+        maybe_bool = None
+    else:
+        raise ValueError(f'Value of "{maybe_bool_str}" is not True, False, or None.')
+
+    return maybe_bool
+
+
 class S3ResourcePath(ResourcePath):
-    """S3 URI resource path implementation class."""
+    """S3 URI resource path implementation class.
+
+    Notes
+    -----
+    In order to configure the behavior of instances of this class, the
+    environment variable is inspected:
+
+    - LSST_S3_USE_THREADS: May be True, False, or None. Sets whether threading
+    is used for downloads, with a value of None defaulting to boto's default
+    value. Users may wish to set it to False when the downloads will be started
+    within threads other than python's main thread.
+    """
+
+    use_threads: bool | None = None
+    """Explicitly turn on or off threading in use of boto's download_fileobj.
+    Setting this to None results in boto's default behavior."""
+
+    @cached_property
+    def _environ_use_threads(self) -> bool | None:
+        try:
+            use_threads_str = os.environ["LSST_S3_USE_THREADS"]
+        except KeyError:
+            use_threads_str = "None"
+
+        use_threads = _parse_string_to_maybe_bool(use_threads_str)
+
+        return use_threads
+
+    @property
+    def _transfer_config(self) -> TransferConfig:
+        if self.use_threads is None:
+            self.use_threads = self._environ_use_threads
+
+        if self.use_threads is None:
+            transfer_config = TransferConfig()
+        else:
+            transfer_config = TransferConfig(use_threads=self.use_threads)
+
+        return transfer_config
 
     @property
     def client(self) -> boto3.client:
@@ -207,7 +278,13 @@ class S3ResourcePath(ResourcePath):
         the temporary file.
         """
         try:
-            self.client.download_fileobj(self.netloc, self.relativeToPathRoot, local_file, Callback=progress)
+            self.client.download_fileobj(
+                self.netloc,
+                self.relativeToPathRoot,
+                local_file,
+                Callback=progress,
+                Config=self._transfer_config,
+            )
         except (
             self.client.exceptions.NoSuchKey,
             self.client.exceptions.NoSuchBucket,
