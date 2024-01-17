@@ -70,6 +70,29 @@ class SchemelessTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             ResourcePath(relative, root=ResourcePath("resource://lsst.resources/something.txt"))
 
+    def test_isdir(self):
+        """Test that isdir() can check the file system."""
+        # Get the relative path for the current test file.
+        file = ResourcePath(__file__)
+        cwd = ResourcePath(".")
+        f = ResourcePath(file.relative_to(cwd), forceAbsolute=False)
+
+        self.assertFalse(f.scheme)
+        self.assertTrue(f.exists())
+        self.assertIsNone(f.dirLike)
+        self.assertFalse(f.isdir())
+
+        # Check that the dirLike has not been updated since we know that
+        # cwd could change so caching is bad.
+        self.assertIsNone(f.dirLike)
+
+        # Check that a file that does not exist does not update the dirLike
+        # flag.
+        f = ResourcePath("a/b/c_not_here.txt", forceAbsolute=False)
+        self.assertFalse(f.scheme)
+        self.assertFalse(f.isdir())
+        self.assertIsNone(f.dirLike)
+
 
 if __name__ == "__main__":
     unittest.main()
