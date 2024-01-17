@@ -44,7 +44,7 @@ from requests.auth import AuthBase
 from urllib3.util.retry import Retry
 
 from ._resourceHandles import ResourceHandleProtocol
-from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle
+from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle, parse_content_range_header
 from ._resourcePath import ResourcePath
 
 if TYPE_CHECKING:
@@ -828,12 +828,16 @@ class HttpResourcePath(ResourcePath):
                 # Content-Length is the length of the Range and not the full
                 # length of the file, so we have to parse Content-Range
                 # instead.
-                content_range = resp.headers.get("Content-Range")
-                if not content_range:
+                content_range_header = resp.headers.get("Content-Range")
+                if content_range_header is None:
                     raise ValueError(
                         f"Response to GET request to {self} did not contain 'Content-Range' header"
                     )
-                return _get_size_from_content_range_header(content_range)
+                content_range = parse_content_range_header(content_range_header)
+                size = content_range.total
+                if size is None:
+                    raise ValueError(f"Content-Range header for {self} did not include a total file size")
+                return size
 
             elif resp.status_code == requests.codes.not_found:
                 raise FileNotFoundError(
@@ -1766,23 +1770,3 @@ class DavProperty:
     @property
     def href(self) -> str:
         return self._href
-
-
-def _get_size_from_content_range_header(header: str) -> int:
-    """Parse an HTTP 'Content-Range' header to determine the total file size.
-    Returns the size, or throws `ValueError` if the size can not be
-    determined.
-    """
-    # The following three formats are allowed for Content-Range, where "<size>"
-    # is the total file size:
-    # Content-Range: <unit> <range-start>-<range-end>/<size>
-    # Content-Range: <unit> */<size>
-    # Content-Range: <unit> <range-start>-<range-end>/*
-    #
-    # Only the first two cases are handled by this regex.
-    # The last case with a '*' for the size is considered an error, because it
-    # means the size is unknown.
-    match = re.match(r"^\s*bytes\s+(?:\*|(?:\d+-\d+))/(\d+)", header)
-    if match is None:
-        raise ValueError(f"Content-Range header in unexpected format: '{header}'")
-    return int(match.group(1))

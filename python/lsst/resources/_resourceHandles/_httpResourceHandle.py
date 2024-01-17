@@ -14,9 +14,10 @@ from __future__ import annotations
 __all__ = ("HttpReadResourceHandle",)
 
 import io
+import re
 from collections.abc import Callable, Iterable
 from logging import Logger
-from typing import AnyStr
+from typing import AnyStr, NamedTuple
 
 import requests
 from lsst.utils.timer import time_this
@@ -203,17 +204,13 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         # in the file and also the current position we have got to in the
         # server.
         if "Content-Range" in resp.headers:
-            content_range = resp.headers["Content-Range"]
-            units, range_string = content_range.split(" ")
-            if units == "bytes":
-                range, total = range_string.split("/")
-                if "-" in range:
-                    _, end = range.split("-")
-                    end_pos = int(end)
-                    if total != "*" and end_pos >= int(total) - 1:
-                        self._eof = True
-            else:
-                self._log.warning("Requested byte range from server but instead got: %s", content_range)
+            content_range = parse_content_range_header(resp.headers["Content-Range"])
+            if (
+                content_range.total is not None
+                and content_range.range_end is not None
+                and content_range.range_end >= content_range.total - 1
+            ):
+                self._eof = True
 
         # Try to guess that we overran the end. This will not help if we
         # read exactly the number of bytes to get us to the end and so we
@@ -223,3 +220,60 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
         self._current_position += len_content
         return resp.content
+
+
+class ContentRange(NamedTuple):
+    """Represents the data in an HTTP Content-Range header."""
+
+    range_start: int | None
+    """First byte of the zero-indexed, inclusive range returned by this
+    response.  `None` if the range was not available in the header.
+    """
+    range_end: int | None
+    """Last byte of the zero-indexed, inclusive range returned by this
+    response. `None` if the range was not available in the header.
+    """
+    total: int | None
+    """Total size of the file in bytes. `None` if the file size was not
+    available in the header.
+    """
+
+
+def parse_content_range_header(header: str) -> ContentRange:
+    """Parse an HTTP 'Content-Range' header.
+
+    Parameters
+    ----------
+    header : `str`
+        Value of an HTTP Content-Range header to be parsed.
+
+    Returns
+    -------
+    content_range : `ContentRange`
+        The byte range included in the response and the total file size.
+
+    Raises
+    ------
+    ValueError
+        If the header was not in the expected format.
+    """
+    # There are three possible formats for Content-Range. All of them start
+    # with optional whitespace and a unit, which for our purposes should always
+    # be "bytes".
+    prefix = r"^\s*bytes\s+"
+
+    # Content-Range: <unit> <range-start>-<range-end>/<size>
+    if (case1 := re.match(prefix + r"(\d+)-(\d+)/(\d+)", header)) is not None:
+        return ContentRange(
+            range_start=int(case1.group(1)), range_end=int(case1.group(2)), total=int(case1.group(3))
+        )
+
+    # Content-Range: <unit> <range-start>-<range-end>/*
+    if (case2 := re.match(prefix + r"(\d+)-(\d+)/\*", header)) is not None:
+        return ContentRange(range_start=int(case2.group(1)), range_end=int(case2.group(2)), total=None)
+
+    # Content-Range: <unit> */<size>
+    if (case3 := re.match(prefix + r"\*/(\d+)", header)) is not None:
+        return ContentRange(range_start=None, range_end=None, total=int(case3.group(1)))
+
+    raise ValueError(f"Content-Range header in unexpected format: '{header}'")
