@@ -36,7 +36,10 @@ import lsst.resources
 import requests
 import responses
 from lsst.resources import ResourcePath
-from lsst.resources._resourceHandles._httpResourceHandle import HttpReadResourceHandle
+from lsst.resources._resourceHandles._httpResourceHandle import (
+    HttpReadResourceHandle,
+    parse_content_range_header,
+)
 from lsst.resources.http import (
     BearerTokenAuth,
     HttpResourcePathConfig,
@@ -878,6 +881,47 @@ class SessionStoreTestCase(unittest.TestCase):
         # root URIs (including port numbers) are equal
         for u in (f"{root_url_with_port}", f"{root_url_with_port}/path/to/file"):
             self.assertEqual(session, store.get(ResourcePath(u)))
+
+
+class TestContentRange(unittest.TestCase):
+    """Test parsing of Content-Range header."""
+
+    def test_full_data(self):
+        parsed = parse_content_range_header("bytes 123-2555/12345")
+        self.assertEqual(parsed.range_start, 123)
+        self.assertEqual(parsed.range_end, 2555)
+        self.assertEqual(parsed.total, 12345)
+
+        parsed = parse_content_range_header(" bytes    0-0/5  ")
+        self.assertEqual(parsed.range_start, 0)
+        self.assertEqual(parsed.range_end, 0)
+        self.assertEqual(parsed.total, 5)
+
+    def test_empty_total(self):
+        parsed = parse_content_range_header("bytes 123-2555/*")
+        self.assertEqual(parsed.range_start, 123)
+        self.assertEqual(parsed.range_end, 2555)
+        self.assertIsNone(parsed.total)
+
+        parsed = parse_content_range_header(" bytes    0-0/*  ")
+        self.assertEqual(parsed.range_start, 0)
+        self.assertEqual(parsed.range_end, 0)
+        self.assertIsNone(parsed.total)
+
+    def test_empty_range(self):
+        parsed = parse_content_range_header("bytes */12345")
+        self.assertIsNone(parsed.range_start)
+        self.assertIsNone(parsed.range_end)
+        self.assertEqual(parsed.total, 12345)
+
+        parsed = parse_content_range_header(" bytes    */5  ")
+        self.assertIsNone(parsed.range_start)
+        self.assertIsNone(parsed.range_end)
+        self.assertEqual(parsed.total, 5)
+
+    def test_invalid_input(self):
+        with self.assertRaises(ValueError):
+            parse_content_range_header("pages 0-10/12")
 
 
 if __name__ == "__main__":
