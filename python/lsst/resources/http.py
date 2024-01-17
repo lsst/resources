@@ -34,6 +34,8 @@ try:
 except ImportError:
     import xml.etree.ElementTree as eTree
 
+from urllib.parse import parse_qs
+
 import requests
 from astropy import units as u
 from lsst.utils.timer import time_this
@@ -792,10 +794,8 @@ class HttpResourcePath(ResourcePath):
             # request, even if the behavior for such a request against a
             # directory is not specified, so it depends on the server
             # implementation.
-            resp = self.metadata_session.head(
-                self.geturl(), timeout=self._config.timeout, allow_redirects=True, stream=False
-            )
-            return resp.status_code == requests.codes.ok  # 200
+            resp = self._head_non_webdav_url()
+            return self._is_successful_non_webdav_head_request(resp)
 
         # The remote endpoint is a webDAV server: send a PROPFIND request
         # to determine if it exists.
@@ -851,6 +851,49 @@ class HttpResourcePath(ResourcePath):
             raise FileNotFoundError(
                 f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
             )
+
+    def _head_non_webdav_url(self) -> requests.Response:
+        """Return a response from a HTTP HEAD request for a non-WebDAV HTTP
+        URL.
+
+        Emulates HEAD using a 0-byte GET for presigned S3 URLs.
+        """
+        if self._looks_like_presigned_s3_url():
+            # Presigned S3 URLs are signed for a single method only, so you
+            # can't call HEAD on a URL signed for GET.   However, S3 does
+            # support Range requests, so you can ask for a 0-byte range with
+            # GET for a similar effect to HEAD.
+            #
+            # Note that some headers differ between a true HEAD request and the
+            # response returned by this GET, e.g. Content-Length will always be
+            # 0, and the status code is 206 instead of 200.
+            return self.metadata_session.get(
+                self.geturl(),
+                timeout=self._config.timeout,
+                allow_redirects=True,
+                stream=False,
+                headers={"Range": "bytes=0-0"},
+            )
+        else:
+            return self.metadata_session.head(
+                self.geturl(), timeout=self._config.timeout, allow_redirects=True, stream=False
+            )
+
+    def _is_successful_non_webdav_head_request(self, resp: requests.Response) -> bool:
+        """Return `True` if the status code in the response indicates a
+        successful HEAD or GET request.
+        """
+        return resp.status_code in (
+            requests.codes.ok,  # 200, from a normal HEAD or GET request
+            requests.codes.partial_content,  # 206, returned from a GET request with a Range header.
+        )
+
+    def _looks_like_presigned_s3_url(self) -> bool:
+        """Return `True` if this ResourcePath's URL is likely to be a presigned
+        S3 URL.
+        """
+        query_params = parse_qs(self._uri.query)
+        return "Signature" in query_params and "Expires" in query_params
 
     def mkdir(self) -> None:
         """Create the directory resource if it does not already exist."""

@@ -156,8 +156,17 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # this test
         test_data = b"test123"
         ResourcePath(put_url).write(test_data)
-        retrieved = ResourcePath(get_url).read()
+        get_path = ResourcePath(get_url)
+        retrieved = get_path.read()
         self.assertEqual(retrieved, test_data)
+        self.assertTrue(get_path.exists())
+
+    def test_nonexistent_presigned_url(self):
+        s3_path = self.root_uri.join("this-is-a-missing-file.txt")
+        get_url = s3_path.generate_presigned_get_url(expiration_time_seconds=3600)
+        # Check the HttpResourcePath implementation for presigned S3 urls.
+        # Nothing has been uploaded to this URL, so it shouldn't exist.
+        self.assertFalse(ResourcePath(get_url).exists())
 
     def _check_presigned_url(self, url: str, expiration_time_seconds: int):
         parsed = urlparse(url)
