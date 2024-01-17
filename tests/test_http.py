@@ -41,6 +41,7 @@ from lsst.resources.http import (
     BearerTokenAuth,
     HttpResourcePathConfig,
     SessionStore,
+    _get_size_from_content_range_header,
     _is_protected,
     _is_webdav_endpoint,
 )
@@ -878,6 +879,19 @@ class SessionStoreTestCase(unittest.TestCase):
         # root URIs (including port numbers) are equal
         for u in (f"{root_url_with_port}", f"{root_url_with_port}/path/to/file"):
             self.assertEqual(session, store.get(ResourcePath(u)))
+
+
+class TestContentRange(unittest.TestCase):
+    """Test parsing of Content-Range header."""
+
+    def test_content_range_header_parsing(self):
+        self.assertEqual(_get_size_from_content_range_header("bytes 123-2555/12345"), 12345)
+        self.assertEqual(_get_size_from_content_range_header(" bytes    0-0/23456  "), 23456)
+        self.assertEqual(_get_size_from_content_range_header("bytes */5"), 5)
+        with self.assertRaises(ValueError):
+            _get_size_from_content_range_header("bytes 0-10/*")
+        with self.assertRaises(ValueError):
+            _get_size_from_content_range_header("pages 0-10/12")
 
 
 if __name__ == "__main__":

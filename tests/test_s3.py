@@ -160,6 +160,7 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         retrieved = get_path.read()
         self.assertEqual(retrieved, test_data)
         self.assertTrue(get_path.exists())
+        self.assertEqual(get_path.size(), len(test_data))
 
     def test_nonexistent_presigned_url(self):
         s3_path = self.root_uri.join("this-is-a-missing-file.txt")

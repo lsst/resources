@@ -814,9 +814,7 @@ class HttpResourcePath(ResourcePath):
         if not self.is_webdav_endpoint:
             # The remote is a plain HTTP server. Send a HEAD request to
             # retrieve the size of the resource.
-            resp = self.metadata_session.head(
-                self.geturl(), timeout=self._config.timeout, allow_redirects=True, stream=False
-            )
+            resp = self._head_non_webdav_url()
             if resp.status_code == requests.codes.ok:  # 200
                 if "Content-Length" in resp.headers:
                     return int(resp.headers["Content-Length"])
@@ -824,6 +822,19 @@ class HttpResourcePath(ResourcePath):
                     raise ValueError(
                         f"Response to HEAD request to {self} does not contain 'Content-Length' header"
                     )
+            elif resp.status_code == requests.codes.partial_content:
+                # 206, returned from a GET request with a Range header (used to
+                # emulate HEAD for presigned S3 URLs).  In this case
+                # Content-Length is the length of the Range and not the full
+                # length of the file, so we have to parse Content-Range
+                # instead.
+                content_range = resp.headers.get("Content-Range")
+                if not content_range:
+                    raise ValueError(
+                        f"Response to GET request to {self} did not contain 'Content-Range' header"
+                    )
+                return _get_size_from_content_range_header(content_range)
+
             elif resp.status_code == requests.codes.not_found:
                 raise FileNotFoundError(
                     f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
@@ -1755,3 +1766,23 @@ class DavProperty:
     @property
     def href(self) -> str:
         return self._href
+
+
+def _get_size_from_content_range_header(header: str) -> int:
+    """Parse an HTTP 'Content-Range' header to determine the total file size.
+    Returns the size, or throws `ValueError` if the size can not be
+    determined.
+    """
+    # The following three formats are allowed for Content-Range, where "<size>"
+    # is the total file size:
+    # Content-Range: <unit> <range-start>-<range-end>/<size>
+    # Content-Range: <unit> */<size>
+    # Content-Range: <unit> <range-start>-<range-end>/*
+    #
+    # Only the first two cases are handled by this regex.
+    # The last case with a '*' for the size is considered an error, because it
+    # means the size is unknown.
+    match = re.match(r"^\s*bytes\s+(?:\*|(?:\d+-\d+))/(\d+)", header)
+    if match is None:
+        raise ValueError(f"Content-Range header in unexpected format: '{header}'")
+    return int(match.group(1))
