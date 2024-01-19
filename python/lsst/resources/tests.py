@@ -435,7 +435,11 @@ class GenericTestCase(_GenericTestCase):
 
         other = ResourcePath(f"{self.root}test.txt")
         self.assertEqual(root.join(other), other)
-        self.assertEqual(other.join("b/new.txt").geturl(), f"{self.root}b/new.txt")
+        self.assertEqual(other.join("b/new.txt").geturl(), f"{self.root}test.txt/b/new.txt")
+
+        other = ResourcePath(f"{self.root}text.txt", forceDirectory=False)
+        with self.assertRaises(ValueError):
+            other.join("b/new.text")
 
         joined = ResourcePath(f"{self.root}hsc/payload/").join(
             ResourcePath("test.qgraph", forceAbsolute=False)

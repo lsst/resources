@@ -64,11 +64,14 @@ class SchemelessTestCase(unittest.TestCase):
         file_uri = ResourcePath("./relati#ve/file.yaml#a,v", root=prefix_uri)
         self.assertEqual(str(file_uri), f"file://{prefix_uri.ospath}relati%23ve/file.yaml#a,v")
 
-        # For historical reasons a a root can not be anything other
-        # than a file. This does not really make sense in the general
-        # sense but can be implemented using uri.join().
+        # Can not have a root that refers to a file.
         with self.assertRaises(ValueError):
-            ResourcePath(relative, root=ResourcePath("resource://lsst.resources/something.txt"))
+            ResourcePath(
+                relative, root=ResourcePath("resource://lsst.resources/something.txt", forceDirectory=False)
+            )
+
+        with_root = ResourcePath(relative, root=ResourcePath("resource://lsst.resources/d/"))
+        self.assertEqual(with_root.geturl(), "resource://lsst.resources/d/a/b/c.txt")
 
     def test_isdir(self):
         """Test that isdir() can check the file system."""

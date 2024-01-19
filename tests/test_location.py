@@ -186,7 +186,7 @@ class LocationTestCase(unittest.TestCase):
         uri2 = uri.join("e/f/g.txt")
         self.assertEqual(str(uri2), "a/b/c/d/e/f/g.txt", f"Checking joined URI {uri} -> {uri2}")
 
-        uri = ResourcePath("a/b/c/d/old.txt", forceAbsolute=False)
+        uri = ResourcePath("a/b/c/d/", forceAbsolute=False)
         uri2 = uri.join("e/f/g.txt")
         self.assertEqual(str(uri2), "a/b/c/d/e/f/g.txt", f"Checking joined URI {uri} -> {uri2}")
 
@@ -198,7 +198,7 @@ class LocationTestCase(unittest.TestCase):
         uri2 = uri.join("newpath/newfile.txt")
         self.assertEqual(str(uri2), "s3://bucket/a/b/c/d/newpath/newfile.txt")
 
-        uri = ResourcePath("s3://bucket/a/b/c/d/old.txt")
+        uri = ResourcePath("s3://bucket/a/b/c/d/")
         uri2 = uri.join("newpath/newfile.txt")
         self.assertEqual(str(uri2), "s3://bucket/a/b/c/d/newpath/newfile.txt")
 

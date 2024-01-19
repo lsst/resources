@@ -244,7 +244,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                     and root_uri.scheme != "file"  # file scheme has different code path
                     and not parsed.path.startswith("/")  # Not already absolute path
                 ):
-                    if not root_uri.isdir():
+                    if root_uri.dirLike is False:
                         raise ValueError(
                             f"Root URI ({root}) was not a directory so can not be joined with"
                             f" path {parsed.path!r}"
@@ -649,24 +649,23 @@ class ResourcePath:  # numpydoc ignore=PR02
         Parameters
         ----------
         path : `str`, `ResourcePath`
-            Additional file components to append to the current URI. Assumed
-            to include a file at the end. Will be quoted depending on the
-            associated URI scheme. If the path looks like a URI with a scheme
-            referring to an absolute location, it will be returned
+            Additional file components to append to the current URI. Will be
+            quoted depending on the associated URI scheme. If the path looks
+            like a URI referring to an absolute location, it will be returned
             directly (matching the behavior of `os.path.join`). It can
             also be a `ResourcePath`.
         isTemporary : `bool`, optional
             Indicate that the resulting URI represents a temporary resource.
             Default is ``self.isTemporary``.
         forceDirectory : `bool` or `None`, optional
-            If `True` forces the URI to end with a separator, otherwise given
-            URI is interpreted as is.
+            If `True` forces the URI to end with a separator. If `False` the
+            resultant URI is declared to refer to a file. `None` indicates
+            that the file directory status is unknown.
 
         Returns
         -------
         new : `ResourcePath`
-            New URI with any file at the end replaced with the new path
-            components.
+            New URI with the path appended.
 
         Notes
         -----
@@ -680,17 +679,23 @@ class ResourcePath:  # numpydoc ignore=PR02
         scheme-less URI is not allowed for safety reasons as it may indicate
         a mistake in the calling code.
 
+        It is an error to attempt to join to something that is known to
+        refer to a file. Use `updatedFile` if the file is to be
+        replaced.
+
         Raises
         ------
         ValueError
-            Raised if the ``path`` is an absolute scheme-less URI. In that
-            situation it is unclear whether the intent is to return a
-            ``file`` URI or it was a mistake and a relative scheme-less URI
-            was meant.
+            Raised if the given path object refers to a directory but the
+            ``forceDirectory`` parameter insists the outcome should be a file,
+            and vice versa. Also raised if the URI being joined with is known
+            to refer to a file.
         RuntimeError
             Raised if this attempts to join a temporary URI to a non-temporary
             URI.
         """
+        if self.dirLike is False:
+            raise ValueError("Can not join a new path component to a file.")
         if isTemporary is None:
             isTemporary = self.isTemporary
         elif not isTemporary and self.isTemporary:
@@ -708,14 +713,9 @@ class ResourcePath:  # numpydoc ignore=PR02
             )
         forceDirectory = path_uri.dirLike
 
-        if path_uri.scheme:
-            # Check for scheme so can distinguish explicit URIs from
-            # absolute scheme-less URIs.
-            return path_uri
-
         if path_uri.isabs():
-            # Absolute scheme-less path.
-            raise ValueError(f"Can not join absolute scheme-less {path_uri!r} to another URI.")
+            # Absolute URI so return it directly.
+            return path_uri
 
         # If this was originally a ResourcePath extract the unquoted path from
         # it. Otherwise we use the string we were given to allow "#" to appear
@@ -723,14 +723,11 @@ class ResourcePath:  # numpydoc ignore=PR02
         if not isinstance(path, str):
             path = path_uri.unquoted_path
 
-        new = self.dirname()  # By definition a directory URI
-
-        # new should be asked about quoting, not self, since dirname can
-        # change the URI scheme for schemeless -> file
-        if new.quotePaths:
+        # Might need to quote the path.
+        if self.quotePaths:
             path = urllib.parse.quote(path)
 
-        newpath = self._pathModule.normpath(self._pathModule.join(new.path, path))
+        newpath = self._pathModule.normpath(self._pathModule.join(self.path, path))
 
         # normpath can strip trailing / so we force directory if the supplied
         # path ended with a /
@@ -739,7 +736,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             forceDirectory = True
         elif forceDirectory is False and has_dir_sep:
             raise ValueError("Path to join has trailing / but is being forced to be a file.")
-        return new.replace(
+        return self.replace(
             path=newpath,
             forceDirectory=forceDirectory,
             isTemporary=isTemporary,
