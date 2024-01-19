@@ -339,6 +339,7 @@ class GenericTestCase(_GenericTestCase):
         self.assertEqual(derived_parent, parent)
         self.assertTrue(derived_parent.isdir())
         self.assertEqual(child_file.parent().parent(), parent)
+        self.assertEqual(child_subdir.dirname(), child_subdir)
 
     def test_escapes(self) -> None:
         """Special characters in file paths."""

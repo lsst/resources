@@ -429,16 +429,21 @@ class ResourcePath:  # numpydoc ignore=PR02
             ResourcePath rules.
         tail : `str`
             Last path component. Tail will be empty if path ends on a
-            separator. Tail will never contain separators. It will be
-            unquoted.
+            separator or if the URI is known to be associated with a directory.
+            Tail will never contain separators. It will be unquoted.
 
         Notes
         -----
         Equivalent to `os.path.split` where head preserves the URI
-        components.
+        components. In some cases this method can result in a file system
+        check to verify whether the URI is a directory or not (only if
+        ``forceDirectory`` was `None` during construction). For a scheme-less
+        URI this can mean that the result might change depending on current
+        working directory.
         """
         if self.isdir():
-            # This is a directory so must return itself and the empty string.
+            # This is known to be a directory so must return itself and
+            # the empty string.
             return self, ""
 
         head, tail = self._pathModule.split(self.path)
@@ -447,7 +452,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         # The file part should never include quoted metacharacters
         tail = urllib.parse.unquote(tail)
 
-        # Schemeless is special in that it can be a relative path
+        # Schemeless is special in that it can be a relative path.
         # We need to ensure that it stays that way. All other URIs will
         # be absolute already.
         forceAbsolute = self.isabs()
@@ -482,7 +487,9 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Notes
         -----
-        Equivalent of `os.path.dirname`.
+        Equivalent of `os.path.dirname`. If this is a directory URI it will
+        be returned unchanged. If the parent directory is always required
+        use `parent`.
         """
         return self.split()[0]
 
@@ -497,12 +504,16 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Notes
         -----
-        For a file-like URI this will be the same as calling `dirname()`.
+        For a file-like URI this will be the same as calling `dirname`.
+        For a directory-like URI this will always return the parent directory
+        whereas `dirname()` will return the original URI. This is consistent
+        with `os.path.dirname` compared to the `pathlib.Path` property
+        ``parent``.
         """
-        # When self is file-like, return self.dirname()
-        if not self.isdir():
+        if self.dirLike is False:
+            # os.path.split() is slightly faster than calling Path().parent.
             return self.dirname()
-        # When self is dir-like, return its parent directory,
+        # When self is dir-like, returns its parent directory,
         # regardless of the presence of a trailing separator
         originalPath = self._pathLib(self.path)
         parentPath = originalPath.parent
