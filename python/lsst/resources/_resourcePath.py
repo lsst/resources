@@ -211,23 +211,30 @@ class ResourcePath:  # numpydoc ignore=PR02
             # We invoke __new__ again with str(self) to add a scheme for
             # forceAbsolute, but for the others that seems more likely to paper
             # over logic errors than do something useful, so we just raise.
-            if forceDirectory and not uri.isdir():
+            if forceDirectory is not None and uri.dirLike is not None and forceDirectory is not uri.dirLike:
+                # Can not force a file-like URI to become a dir-like one or
+                # vice versa.
                 raise RuntimeError(
-                    f"{uri} is already a file-like ResourcePath; cannot force it to directory."
+                    f"{uri} can not be forced to change directory vs file state when previously declared."
                 )
             if isTemporary is not None and isTemporary is not uri.isTemporary:
                 raise RuntimeError(
                     f"{uri} is already a {'temporary' if uri.isTemporary else 'permanent'} "
                     f"ResourcePath; cannot make it {'temporary' if isTemporary else 'permanent'}."
                 )
+
             if forceAbsolute and not uri.scheme:
+                # Create new absolute from relative.
                 return ResourcePath(
                     str(uri),
                     root=root,
-                    forceAbsolute=True,
-                    forceDirectory=uri.dirLike,
+                    forceAbsolute=forceAbsolute,
+                    forceDirectory=forceDirectory or uri.dirLike,
                     isTemporary=uri.isTemporary,
                 )
+            elif forceDirectory is not None and uri.dirLike is None:
+                # Clone but with a new dirLike status.
+                return uri.replace(forceDirectory=forceDirectory)
             return uri
         else:
             raise ValueError(

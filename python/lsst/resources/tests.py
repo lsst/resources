@@ -225,9 +225,13 @@ class GenericTestCase(_GenericTestCase):
         with self.assertRaises(RuntimeError):
             ResourcePath(self.root_uri, isTemporary=True)
 
-        file = self.root_uri.join("file.txt")
+        file = self.root_uri.join("file.txt", forceDirectory=False)
         with self.assertRaises(RuntimeError):
             ResourcePath(file, forceDirectory=True)
+
+        file = self.root_uri.join("file.txt")
+        file_as_dir = ResourcePath(file, forceDirectory=True)
+        self.assertTrue(file_as_dir.isdir())
 
         dir = self._make_uri("a/b/c/")
         with self.assertRaises(ValueError):
