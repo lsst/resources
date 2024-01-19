@@ -12,6 +12,13 @@
 
 """ResourcePath is a package for abstracting access to local or remote files."""
 
+__all__ = (
+    "ResourceHandleProtocol",
+    "ResourcePath",
+    "ResourcePathExpression",
+)
+
+
 from ._resourceHandles import ResourceHandleProtocol
 
 # Should only expose ResourcePath and its input type alias
