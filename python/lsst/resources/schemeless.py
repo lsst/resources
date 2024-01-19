@@ -134,24 +134,14 @@ class SchemelessResourcePath(FileResourcePath):
         # to convert from scheme-less to absolute URI.
         child = None
 
-        if not self.isabs() and not other.isabs():
+        if not other.isabs():
             # Both are schemeless relative. Use parent implementation
             # rather than trying to convert both to file: first since schemes
             # match.
             pass
-        elif not self.isabs() and other.isabs():
+        elif other.isabs():
             # Append child to other. This can account for .. in child path.
             child = other.join(self.path)
-        elif self.isabs() and not other.isabs():
-            # Finding common paths is not possible if the parent is
-            # relative and the child is absolute.
-            return None
-        elif self.isabs() and other.isabs():
-            # Both are absolute so convert schemeless to file
-            # if necessary.
-            child = self.abspath()
-            if not other.scheme:
-                other = other.abspath()
         else:
             raise RuntimeError(f"Unexpected combination of {child}.relative_to({other}).")
 
