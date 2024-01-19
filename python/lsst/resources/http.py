@@ -823,11 +823,11 @@ class HttpResourcePath(ResourcePath):
                         f"Response to HEAD request to {self} does not contain 'Content-Length' header"
                     )
             elif resp.status_code == requests.codes.partial_content:
-                # 206, returned from a GET request with a Range header (used to
-                # emulate HEAD for presigned S3 URLs).  In this case
-                # Content-Length is the length of the Range and not the full
-                # length of the file, so we have to parse Content-Range
-                # instead.
+                # 206 Partial Content, returned from a GET request with a Range
+                # header (used to emulate HEAD for presigned S3 URLs).
+                # In this case Content-Length is the length of the Range and
+                # not the full length of the file, so we have to parse
+                # Content-Range instead.
                 content_range_header = resp.headers.get("Content-Range")
                 if content_range_header is None:
                     raise ValueError(
@@ -838,7 +838,16 @@ class HttpResourcePath(ResourcePath):
                 if size is None:
                     raise ValueError(f"Content-Range header for {self} did not include a total file size")
                 return size
-
+            elif resp.status_code == requests.codes.range_not_satisfiable:
+                # 416 Range Not Satisfiable, which can occur on a GET for a 0
+                # byte file since we asked for 1 byte Range which is longer
+                # than the file.
+                #
+                # Servers are supposed to include a Content-Range header in
+                # this case, but Google's S3 implementation doesn't.  Any
+                # non-zero file size should have been handled by the 206 and
+                # 200 cases above, so assume we have a zero here.
+                return 0
             elif resp.status_code == requests.codes.not_found:
                 raise FileNotFoundError(
                     f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
@@ -871,17 +880,17 @@ class HttpResourcePath(ResourcePath):
         """Return a response from a HTTP HEAD request for a non-WebDAV HTTP
         URL.
 
-        Emulates HEAD using a 0-byte GET for presigned S3 URLs.
+        Emulates HEAD using a 1-byte GET for presigned S3 URLs.
         """
         if self._looks_like_presigned_s3_url():
             # Presigned S3 URLs are signed for a single method only, so you
             # can't call HEAD on a URL signed for GET.   However, S3 does
-            # support Range requests, so you can ask for a 0-byte range with
+            # support Range requests, so you can ask for a 1-byte range with
             # GET for a similar effect to HEAD.
             #
             # Note that some headers differ between a true HEAD request and the
             # response returned by this GET, e.g. Content-Length will always be
-            # 0, and the status code is 206 instead of 200.
+            # 1, and the status code is 206 instead of 200.
             return self.metadata_session.get(
                 self.geturl(),
                 timeout=self._config.timeout,
@@ -896,11 +905,14 @@ class HttpResourcePath(ResourcePath):
 
     def _is_successful_non_webdav_head_request(self, resp: requests.Response) -> bool:
         """Return `True` if the status code in the response indicates a
-        successful HEAD or GET request.
+        successful response to ``_head_non_webdav_url``.
         """
         return resp.status_code in (
             requests.codes.ok,  # 200, from a normal HEAD or GET request
             requests.codes.partial_content,  # 206, returned from a GET request with a Range header.
+            # 416, returned from a GET request with a 1-byte Range header that
+            # is longer than the 0-byte file.
+            requests.codes.range_not_satisfiable,
         )
 
     def _looks_like_presigned_s3_url(self) -> bool:

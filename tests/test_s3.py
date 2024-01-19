@@ -144,7 +144,16 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertEqual(result, 1024 * b"a")
 
     def test_url_signing(self):
-        s3_path = self.root_uri.join("url-signing-test.txt")
+        self._test_url_signing_case("url-signing-test.txt", b"test123")
+        # A zero byte presigned S3 HTTP URL is a weird edge case, because we
+        # emulate HEAD requests using a 1-byte GET.
+        self._test_url_signing_case("url-signing-test-zero-bytes.txt", b"")
+        # Should be the same as a normal case, but check it for paranoia since
+        # it's on the boundary of the read size.
+        self._test_url_signing_case("url-signing-test-one-byte.txt", b"t")
+
+    def _test_url_signing_case(self, filename: str, test_data: bytes):
+        s3_path = self.root_uri.join(filename)
 
         put_url = s3_path.generate_presigned_put_url(expiration_time_seconds=1800)
         self._check_presigned_url(put_url, 1800)
@@ -153,8 +162,7 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Moto monkeypatches the 'requests' library to mock access to presigned
         # URLs, so we are able to use HttpResourcePath to access the URLs in
-        # this test
-        test_data = b"test123"
+        # this test.
         ResourcePath(put_url).write(test_data)
         get_path = ResourcePath(get_url)
         retrieved = get_path.read()
@@ -165,9 +173,12 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     def test_nonexistent_presigned_url(self):
         s3_path = self.root_uri.join("this-is-a-missing-file.txt")
         get_url = s3_path.generate_presigned_get_url(expiration_time_seconds=3600)
+        get_path = ResourcePath(get_url)
         # Check the HttpResourcePath implementation for presigned S3 urls.
         # Nothing has been uploaded to this URL, so it shouldn't exist.
-        self.assertFalse(ResourcePath(get_url).exists())
+        self.assertFalse(get_path.exists())
+        with self.assertRaises(FileNotFoundError):
+            get_path.size()
 
     def _check_presigned_url(self, url: str, expiration_time_seconds: int):
         parsed = urlparse(url)
