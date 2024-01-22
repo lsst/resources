@@ -26,11 +26,13 @@ class SchemelessTestCase(unittest.TestCase):
         self.assertFalse(relative_uri.scheme)
         self.assertFalse(relative_uri.isabs())
         self.assertEqual(relative_uri.ospath, relative)
+        rel_to_abs = relative_uri.abspath()
 
         # Converted to a file URI.
         abs_uri = ResourcePath(relative, forceAbsolute=True)
         self.assertEqual(abs_uri.scheme, "file")
         self.assertTrue(abs_uri.isabs())
+        self.assertEqual(abs_uri, rel_to_abs)
 
         # An absolute path is converted to a file URI.
         file_uri = ResourcePath(abspath)

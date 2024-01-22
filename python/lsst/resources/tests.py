@@ -467,6 +467,14 @@ class GenericTestCase(_GenericTestCase):
         with self.assertRaises(ValueError):
             root.join("dir/", forceDirectory=False)
 
+        temp = root.join("dir2/", isTemporary=True)
+        with self.assertRaises(RuntimeError):
+            temp.join("test.txt", isTemporary=False)
+
+        rel = ResourcePath("new.txt", forceAbsolute=False, forceDirectory=False)
+        with self.assertRaises(RuntimeError):
+            root.join(rel, forceDirectory=True)
+
     def test_quoting(self) -> None:
         """Check that quoting works."""
         parent = ResourcePath(self._make_uri("rootdir"), forceDirectory=True)
