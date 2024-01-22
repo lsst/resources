@@ -566,21 +566,17 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Notes
         -----
-        Forces the ResourcePath.dirLike attribute to be false. The new file
-        path will be quoted if necessary.
+        Forces the ``ResourcePath.dirLike`` attribute to be false. The new file
+        path will be quoted if necessary. If the current URI is known to
+        refer to a directory, the new file will be joined to the current file.
+        It is recommended that this behavior no longer be used and a call
+        to `isdir` by the caller should be used to decide whether to join or
+        replace. In the future this method may be modified to always replace
+        the final element of the path.
         """
-        if self.isdir():
-            # This is a directory so we can append the new file directly.
-            return self.join(newfile)
-
-        if self.quotePaths:
-            newfile = urllib.parse.quote(newfile)
-        dir, _ = self._pathModule.split(self.path)
-        newpath = self._pathModule.join(dir, newfile)
-
-        updated = self.replace(path=newpath)
-        updated.dirLike = False
-        return updated
+        if self.dirLike:
+            return self.join(newfile, forceDirectory=False)
+        return self.parent().join(newfile, forceDirectory=False)
 
     def updatedExtension(self, ext: str | None) -> ResourcePath:
         """Return a new `ResourcePath` with updated file extension.
