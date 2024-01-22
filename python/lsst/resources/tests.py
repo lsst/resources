@@ -264,6 +264,15 @@ class GenericTestCase(_GenericTestCase):
         extension = extensionless.updatedExtension(".fits")
         self.assertEqual(extension.getExtension(), ".fits")
 
+        uri = ResourcePath("test.txt", forceAbsolute=False)
+        self.assertEqual(uri.getExtension(), ".txt")
+        uri = ResourcePath(self._make_uri("dir.1/dir.2/test.txt"), forceDirectory=False)
+        self.assertEqual(uri.getExtension(), ".txt")
+        uri = ResourcePath(self._make_uri("dir.1/dir.2/"), forceDirectory=True)
+        self.assertEqual(uri.getExtension(), ".2")
+        uri = ResourcePath(self._make_uri("dir.1/dir/"), forceDirectory=True)
+        self.assertEqual(uri.getExtension(), "")
+
     def test_relative(self) -> None:
         """Check that we can get subpaths back from two URIs."""
         parent = ResourcePath(self._make_uri(self.path1), forceDirectory=True)

@@ -619,7 +619,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         return self.replace(path=path + ext, forceDirectory=False)
 
     def getExtension(self) -> str:
-        """Return the file extension(s) associated with this URI path.
+        """Return the extension(s) associated with this URI path.
 
         Returns
         -------
@@ -629,19 +629,23 @@ class ResourcePath:  # numpydoc ignore=PR02
             file extension unless there is a special extension modifier
             indicating file compression, in which case the combined
             extension (e.g. ``.fits.gz``) will be returned.
-        """
-        if self.isdir():
-            return ""
 
+        Notes
+        -----
+        Does not distinguish between file and directory URIs when determining
+        a suffix. An extension is only determined from the final component
+        of the path.
+        """
         special = {".gz", ".bz2", ".xz", ".fz"}
 
         # path lib will ignore any "." in directories.
         # path lib works well:
         # extensions = self._pathLib(self.path).suffixes
         # But the constructor is slow. Therefore write our own implementation.
-        parts = self.path.split(self._pathModule.sep)
-        filename = parts[-1]
-        _, *extensions = filename.split(".")
+        # Strip trailing separator if present, do not care if this is a
+        # directory or not.
+        parts = self.path.rstrip("/").rsplit(self._pathModule.sep, 1)
+        _, *extensions = parts[-1].split(".")
 
         if not extensions:
             return ""

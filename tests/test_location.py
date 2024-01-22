@@ -226,7 +226,7 @@ class LocationTestCase(unittest.TestCase):
             ("flat_i_sim_1.4_blah.txt", ".txt"),
             ("flat_i_sim_1.4_blah.fits.fz", ".fits.fz"),
             ("flat_i_sim_1.4_blah.fits.txt", ".txt"),
-            ("s3://bucket/c/a.b/", ""),
+            ("s3://bucket/c/a.b/", ".b"),
             ("s3://bucket/c/a.b", ".b"),
             ("file://localhost/c/a.b.gz", ".b.gz"),
         )
