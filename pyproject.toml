@@ -33,22 +33,22 @@ requires-python = ">=3.11.0"
 [project.optional-dependencies]
 s3 = [
     "boto3 >= 1.13",
-    "moto >= 1.3",
     "backoff >= 1.10",
 ]
 https = [
     "astropy >= 4.0",
     "requests >= 2.26.0",
     "urllib3 >= 1.25.10",
-    "responses >= 0.12.0",
     "defusedxml",
 ]
 gs = [
     "google-cloud-storage",
 ]
 test = [
+    "moto >= 1.3",
     "pytest >= 3.2",
     "pytest-openfiles >= 0.5.0",
+    "responses >= 0.12.0",
 ]
 
 [tool.setuptools.packages.find]
