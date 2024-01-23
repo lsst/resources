@@ -16,6 +16,7 @@ __all__ = ("SchemelessResourcePath",)
 import logging
 import os
 import os.path
+import stat
 import urllib.parse
 from pathlib import PurePath
 
@@ -46,9 +47,10 @@ class SchemelessResourcePath(FileResourcePath):
         Returns
         -------
         isabs : `bool`
-            `True` if the file is absolute, `False` otherwise.
+            `True` if the file is absolute, `False` otherwise. Will always
+            be `False` for schemeless URIs.
         """
-        return os.path.isabs(self.ospath)
+        return False
 
     def abspath(self) -> ResourcePath:
         """Force a schemeless URI to a file URI.
@@ -70,8 +72,38 @@ class SchemelessResourcePath(FileResourcePath):
         # the options that will force the code below in _fixupPathUri to
         # return a file URI from a scheme-less one.
         return ResourcePath(
-            str(self), forceAbsolute=True, forceDirectory=self.isdir(), isTemporary=self.isTemporary
+            str(self), forceAbsolute=True, forceDirectory=self.dirLike, isTemporary=self.isTemporary
         )
+
+    def isdir(self) -> bool:
+        """Return whether this URI is a directory.
+
+        Returns
+        -------
+        isdir : `bool`
+            `True` if this URI is a directory or looks like a directory,
+            else `False`.
+
+        Notes
+        -----
+        If the URI is not known to refer to a file or a directory the file
+        system will be checked. The relative path will be resolved using
+        the current working directory. If the path can not be found, `False`
+        will be returned (matching `os.path.isdir` semantics) but the result
+        will not be stored in ``dirLike`` and will be checked again on request
+        in case the working directory has been updated.
+        """
+        if self.dirLike is None:
+            try:
+                status = os.stat(self.ospath)
+            except FileNotFoundError:
+                # Do not update dirLike flag.
+                return False
+
+            # Do not cache. We do not know if this really refers to a file or
+            # not and changing directory might change the answer.
+            return stat.S_ISDIR(status.st_mode)
+        return self.dirLike
 
     def relative_to(self, other: ResourcePath) -> str | None:
         """Return the relative path from this URI to the other URI.
@@ -102,24 +134,14 @@ class SchemelessResourcePath(FileResourcePath):
         # to convert from scheme-less to absolute URI.
         child = None
 
-        if not self.isabs() and not other.isabs():
+        if not other.isabs():
             # Both are schemeless relative. Use parent implementation
             # rather than trying to convert both to file: first since schemes
             # match.
             pass
-        elif not self.isabs() and other.isabs():
+        elif other.isabs():
             # Append child to other. This can account for .. in child path.
             child = other.join(self.path)
-        elif self.isabs() and not other.isabs():
-            # Finding common paths is not possible if the parent is
-            # relative and the child is absolute.
-            return None
-        elif self.isabs() and other.isabs():
-            # Both are absolute so convert schemeless to file
-            # if necessary.
-            child = self.abspath()
-            if not other.scheme:
-                other = other.abspath()
         else:
             raise RuntimeError(f"Unexpected combination of {child}.relative_to({other}).")
 
@@ -133,8 +155,8 @@ class SchemelessResourcePath(FileResourcePath):
         parsed: urllib.parse.ParseResult,
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
-        forceDirectory: bool = False,
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+        forceDirectory: bool | None = None,
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Fix up relative paths for local file system.
 
         Parameters
@@ -153,7 +175,9 @@ class SchemelessResourcePath(FileResourcePath):
             absolute path.
         forceDirectory : `bool`, optional
             If `True` forces the URI to end with a separator, otherwise given
-            URI is interpreted as is.
+            URI is interpreted as is. `False` can be used to indicate that
+            the URI is known to correspond to a file. `None` means that the
+            status is unknown.
 
         Returns
         -------
@@ -174,7 +198,7 @@ class SchemelessResourcePath(FileResourcePath):
         expanded.
         """
         # assume we are not dealing with a directory URI
-        dirLike = False
+        dirLike = forceDirectory
 
         # Replacement values for the URI
         replacements = {}
@@ -221,18 +245,18 @@ class SchemelessResourcePath(FileResourcePath):
         # normpath strips trailing "/" which makes it hard to keep
         # track of directory vs file when calling replaceFile
 
-        # For local file system we can explicitly check to see if this
-        # really is a directory. The URI might point to a location that
-        # does not exists yet but all that matters is if it is a directory
-        # then we make sure use that fact. No need to do the check if
-        # we are already being told.
-        if not forceDirectory and os.path.isdir(replacements["path"]):
-            forceDirectory = True
-
         # add the trailing separator only if explicitly required or
         # if it was stripped by normpath. Acknowledge that trailing
         # separator exists.
         endsOnSep = expandedPath.endswith(os.sep) and not replacements["path"].endswith(os.sep)
+
+        # Consistency check.
+        if forceDirectory is False and endsOnSep:
+            raise ValueError(
+                f"URI {parsed.geturl()} ends with {os.sep} but "
+                "forceDirectory parameter declares it to be a file."
+            )
+
         if forceDirectory or endsOnSep or dirLike:
             dirLike = True
             if not replacements["path"].endswith(os.sep):

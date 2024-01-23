@@ -28,13 +28,9 @@ else:
     from importlib import resources  # type: ignore[no-redef]
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourcePath
-
-if TYPE_CHECKING:
-    import urllib.parse
 
 log = logging.getLogger(__name__)
 
@@ -47,25 +43,6 @@ class PackageResourcePath(ResourcePath):
     resource name.
     """
 
-    @classmethod
-    def _fixDirectorySep(
-        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool = False
-    ) -> tuple[urllib.parse.ParseResult, bool]:
-        """Ensure that a path separator is present on directory paths."""
-        parsed, dirLike = super()._fixDirectorySep(parsed, forceDirectory=forceDirectory)
-        if not dirLike:
-            try:
-                # If the resource location does not exist this can
-                # fail immediately. It is possible we are doing path
-                # manipulation and not wanting to read the resource now,
-                # so catch the error and move on.
-                ref = resources.files(parsed.netloc).joinpath(parsed.path.lstrip("/"))
-            except ModuleNotFoundError:
-                pass
-            else:
-                dirLike = ref.is_dir()
-        return parsed, dirLike
-
     def _get_ref(self) -> resources.abc.Traversable | None:
         """Obtain the object representing the resource.
 
@@ -76,20 +53,23 @@ class PackageResourcePath(ResourcePath):
             associated with the resources is not accessible. This can happen
             if Python can't import the Python package defining the resource.
         """
+        # Need the path without the leading /.
+        path = self.path.lstrip("/")
         try:
-            ref = resources.files(self.netloc).joinpath(self.relativeToPathRoot)
+            ref = resources.files(self.netloc).joinpath(path)
         except ModuleNotFoundError:
             return None
         return ref
 
     def isdir(self) -> bool:
         """Return True if this URI is a directory, else False."""
-        if self.dirLike:  # Always bypass if we guessed the resource is a directory.
-            return True
-        ref = self._get_ref()
-        if ref is None:
-            return False  # Does not seem to exist so assume not a directory.
-        return ref.is_dir()
+        if self.dirLike is None:
+            ref = self._get_ref()
+            if ref is not None:
+                self.dirLike = ref.is_dir()
+            else:
+                return False
+        return self.dirLike
 
     def exists(self) -> bool:
         """Check that the python resource exists."""

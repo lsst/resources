@@ -1,0 +1,5 @@
+The ``forceDirectory`` flag now has three states.
+As before `True` indicates that it is known that the URI refers to a directory-like entity.
+Now `False` indicates that it is known that the URI refers to a file-like entity.
+`None` is the new default and that indicates that the caller does not know and that the status should be inferred either by checking the file system or looking for a trailing ``/``.
+It is now an error to create a ``ResourcePath`` which has a trailing ``/`` but with ``forceDirectory=False``.

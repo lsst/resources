@@ -29,13 +29,14 @@ class Location:
         path separator if a ``file`` scheme is being used for the URI,
         else a POSIX separator. Can be a full URI if the root URI is `None`.
         Can also be a schemeless URI if it refers to a relative path.
+        This path is required to be a file name and not a directory.
     """
 
     __slots__ = ("_datastoreRootUri", "_path", "_uri")
 
     def __init__(self, datastoreRootUri: None | ResourcePath | str, path: ResourcePath | str):
         # Be careful not to force a relative local path to absolute path
-        path_uri = ResourcePath(path, forceAbsolute=False)
+        path_uri = ResourcePath(path, forceAbsolute=False, forceDirectory=False)
 
         if isinstance(datastoreRootUri, str):
             datastoreRootUri = ResourcePath(datastoreRootUri, forceDirectory=True)

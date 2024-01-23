@@ -123,7 +123,10 @@ class FileResourcePath(ResourcePath):
             `True` if this URI is a directory or looks like a directory,
             else `False`.
         """
-        return self.dirLike or os.path.isdir(self.ospath)
+        if self.dirLike is None:
+            # Cache state for next time.
+            self.dirLike = os.path.isdir(self.ospath)
+        return self.dirLike
 
     def transfer_from(
         self,
@@ -381,8 +384,8 @@ class FileResourcePath(ResourcePath):
         parsed: urllib.parse.ParseResult,
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
-        forceDirectory: bool = False,
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+        forceDirectory: bool | None = None,
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Fix up relative paths in URI instances.
 
         Parameters
@@ -404,9 +407,10 @@ class FileResourcePath(ResourcePath):
         -------
         modified : `~urllib.parse.ParseResult`
             Update result if a URI is being handled.
-        dirLike : `bool`
+        dirLike : `bool` or `None`
             `True` if given parsed URI has a trailing separator or
-            forceDirectory is True. Otherwise `False`.
+            ``forceDirectory`` is `True`. Otherwise can return the given
+            value of ``forceDirectory``.
 
         Notes
         -----
@@ -416,7 +420,7 @@ class FileResourcePath(ResourcePath):
         always done regardless of the ``forceAbsolute`` parameter.
         """
         # assume we are not dealing with a directory like URI
-        dirLike = False
+        dirLike = forceDirectory
 
         # file URI implies POSIX path separators so split as POSIX,
         # then join as os, and convert to abspath. Do not handle
@@ -424,13 +428,12 @@ class FileResourcePath(ResourcePath):
         # to not do tilde expansion.
         sep = posixpath.sep
 
-        # For local file system we can explicitly check to see if this
-        # really is a directory. The URI might point to a location that
-        # does not exists yet but all that matters is if it is a directory
-        # then we make sure use that fact. No need to do the check if
-        # we are already being told.
-        if not forceDirectory and posixpath.isdir(parsed.path):
-            forceDirectory = True
+        # Consistency check.
+        if forceDirectory is False and parsed.path.endswith(sep):
+            raise ValueError(
+                f"URI {parsed.geturl()} ends with {sep} but "
+                "forceDirectory parameter declares it to be a file."
+            )
 
         # For an absolute path all we need to do is check if we need
         # to force the directory separator

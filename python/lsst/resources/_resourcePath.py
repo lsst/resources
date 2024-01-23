@@ -77,9 +77,12 @@ class ResourcePath:  # numpydoc ignore=PR02
         scheme-less and will not be updated to ``file`` or absolute path unless
         it is already an absolute path, in which case it will be updated to
         a ``file`` scheme.
-    forceDirectory : `bool`, optional
-        If `True` forces the URI to end with a separator, otherwise given URI
-        is interpreted as is.
+    forceDirectory : `bool` or `None`, optional
+        If `True` forces the URI to end with a separator. If `False` the URI
+        is interpreted as a file-like entity. Default, `None`, is that the
+        given URI is interpreted as a directory if there is a trailing ``/`` or
+        for some schemes the system will check to see if it is a file or a
+        directory.
     isTemporary : `bool`, optional
         If `True` indicates that this URI points to a temporary resource.
         The default is `False`, unless ``uri`` is already a `ResourcePath`
@@ -128,19 +131,21 @@ class ResourcePath:  # numpydoc ignore=PR02
     # mypy is confused without these
     _uri: urllib.parse.ParseResult
     isTemporary: bool
-    dirLike: bool
+    dirLike: bool | None
+    """Whether the resource looks like a directory resource. `None` means that
+    the status is uncertain."""
 
     def __new__(
         cls,
         uri: ResourcePathExpression,
         root: str | ResourcePath | None = None,
         forceAbsolute: bool = True,
-        forceDirectory: bool = False,
+        forceDirectory: bool | None = None,
         isTemporary: bool | None = None,
     ) -> ResourcePath:
         """Create and return new specialist ResourcePath subclass."""
         parsed: urllib.parse.ParseResult
-        dirLike: bool = False
+        dirLike: bool | None = forceDirectory
         subclass: type[ResourcePath] | None = None
 
         # Force root to be a ResourcePath -- this simplifies downstream
@@ -206,23 +211,30 @@ class ResourcePath:  # numpydoc ignore=PR02
             # We invoke __new__ again with str(self) to add a scheme for
             # forceAbsolute, but for the others that seems more likely to paper
             # over logic errors than do something useful, so we just raise.
-            if forceDirectory and not uri.dirLike:
+            if forceDirectory is not None and uri.dirLike is not None and forceDirectory is not uri.dirLike:
+                # Can not force a file-like URI to become a dir-like one or
+                # vice versa.
                 raise RuntimeError(
-                    f"{uri} is already a file-like ResourcePath; cannot force it to directory."
+                    f"{uri} can not be forced to change directory vs file state when previously declared."
                 )
             if isTemporary is not None and isTemporary is not uri.isTemporary:
                 raise RuntimeError(
                     f"{uri} is already a {'temporary' if uri.isTemporary else 'permanent'} "
                     f"ResourcePath; cannot make it {'temporary' if isTemporary else 'permanent'}."
                 )
+
             if forceAbsolute and not uri.scheme:
+                # Create new absolute from relative.
                 return ResourcePath(
                     str(uri),
                     root=root,
-                    forceAbsolute=True,
-                    forceDirectory=uri.dirLike,
+                    forceAbsolute=forceAbsolute,
+                    forceDirectory=forceDirectory or uri.dirLike,
                     isTemporary=uri.isTemporary,
                 )
+            elif forceDirectory is not None and uri.dirLike is None:
+                # Clone but with a new dirLike status.
+                return uri.replace(forceDirectory=forceDirectory)
             return uri
         else:
             raise ValueError(
@@ -239,7 +251,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                     and root_uri.scheme != "file"  # file scheme has different code path
                     and not parsed.path.startswith("/")  # Not already absolute path
                 ):
-                    if not root_uri.dirLike:
+                    if root_uri.dirLike is False:
                         raise ValueError(
                             f"Root URI ({root}) was not a directory so can not be joined with"
                             f" path {parsed.path!r}"
@@ -351,15 +363,14 @@ class ResourcePath:  # numpydoc ignore=PR02
     def relativeToPathRoot(self) -> str:
         """Return path relative to network location.
 
-        Effectively, this is the path property with posix separator stripped
+        This is the path property with posix separator stripped
         from the left hand side of the path.
 
         Always unquotes.
         """
-        p = self._pathLib(self.path)
-        relToRoot = str(p.relative_to(p.root))
-        if self.dirLike and not relToRoot.endswith("/"):
-            relToRoot += "/"
+        relToRoot = self.path.lstrip("/")
+        if relToRoot == "":
+            return "./"
         return urllib.parse.unquote(relToRoot)
 
     @property
@@ -418,24 +429,33 @@ class ResourcePath:  # numpydoc ignore=PR02
             ResourcePath rules.
         tail : `str`
             Last path component. Tail will be empty if path ends on a
-            separator. Tail will never contain separators. It will be
-            unquoted.
+            separator or if the URI is known to be associated with a directory.
+            Tail will never contain separators. It will be unquoted.
 
         Notes
         -----
         Equivalent to `os.path.split` where head preserves the URI
-        components.
+        components. In some cases this method can result in a file system
+        check to verify whether the URI is a directory or not (only if
+        ``forceDirectory`` was `None` during construction). For a scheme-less
+        URI this can mean that the result might change depending on current
+        working directory.
         """
+        if self.isdir():
+            # This is known to be a directory so must return itself and
+            # the empty string.
+            return self, ""
+
         head, tail = self._pathModule.split(self.path)
         headuri = self._uri._replace(path=head)
 
         # The file part should never include quoted metacharacters
         tail = urllib.parse.unquote(tail)
 
-        # Schemeless is special in that it can be a relative path
+        # Schemeless is special in that it can be a relative path.
         # We need to ensure that it stays that way. All other URIs will
         # be absolute already.
-        forceAbsolute = self._pathModule.isabs(self.path)
+        forceAbsolute = self.isabs()
         return ResourcePath(headuri, forceDirectory=True, forceAbsolute=forceAbsolute), tail
 
     def basename(self) -> str:
@@ -467,7 +487,9 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Notes
         -----
-        Equivalent of `os.path.dirname`.
+        Equivalent of `os.path.dirname`. If this is a directory URI it will
+        be returned unchanged. If the parent directory is always required
+        use `parent`.
         """
         return self.split()[0]
 
@@ -482,25 +504,31 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Notes
         -----
-        For a file-like URI this will be the same as calling `dirname()`.
+        For a file-like URI this will be the same as calling `dirname`.
+        For a directory-like URI this will always return the parent directory
+        whereas `dirname()` will return the original URI. This is consistent
+        with `os.path.dirname` compared to the `pathlib.Path` property
+        ``parent``.
         """
-        # When self is file-like, return self.dirname()
-        if not self.dirLike:
+        if self.dirLike is False:
+            # os.path.split() is slightly faster than calling Path().parent.
             return self.dirname()
-        # When self is dir-like, return its parent directory,
+        # When self is dir-like, returns its parent directory,
         # regardless of the presence of a trailing separator
         originalPath = self._pathLib(self.path)
         parentPath = originalPath.parent
         return self.replace(path=str(parentPath), forceDirectory=True)
 
-    def replace(self, forceDirectory: bool = False, isTemporary: bool = False, **kwargs: Any) -> ResourcePath:
+    def replace(
+        self, forceDirectory: bool | None = None, isTemporary: bool = False, **kwargs: Any
+    ) -> ResourcePath:
         """Return new `ResourcePath` with specified components replaced.
 
         Parameters
         ----------
-        forceDirectory : `bool`, optional
+        forceDirectory : `bool` or `None`, optional
             Parameter passed to ResourcePath constructor to force this
-            new URI to be dir-like.
+            new URI to be dir-like or file-like.
         isTemporary : `bool`, optional
             Indicate that the resulting URI is temporary resource.
         **kwargs
@@ -538,17 +566,17 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Notes
         -----
-        Forces the ResourcePath.dirLike attribute to be false. The new file
-        path will be quoted if necessary.
+        Forces the ``ResourcePath.dirLike`` attribute to be false. The new file
+        path will be quoted if necessary. If the current URI is known to
+        refer to a directory, the new file will be joined to the current file.
+        It is recommended that this behavior no longer be used and a call
+        to `isdir` by the caller should be used to decide whether to join or
+        replace. In the future this method may be modified to always replace
+        the final element of the path.
         """
-        if self.quotePaths:
-            newfile = urllib.parse.quote(newfile)
-        dir, _ = self._pathModule.split(self.path)
-        newpath = self._pathModule.join(dir, newfile)
-
-        updated = self.replace(path=newpath)
-        updated.dirLike = False
-        return updated
+        if self.dirLike:
+            return self.join(newfile, forceDirectory=False)
+        return self.parent().join(newfile, forceDirectory=False)
 
     def updatedExtension(self, ext: str | None) -> ResourcePath:
         """Return a new `ResourcePath` with updated file extension.
@@ -581,17 +609,17 @@ class ResourcePath:  # numpydoc ignore=PR02
         # .fits.gz counts as one extension do not use os.path.splitext
         path = self.path
         if current:
-            path = path[: -len(current)]
+            path = path.removesuffix(current)
 
         # Ensure that we have a leading "." on file extension (and we do not
         # try to modify the empty string)
         if ext and not ext.startswith("."):
             ext = "." + ext
 
-        return self.replace(path=path + ext)
+        return self.replace(path=path + ext, forceDirectory=False)
 
     def getExtension(self) -> str:
-        """Return the file extension(s) associated with this URI path.
+        """Return the extension(s) associated with this URI path.
 
         Returns
         -------
@@ -601,16 +629,27 @@ class ResourcePath:  # numpydoc ignore=PR02
             file extension unless there is a special extension modifier
             indicating file compression, in which case the combined
             extension (e.g. ``.fits.gz``) will be returned.
+
+        Notes
+        -----
+        Does not distinguish between file and directory URIs when determining
+        a suffix. An extension is only determined from the final component
+        of the path.
         """
         special = {".gz", ".bz2", ".xz", ".fz"}
 
-        # Get the file part of the path so as not to be confused by
-        # "." in directory names.
-        basename = self.basename()
-        extensions = self._pathLib(basename).suffixes
+        # path lib will ignore any "." in directories.
+        # path lib works well:
+        # extensions = self._pathLib(self.path).suffixes
+        # But the constructor is slow. Therefore write our own implementation.
+        # Strip trailing separator if present, do not care if this is a
+        # directory or not.
+        parts = self.path.rstrip("/").rsplit(self._pathModule.sep, 1)
+        _, *extensions = parts[-1].split(".")
 
         if not extensions:
             return ""
+        extensions = ["." + x for x in extensions]
 
         ext = extensions.pop()
 
@@ -621,31 +660,30 @@ class ResourcePath:  # numpydoc ignore=PR02
         return ext
 
     def join(
-        self, path: str | ResourcePath, isTemporary: bool | None = None, forceDirectory: bool = False
+        self, path: str | ResourcePath, isTemporary: bool | None = None, forceDirectory: bool | None = None
     ) -> ResourcePath:
         """Return new `ResourcePath` with additional path components.
 
         Parameters
         ----------
         path : `str`, `ResourcePath`
-            Additional file components to append to the current URI. Assumed
-            to include a file at the end. Will be quoted depending on the
-            associated URI scheme. If the path looks like a URI with a scheme
-            referring to an absolute location, it will be returned
+            Additional file components to append to the current URI. Will be
+            quoted depending on the associated URI scheme. If the path looks
+            like a URI referring to an absolute location, it will be returned
             directly (matching the behavior of `os.path.join`). It can
             also be a `ResourcePath`.
         isTemporary : `bool`, optional
             Indicate that the resulting URI represents a temporary resource.
             Default is ``self.isTemporary``.
-        forceDirectory : `bool`, optional
-            If `True` forces the URI to end with a separator, otherwise given
-            URI is interpreted as is.
+        forceDirectory : `bool` or `None`, optional
+            If `True` forces the URI to end with a separator. If `False` the
+            resultant URI is declared to refer to a file. `None` indicates
+            that the file directory status is unknown.
 
         Returns
         -------
         new : `ResourcePath`
-            New URI with any file at the end replaced with the new path
-            components.
+            New URI with the path appended.
 
         Notes
         -----
@@ -659,17 +697,23 @@ class ResourcePath:  # numpydoc ignore=PR02
         scheme-less URI is not allowed for safety reasons as it may indicate
         a mistake in the calling code.
 
+        It is an error to attempt to join to something that is known to
+        refer to a file. Use `updatedFile` if the file is to be
+        replaced.
+
         Raises
         ------
         ValueError
-            Raised if the ``path`` is an absolute scheme-less URI. In that
-            situation it is unclear whether the intent is to return a
-            ``file`` URI or it was a mistake and a relative scheme-less URI
-            was meant.
+            Raised if the given path object refers to a directory but the
+            ``forceDirectory`` parameter insists the outcome should be a file,
+            and vice versa. Also raised if the URI being joined with is known
+            to refer to a file.
         RuntimeError
             Raised if this attempts to join a temporary URI to a non-temporary
             URI.
         """
+        if self.dirLike is False:
+            raise ValueError("Can not join a new path component to a file.")
         if isTemporary is None:
             isTemporary = self.isTemporary
         elif not isTemporary and self.isTemporary:
@@ -680,14 +724,16 @@ class ResourcePath:  # numpydoc ignore=PR02
         path_uri = ResourcePath(
             path, forceAbsolute=False, forceDirectory=forceDirectory, isTemporary=isTemporary
         )
-        if path_uri.scheme:
-            # Check for scheme so can distinguish explicit URIs from
-            # absolute scheme-less URIs.
-            return path_uri
+        if forceDirectory is not None and path_uri.dirLike is not forceDirectory:
+            raise ValueError(
+                "The supplied path URI to join has inconsistent directory state "
+                f"with forceDirectory parameter: {path_uri.dirLike} vs {forceDirectory}"
+            )
+        forceDirectory = path_uri.dirLike
 
         if path_uri.isabs():
-            # Absolute scheme-less path.
-            raise ValueError(f"Can not join absolute scheme-less {path_uri!r} to another URI.")
+            # Absolute URI so return it directly.
+            return path_uri
 
         # If this was originally a ResourcePath extract the unquoted path from
         # it. Otherwise we use the string we were given to allow "#" to appear
@@ -695,20 +741,22 @@ class ResourcePath:  # numpydoc ignore=PR02
         if not isinstance(path, str):
             path = path_uri.unquoted_path
 
-        new = self.dirname()  # By definition a directory URI
-
-        # new should be asked about quoting, not self, since dirname can
-        # change the URI scheme for schemeless -> file
-        if new.quotePaths:
+        # Might need to quote the path.
+        if self.quotePaths:
             path = urllib.parse.quote(path)
 
-        newpath = self._pathModule.normpath(self._pathModule.join(new.path, path))
+        newpath = self._pathModule.normpath(self._pathModule.join(self.path, path))
 
         # normpath can strip trailing / so we force directory if the supplied
         # path ended with a /
-        return new.replace(
+        has_dir_sep = path.endswith(self._pathModule.sep)
+        if forceDirectory is None and has_dir_sep:
+            forceDirectory = True
+        elif forceDirectory is False and has_dir_sep:
+            raise ValueError("Path to join has trailing / but is being forced to be a file.")
+        return self.replace(
             path=newpath,
-            forceDirectory=(forceDirectory or path.endswith(self._pathModule.sep)),
+            forceDirectory=forceDirectory,
             isTemporary=isTemporary,
         )
 
@@ -728,13 +776,6 @@ class ResourcePath:  # numpydoc ignore=PR02
             Returns `None` if there is no parent child relationship.
             Scheme and netloc must match.
         """
-        # Scheme-less absolute other is treated as if it's a file scheme.
-        # Scheme-less relative other can only return non-None if self
-        # is also scheme-less relative and that is handled specifically
-        # in a subclass.
-        if not other.scheme and other.isabs():
-            other = other.abspath()
-
         # Scheme-less self is handled elsewhere.
         if self.scheme != other.scheme:
             return None
@@ -894,7 +935,7 @@ class ResourcePath:  # numpydoc ignore=PR02
            with uri.as_local() as local:
                ospath = local.ospath
         """
-        if self.dirLike:
+        if self.isdir():
             raise IsADirectoryError(f"Directory-like URI {self} cannot be fetched as local.")
         local_src, is_temporary = self._as_local()
         local_uri = ResourcePath(local_src, isTemporary=is_temporary)
@@ -954,7 +995,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         if suffix:
             tempname += suffix
         temporary_uri = prefix.join(tempname, isTemporary=True)
-        if temporary_uri.dirLike:
+        if temporary_uri.isdir():
             # If we had a safe way to clean up a remote temporary directory, we
             # could support this.
             raise NotImplementedError("temporary_uri cannot be used to create a temporary directory.")
@@ -1000,7 +1041,7 @@ class ResourcePath:  # numpydoc ignore=PR02
 
     def isdir(self) -> bool:
         """Return True if this URI looks like a directory, else False."""
-        return self.dirLike
+        return bool(self.dirLike)
 
     def size(self) -> int:
         """For non-dir-like URI, return the size of the resource.
@@ -1065,15 +1106,15 @@ class ResourcePath:  # numpydoc ignore=PR02
 
     @classmethod
     def _fixDirectorySep(
-        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool = False
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+        cls, parsed: urllib.parse.ParseResult, forceDirectory: bool | None = None
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Ensure that a path separator is present on directory paths.
 
         Parameters
         ----------
         parsed : `~urllib.parse.ParseResult`
             The result from parsing a URI using `urllib.parse`.
-        forceDirectory : `bool`, optional
+        forceDirectory : `bool` or `None`, optional
             If `True` forces the URI to end with a separator, otherwise given
             URI is interpreted as is. Specifying that the URI is conceptually
             equivalent to a directory can break some ambiguities when
@@ -1083,18 +1124,26 @@ class ResourcePath:  # numpydoc ignore=PR02
         -------
         modified : `~urllib.parse.ParseResult`
             Update result if a URI is being handled.
-        dirLike : `bool`
+        dirLike : `bool` or `None`
             `True` if given parsed URI has a trailing separator or
-            forceDirectory is True. Otherwise `False`.
+            ``forceDirectory`` is `True`. Otherwise returns the given value of
+            ``forceDirectory``.
         """
-        # assume we are not dealing with a directory like URI
-        dirLike = False
+        # Assume the forceDirectory flag can give us a clue.
+        dirLike = forceDirectory
 
         # Directory separator
         sep = cls._pathModule.sep
 
         # URI is dir-like if explicitly stated or if it ends on a separator
         endsOnSep = parsed.path.endswith(sep)
+
+        if forceDirectory is False and endsOnSep:
+            raise ValueError(
+                f"URI {parsed.geturl()} ends with {sep} but "
+                "forceDirectory parameter declares it to be a file."
+            )
+
         if forceDirectory or endsOnSep:
             dirLike = True
             # only add the separator if it's not already there
@@ -1109,8 +1158,8 @@ class ResourcePath:  # numpydoc ignore=PR02
         parsed: urllib.parse.ParseResult,
         root: ResourcePath | None = None,
         forceAbsolute: bool = False,
-        forceDirectory: bool = False,
-    ) -> tuple[urllib.parse.ParseResult, bool]:
+        forceDirectory: bool | None = None,
+    ) -> tuple[urllib.parse.ParseResult, bool | None]:
         """Correct any issues with the supplied URI.
 
         Parameters
@@ -1123,7 +1172,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         forceAbsolute : `bool`, ignored.
             Not used by this implementation. URIs are generally always
             absolute.
-        forceDirectory : `bool`, optional
+        forceDirectory : `bool` or `None`, optional
             If `True` forces the URI to end with a separator, otherwise given
             URI is interpreted as is. Specifying that the URI is conceptually
             equivalent to a directory can break some ambiguities when
@@ -1135,7 +1184,8 @@ class ResourcePath:  # numpydoc ignore=PR02
             Update result if a URI is being handled.
         dirLike : `bool`
             `True` if given parsed URI has a trailing separator or
-            forceDirectory is True. Otherwise `False`.
+            ``forceDirectory`` is `True`. Otherwise returns the given value
+            of ``forceDirectory``.
 
         Notes
         -----
@@ -1145,7 +1195,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         always done regardless of the ``forceAbsolute`` parameter.
 
         AWS S3 differentiates between keys with trailing POSIX separators (i.e
-        `/dir` and `/dir/`) whereas POSIX does not neccessarily.
+        ``/dir`` and ``/dir/``) whereas POSIX does not necessarily.
 
         Scheme-less paths are normalized.
         """
@@ -1360,7 +1410,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         required to reimplement `open`, though they may delegate to `super`
         when ``prefer_file_temporary`` is `False`.
         """
-        if self.dirLike:
+        if self.isdir():
             raise IsADirectoryError(f"Directory-like URI {self} cannot be opened.")
         if "x" in mode and self.exists():
             raise FileExistsError(f"File at {self} already exists.")

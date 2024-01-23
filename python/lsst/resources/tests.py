@@ -225,9 +225,17 @@ class GenericTestCase(_GenericTestCase):
         with self.assertRaises(RuntimeError):
             ResourcePath(self.root_uri, isTemporary=True)
 
-        file = self.root_uri.join("file.txt")
+        file = self.root_uri.join("file.txt", forceDirectory=False)
         with self.assertRaises(RuntimeError):
             ResourcePath(file, forceDirectory=True)
+
+        file = self.root_uri.join("file.txt")
+        file_as_dir = ResourcePath(file, forceDirectory=True)
+        self.assertTrue(file_as_dir.isdir())
+
+        dir = self._make_uri("a/b/c/")
+        with self.assertRaises(ValueError):
+            ResourcePath(dir, forceDirectory=False)
 
         with self.assertRaises(NotImplementedError):
             ResourcePath("unknown://netloc")
@@ -255,6 +263,15 @@ class GenericTestCase(_GenericTestCase):
         self.assertEqual(extensionless.getExtension(), "")
         extension = extensionless.updatedExtension(".fits")
         self.assertEqual(extension.getExtension(), ".fits")
+
+        uri = ResourcePath("test.txt", forceAbsolute=False)
+        self.assertEqual(uri.getExtension(), ".txt")
+        uri = ResourcePath(self._make_uri("dir.1/dir.2/test.txt"), forceDirectory=False)
+        self.assertEqual(uri.getExtension(), ".txt")
+        uri = ResourcePath(self._make_uri("dir.1/dir.2/"), forceDirectory=True)
+        self.assertEqual(uri.getExtension(), ".2")
+        uri = ResourcePath(self._make_uri("dir.1/dir/"), forceDirectory=True)
+        self.assertEqual(uri.getExtension(), "")
 
     def test_relative(self) -> None:
         """Check that we can get subpaths back from two URIs."""
@@ -331,6 +348,7 @@ class GenericTestCase(_GenericTestCase):
         self.assertEqual(derived_parent, parent)
         self.assertTrue(derived_parent.isdir())
         self.assertEqual(child_file.parent().parent(), parent)
+        self.assertEqual(child_subdir.dirname(), child_subdir)
 
     def test_escapes(self) -> None:
         """Special characters in file paths."""
@@ -431,7 +449,11 @@ class GenericTestCase(_GenericTestCase):
 
         other = ResourcePath(f"{self.root}test.txt")
         self.assertEqual(root.join(other), other)
-        self.assertEqual(other.join("b/new.txt").geturl(), f"{self.root}b/new.txt")
+        self.assertEqual(other.join("b/new.txt").geturl(), f"{self.root}test.txt/b/new.txt")
+
+        other = ResourcePath(f"{self.root}text.txt", forceDirectory=False)
+        with self.assertRaises(ValueError):
+            other.join("b/new.text")
 
         joined = ResourcePath(f"{self.root}hsc/payload/").join(
             ResourcePath("test.qgraph", forceAbsolute=False)
@@ -441,6 +463,17 @@ class GenericTestCase(_GenericTestCase):
         qgraph = ResourcePath("test.qgraph")  # Absolute URI
         joined = ResourcePath(f"{self.root}hsc/payload/").join(qgraph)
         self.assertEqual(joined, qgraph)
+
+        with self.assertRaises(ValueError):
+            root.join("dir/", forceDirectory=False)
+
+        temp = root.join("dir2/", isTemporary=True)
+        with self.assertRaises(RuntimeError):
+            temp.join("test.txt", isTemporary=False)
+
+        rel = ResourcePath("new.txt", forceAbsolute=False, forceDirectory=False)
+        with self.assertRaises(RuntimeError):
+            root.join(rel, forceDirectory=True)
 
     def test_quoting(self) -> None:
         """Check that quoting works."""
@@ -483,7 +516,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         if self.scheme == "file":
             # Use a local tempdir because on macOS the temp dirs use symlinks
             # so relsymlink gets quite confused.
-            self.tmpdir = ResourcePath(makeTestTempDir(self.testdir))
+            self.tmpdir = ResourcePath(makeTestTempDir(self.testdir), forceDirectory=True)
         else:
             # Create random tmp directory relative to the test root.
             self.tmpdir = self.root_uri.join(

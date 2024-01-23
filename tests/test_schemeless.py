@@ -26,11 +26,13 @@ class SchemelessTestCase(unittest.TestCase):
         self.assertFalse(relative_uri.scheme)
         self.assertFalse(relative_uri.isabs())
         self.assertEqual(relative_uri.ospath, relative)
+        rel_to_abs = relative_uri.abspath()
 
         # Converted to a file URI.
         abs_uri = ResourcePath(relative, forceAbsolute=True)
         self.assertEqual(abs_uri.scheme, "file")
         self.assertTrue(abs_uri.isabs())
+        self.assertEqual(abs_uri, rel_to_abs)
 
         # An absolute path is converted to a file URI.
         file_uri = ResourcePath(abspath)
@@ -64,11 +66,37 @@ class SchemelessTestCase(unittest.TestCase):
         file_uri = ResourcePath("./relati#ve/file.yaml#a,v", root=prefix_uri)
         self.assertEqual(str(file_uri), f"file://{prefix_uri.ospath}relati%23ve/file.yaml#a,v")
 
-        # For historical reasons a a root can not be anything other
-        # than a file. This does not really make sense in the general
-        # sense but can be implemented using uri.join().
+        # Can not have a root that refers to a file.
         with self.assertRaises(ValueError):
-            ResourcePath(relative, root=ResourcePath("resource://lsst.resources/something.txt"))
+            ResourcePath(
+                relative, root=ResourcePath("resource://lsst.resources/something.txt", forceDirectory=False)
+            )
+
+        with_root = ResourcePath(relative, root=ResourcePath("resource://lsst.resources/d/"))
+        self.assertEqual(with_root.geturl(), "resource://lsst.resources/d/a/b/c.txt")
+
+    def test_isdir(self):
+        """Test that isdir() can check the file system."""
+        # Get the relative path for the current test file.
+        file = ResourcePath(__file__)
+        cwd = ResourcePath(".")
+        f = ResourcePath(file.relative_to(cwd), forceAbsolute=False)
+
+        self.assertFalse(f.scheme)
+        self.assertTrue(f.exists())
+        self.assertIsNone(f.dirLike)
+        self.assertFalse(f.isdir())
+
+        # Check that the dirLike has not been updated since we know that
+        # cwd could change so caching is bad.
+        self.assertIsNone(f.dirLike)
+
+        # Check that a file that does not exist does not update the dirLike
+        # flag.
+        f = ResourcePath("a/b/c_not_here.txt", forceAbsolute=False)
+        self.assertFalse(f.scheme)
+        self.assertFalse(f.isdir())
+        self.assertIsNone(f.dirLike)
 
 
 if __name__ == "__main__":
