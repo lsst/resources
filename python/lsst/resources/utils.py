@@ -135,8 +135,7 @@ class TransactionProtocol(Protocol):
     """Protocol for type checking transaction interface."""
 
     @contextlib.contextmanager
-    def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Iterator[None]:
-        ...
+    def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Iterator[None]: ...
 
 
 def makeTestTempDir(default_base: str | None = None) -> str:
