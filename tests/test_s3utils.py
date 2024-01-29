@@ -26,7 +26,11 @@ from unittest import mock
 try:
     import boto3
     from botocore.exceptions import ParamValidationError
-    from moto import mock_s3
+
+    try:
+        from moto import mock_aws  # v5
+    except ImportError:
+        from moto import mock_s3 as mock_aws
 except ImportError:
     boto3 = None
 
@@ -44,7 +48,7 @@ class S3UtilsTestCase(unittest.TestCase):
 
     def setUp(self):
         self.enterContext(clean_test_environment_for_s3())
-        self.enterContext(mock_s3())
+        self.enterContext(mock_aws())
 
         self.client = getS3Client()
         try:

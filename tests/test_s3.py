@@ -24,12 +24,16 @@ from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 try:
     import boto3
     import botocore
-    from moto import mock_s3
+
+    try:
+        from moto import mock_aws  # v5
+    except ImportError:
+        from moto import mock_s3 as mock_aws
 except ImportError:
     boto3 = None
 
-    def mock_s3(cls):
-        """No-op decorator in case moto mock_s3 can not be imported."""
+    def mock_aws(cls):
+        """No-op decorator in case moto mock_aws can not be imported."""
         return cls
 
 
@@ -47,13 +51,13 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     scheme = "s3"
     netloc = "my_2nd_bucket"
 
-    mock_s3 = mock_s3()
+    mock_aws = mock_aws()
     """The mocked s3 interface from moto."""
 
     def setUp(self):
         self.enterContext(clean_test_environment_for_s3())
         # Enable S3 mocking of tests.
-        self.mock_s3.start()
+        self.mock_aws.start()
 
         # MOTO needs to know that we expect Bucket bucketname to exist
         s3 = boto3.resource("s3")
@@ -77,7 +81,7 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         bucket.delete()
 
         # Stop the S3 mock.
-        self.mock_s3.stop()
+        self.mock_aws.stop()
 
         S3ResourcePath.use_threads = None
 
