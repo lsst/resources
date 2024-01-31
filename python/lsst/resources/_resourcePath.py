@@ -1271,8 +1271,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         candidates: Iterable[ResourcePathExpression],
         file_filter: str | re.Pattern | None,
         grouped: Literal[True],
-    ) -> Iterator[Iterator[ResourcePath]]:
-        ...
+    ) -> Iterator[Iterator[ResourcePath]]: ...
 
     @overload
     @classmethod
@@ -1281,8 +1280,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         candidates: Iterable[ResourcePathExpression],
         *,
         grouped: Literal[True],
-    ) -> Iterator[Iterator[ResourcePath]]:
-        ...
+    ) -> Iterator[Iterator[ResourcePath]]: ...
 
     @overload
     @classmethod
@@ -1291,8 +1289,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         candidates: Iterable[ResourcePathExpression],
         file_filter: str | re.Pattern | None = None,
         grouped: Literal[False] = False,
-    ) -> Iterator[ResourcePath]:
-        ...
+    ) -> Iterator[ResourcePath]: ...
 
     @classmethod
     def findFileResources(
