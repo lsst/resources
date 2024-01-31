@@ -200,7 +200,15 @@ class S3ResourcePath(ResourcePath):
 
     @property
     def bucket(self) -> str:
-        bucket = self._uri.hostname
+        split = self._uri.netloc.split("@")
+        num_components = len(split)
+        if num_components == 2:
+            bucket = split[1]
+        elif num_components == 1:
+            bucket = split[0]
+        else:
+            raise ValueError(f"Unexpected extra '@' in S3 URI: '{str(self)}'")
+
         if not bucket:
             raise ValueError(f"S3 URI does not include bucket name: '{str(self)}'")
 
