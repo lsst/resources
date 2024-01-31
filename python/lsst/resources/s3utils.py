@@ -30,17 +30,19 @@ __all__ = (
 import functools
 import os
 import re
+import urllib.parse
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
 from deprecated.sphinx import deprecated
 from urllib3.exceptions import HTTPError, RequestError
+from urllib3.util import Url, parse_url
 
 if TYPE_CHECKING:
     from unittest import TestCase
@@ -178,8 +180,13 @@ def clean_test_environment_for_s3() -> Iterator[None]:
         yield
 
 
-def getS3Client() -> boto3.client:
+def getS3Client(profile: str | None = None) -> boto3.client:
     """Create a S3 client with AWS (default) or the specified endpoint.
+
+    Parameters
+    ----------
+    profile : `str`, optional
+        The name of an S3 profile describing which S3 service to use.
 
     Returns
     -------
@@ -188,8 +195,19 @@ def getS3Client() -> boto3.client:
 
     Notes
     -----
-    The endpoint URL is from the environment variable S3_ENDPOINT_URL.
-    If none is specified, the default AWS one is used.
+    If an explicit profile name is specified, its configuration is read from an
+    environment variable named ``LSST_RESOURCES_S3_PROFILE_<profile>``.  Note
+    that the name of the profile is case sensitive.  This configuration is
+    specified in the format:
+    ``https://<access key ID>:<secret key>@<s3 endpoint hostname>``
+
+    If the access key ID or secret key values contain slashes, the slashes must
+    be URI-encoded (replace "/" with "%2F".) The access key ID and secret key
+    are optional -- if not specified, they will be looked up via the AWS
+    credentials file.
+
+    If profile is `None`, this configuration is from the environment variable
+    S3_ENDPOINT_URL.  If none is specified, the default AWS one is used.
 
     If the environment variable LSST_DISABLE_BUCKET_VALIDATION exists
     and has a value that is not empty, "0", "f", "n", or "false"
@@ -202,9 +220,19 @@ def getS3Client() -> boto3.client:
     if botocore is None:
         raise ModuleNotFoundError("Could not find botocore. Are you sure it is installed?")
 
-    endpoint = os.environ.get("S3_ENDPOINT_URL", None)
-    if not endpoint:
-        endpoint = None  # Handle ""
+    if profile is None:
+        endpoint = os.environ.get("S3_ENDPOINT_URL", None)
+        if not endpoint:
+            endpoint = None  # Handle ""
+    else:
+        var_name = f"LSST_RESOURCES_S3_PROFILE_{profile}"
+        endpoint = os.environ.get(var_name, None)
+        if not endpoint:
+            raise RuntimeError(
+                f"No configuration found for requested S3 profile '{profile}'."
+                f" Set the environment variable '{var_name}' to configure it."
+            )
+
     disable_value = os.environ.get("LSST_DISABLE_BUCKET_VALIDATION", "0")
     skip_validation = not re.search(r"^(0|f|n|false)?$", disable_value, re.I)
 
@@ -212,14 +240,52 @@ def getS3Client() -> boto3.client:
 
 
 @functools.lru_cache
-def _get_s3_client(endpoint: str, skip_validation: bool) -> boto3.client:
+def _get_s3_client(endpoint: str | None, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
     config = botocore.config.Config(read_timeout=180, retries={"mode": "adaptive", "max_attempts": 10})
 
-    client = boto3.client("s3", endpoint_url=endpoint, config=config)
+    endpoint_config = _parse_endpoint_config(endpoint)
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_config.endpoint_url,
+        aws_access_key_id=endpoint_config.access_key_id,
+        aws_secret_access_key=endpoint_config.secret_access_key,
+        config=config,
+    )
     if skip_validation:
         client.meta.events.unregister("before-parameter-build.s3", validate_bucket_name)
     return client
+
+
+class _EndpointConfig(NamedTuple):
+    endpoint_url: str | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+
+
+def _parse_endpoint_config(endpoint: str | None) -> _EndpointConfig:
+    if not endpoint:
+        return _EndpointConfig()
+
+    parsed = parse_url(endpoint)
+
+    # Strip the username/password portion of the URL from the result.
+    endpoint_url = Url(host=parsed.host, path=parsed.path, port=parsed.port, scheme=parsed.scheme).url
+
+    access_key_id = None
+    secret_access_key = None
+    if parsed.auth:
+        split = parsed.auth.split(":")
+        if len(split) != 2:
+            raise ValueError("S3 access key and secret not in expected format.")
+        access_key_id, secret_access_key = split
+        access_key_id = urllib.parse.unquote(access_key_id)
+        secret_access_key = urllib.parse.unquote(secret_access_key)
+
+    return _EndpointConfig(
+        endpoint_url=endpoint_url, access_key_id=access_key_id, secret_access_key=secret_access_key
+    )
 
 
 def s3CheckFileExists(
@@ -268,7 +334,8 @@ def s3CheckFileExists(
             bucket = uri.netloc
             filepath = uri.relativeToPathRoot
     elif isinstance(path, ResourcePath | Location):
-        bucket = path.netloc
+        if bucket is None:
+            bucket = path.netloc
         filepath = path.relativeToPathRoot
     else:
         raise TypeError(f"Unsupported path type: {path!r}.")

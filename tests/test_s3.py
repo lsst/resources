@@ -44,30 +44,27 @@ class GenericS3TestCase(GenericTestCase, unittest.TestCase):
     netloc = "my_bucket"
 
 
-@unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
-class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
+class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
     """Tests of reading and writing S3 URIs."""
 
     scheme = "s3"
-    netloc = "my_2nd_bucket"
-
-    mock_aws = mock_aws()
-    """The mocked s3 interface from moto."""
+    s3_endpoint_url: str | None = None
 
     def setUp(self):
         self.enterContext(clean_test_environment_for_s3())
+
         # Enable S3 mocking of tests.
-        self.mock_aws.start()
+        self.enterContext(mock_aws())
 
         # MOTO needs to know that we expect Bucket bucketname to exist
-        s3 = boto3.resource("s3")
-        s3.create_bucket(Bucket=self.netloc)
+        s3 = boto3.resource("s3", endpoint_url=self.s3_endpoint_url)
+        s3.create_bucket(Bucket=self.bucket)
 
         super().setUp()
 
     def tearDown(self):
         s3 = boto3.resource("s3")
-        bucket = s3.Bucket(self.netloc)
+        bucket = s3.Bucket(self.bucket)
         try:
             bucket.objects.all().delete()
         except botocore.exceptions.ClientError as e:
@@ -77,11 +74,8 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             else:
                 raise
 
-        bucket = s3.Bucket(self.netloc)
+        bucket = s3.Bucket(self.bucket)
         bucket.delete()
-
-        # Stop the S3 mock.
-        self.mock_aws.stop()
 
         S3ResourcePath.use_threads = None
 
@@ -221,6 +215,60 @@ class S3ReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertFalse(test_resource_path._transfer_config.use_threads)
 
             self.test_local()
+
+
+@unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
+class S3ReadWriteTestCase(S3ReadWriteTestCaseBase, unittest.TestCase):
+    """Test S3 with no explicit profile/endpoint specified.
+    (``s3://bucketname/...``).
+    """
+
+    bucket = "my_2nd_bucket"
+    netloc = bucket
+
+
+@unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
+class S3WithProfileReadWriteTestCase(S3ReadWriteTestCaseBase, unittest.TestCase):
+    """Test S3 URLs with explicit profile specified.
+    (``s3://profile@bucketname/...``).
+    """
+
+    bucket = "3rd_bucket"
+    netloc = f"myprofile@{bucket}"
+    s3_endpoint_url = "https://endpoint1.test.example"
+
+    def setUp(self):
+        # Configure custom S3 endpoints that we can target from tests using
+        # non-default profile.
+        self.enterContext(
+            mock.patch.dict(
+                os.environ,
+                {
+                    "MOTO_S3_CUSTOM_ENDPOINTS": self.s3_endpoint_url,
+                    "LSST_RESOURCES_S3_PROFILE_myprofile": "https://access_key:security_key@endpoint1.test.example",
+                },
+            )
+        )
+
+        super().setUp()
+
+    def test_missing_profile(self):
+        with self.assertRaisesRegex(RuntimeError, "No configuration found for requested S3 profile"):
+            ResourcePath("s3://otherprofile@bucket").read()
+
+    def test_s3_endpoint_url(self):
+        with mock.patch.dict(
+            os.environ,
+            {"S3_ENDPOINT_URL": self.s3_endpoint_url},
+        ):
+            path = ResourcePath(f"s3://{self.bucket}/test-s3-endpoint-url.txt")
+            data = b"123"
+            path.write(data)
+            self.assertEqual(path.read(), data)
+            self.assertIn(
+                "https://endpoint1.test.example",
+                path.generate_presigned_get_url(expiration_time_seconds=3600),
+            )
 
 
 if __name__ == "__main__":

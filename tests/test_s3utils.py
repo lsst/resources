@@ -36,7 +36,14 @@ except ImportError:
 
 from lsst.resources import ResourcePath
 from lsst.resources.location import Location
-from lsst.resources.s3utils import bucketExists, clean_test_environment_for_s3, getS3Client, s3CheckFileExists
+from lsst.resources.s3utils import (
+    _parse_endpoint_config,
+    bucketExists,
+    clean_test_environment_for_s3,
+    getS3Client,
+    s3CheckFileExists,
+)
+from urllib3.exceptions import LocationParseError
 
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
@@ -100,6 +107,27 @@ class S3UtilsTestCase(unittest.TestCase):
         # make sure supplying strings resolves correctly too
         self.assertTrue(s3CheckFileExists(uri, client=self.client))
         self.assertTrue(s3CheckFileExists(uri))
+
+    def test_parsing_profile_config(self):
+        with self.assertRaises(LocationParseError):
+            _parse_endpoint_config(
+                "https://AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI/FK7MDENG/FbPxRfiCYEXAMPLEKEY@endpoint.com"
+            )
+
+        parsed = _parse_endpoint_config(
+            "https://AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI%2FK7MDENG%2FbPxRfiCYEXAMPLEKEY@endpoint.com"
+        )
+        self.assertEqual(parsed.endpoint_url, "https://endpoint.com")
+        self.assertEqual(parsed.access_key_id, "AKIAIOSFODNN7EXAMPLE")
+        self.assertEqual(parsed.secret_access_key, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+
+        simple = _parse_endpoint_config("https://other.endpoint.com")
+        self.assertEqual(simple.endpoint_url, "https://other.endpoint.com")
+        self.assertIsNone(simple.access_key_id)
+        self.assertIsNone(simple.secret_access_key)
+
+        with self.assertRaisesRegex(ValueError, "S3 access key and secret not in expected format."):
+            _parse_endpoint_config("https://key@endpoint.com")
 
 
 if __name__ == "__main__":

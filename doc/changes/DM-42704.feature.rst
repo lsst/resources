@@ -1,0 +1,1 @@
+``S3ResourcePath`` now supports using multiple S3 endpoints simultaneously.  This is configured using URIs in the form ``s3://profile@bucket/path`` and environment variables ``LSST_RESOURCES_S3_PROFILE_<profile>=https://<access key ID>:<secret key>@<s3 endpoint hostname>``.
