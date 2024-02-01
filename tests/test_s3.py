@@ -272,20 +272,20 @@ class S3WithProfileReadWriteTestCase(S3ReadWriteTestCaseBase, unittest.TestCase)
 
     def test_uri_syntax(self):
         path1 = ResourcePath("s3://profile@bucket/path")
-        self.assertEqual(path1.bucket, "bucket")
-        self.assertEqual(path1.profile, "profile")
+        self.assertEqual(path1._bucket, "bucket")
+        self.assertEqual(path1._profile, "profile")
         path2 = ResourcePath("s3://bucket2/path")
-        self.assertEqual(path2.bucket, "bucket2")
-        self.assertIsNone(path2.profile)
+        self.assertEqual(path2._bucket, "bucket2")
+        self.assertIsNone(path2._profile)
 
     def test_ceph_uri_syntax(self):
         # The Ceph S3 'multi-tenant' syntax for buckets can include colons.
         path1 = ResourcePath("s3://profile@ceph:bucket/path")
-        self.assertEqual(path1.bucket, "ceph:bucket")
-        self.assertEqual(path1.profile, "profile")
+        self.assertEqual(path1._bucket, "ceph:bucket")
+        self.assertEqual(path1._profile, "profile")
         path2 = ResourcePath("s3://ceph:bucket2/path")
-        self.assertEqual(path2.bucket, "ceph:bucket2")
-        self.assertIsNone(path2.profile)
+        self.assertEqual(path2._bucket, "ceph:bucket2")
+        self.assertIsNone(path2._profile)
 
 
 if __name__ == "__main__":
