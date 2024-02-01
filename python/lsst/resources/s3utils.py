@@ -195,19 +195,20 @@ def getS3Client(profile: str | None = None) -> boto3.client:
 
     Notes
     -----
-    If an explicit profile name is specified, its configuration is read from an
-    environment variable named ``LSST_RESOURCES_S3_PROFILE_<profile>``.  Note
-    that the name of the profile is case sensitive.  This configuration is
-    specified in the format:
-    ``https://<access key ID>:<secret key>@<s3 endpoint hostname>``
+    If an explicit profile name is specified, its configuration will be read
+    from an environment variable named ``LSST_RESOURCES_S3_PROFILE_<profile>``
+    if it exists.  Note that the name of the profile is case sensitive.  This
+    configuration is specified in the format: ``https://<access key ID>:<secret
+    key>@<s3 endpoint hostname>``. If the access key ID or secret key values
+    contain slashes, the slashes must be URI-encoded (replace "/" with "%2F").
 
-    If the access key ID or secret key values contain slashes, the slashes must
-    be URI-encoded (replace "/" with "%2F".) The access key ID and secret key
-    are optional -- if not specified, they will be looked up via the AWS
-    credentials file.
+    If profile is `None` or the profile environment variable was not set, the
+    configuration is read from the environment variable ``S3_ENDPOINT_URL``.
+    If it is not specified, the default AWS endpoint is used.
 
-    If profile is `None`, this configuration is from the environment variable
-    S3_ENDPOINT_URL.  If none is specified, the default AWS one is used.
+    The access key ID and secret key are optional -- if not specified, they
+    will be looked up via the `AWS credentials file
+    <https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html>`_.
 
     If the environment variable LSST_DISABLE_BUCKET_VALIDATION exists
     and has a value that is not empty, "0", "f", "n", or "false"
@@ -220,33 +221,37 @@ def getS3Client(profile: str | None = None) -> boto3.client:
     if botocore is None:
         raise ModuleNotFoundError("Could not find botocore. Are you sure it is installed?")
 
-    if profile is None:
-        endpoint = os.environ.get("S3_ENDPOINT_URL", None)
-        if not endpoint:
-            endpoint = None  # Handle ""
-    else:
+    endpoint = None
+    if profile is not None:
         var_name = f"LSST_RESOURCES_S3_PROFILE_{profile}"
         endpoint = os.environ.get(var_name, None)
-        if not endpoint:
-            raise RuntimeError(
-                f"No configuration found for requested S3 profile '{profile}'."
-                f" Set the environment variable '{var_name}' to configure it."
-            )
+    if not endpoint:
+        endpoint = os.environ.get("S3_ENDPOINT_URL", None)
+    if not endpoint:
+        endpoint = None  # Handle ""
 
     disable_value = os.environ.get("LSST_DISABLE_BUCKET_VALIDATION", "0")
     skip_validation = not re.search(r"^(0|f|n|false)?$", disable_value, re.I)
 
-    return _get_s3_client(endpoint, skip_validation)
+    return _get_s3_client(endpoint, profile, skip_validation)
 
 
 @functools.lru_cache
-def _get_s3_client(endpoint: str | None, skip_validation: bool) -> boto3.client:
+def _get_s3_client(endpoint: str | None, profile: str | None, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
     config = botocore.config.Config(read_timeout=180, retries={"mode": "adaptive", "max_attempts": 10})
 
     endpoint_config = _parse_endpoint_config(endpoint)
 
-    client = boto3.client(
+    if endpoint_config.access_key_id is not None and endpoint_config.secret_access_key is not None:
+        # We already have the necessary configuration for the profile, so do
+        # not pass the profile to boto3.  boto3 will raise an exception if the
+        # profile is not defined in its configuration file, whether or not it
+        # needs to read the configuration from it.
+        profile = None
+    session = boto3.Session(profile_name=profile)
+
+    client = session.client(
         "s3",
         endpoint_url=endpoint_config.endpoint_url,
         aws_access_key_id=endpoint_config.access_key_id,

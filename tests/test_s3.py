@@ -253,7 +253,7 @@ class S3WithProfileReadWriteTestCase(S3ReadWriteTestCaseBase, unittest.TestCase)
         super().setUp()
 
     def test_missing_profile(self):
-        with self.assertRaisesRegex(RuntimeError, "No configuration found for requested S3 profile"):
+        with self.assertRaises(botocore.exceptions.ProfileNotFound):
             ResourcePath("s3://otherprofile@bucket").read()
 
     def test_s3_endpoint_url(self):
