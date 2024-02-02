@@ -192,13 +192,48 @@ class S3ResourcePath(ResourcePath):
     @property
     def client(self) -> boto3.client:
         """Client object to address remote resource."""
-        # Defer import for circular dependencies
-        return getS3Client()
+        return getS3Client(self._profile)
+
+    @property
+    def _profile(self) -> str | None:
+        """Profile name to use for looking up S3 credentials and endpoint."""
+        return self._uri.username
+
+    @property
+    def _bucket(self) -> str:
+        """S3 bucket where the files are stored."""
+        # Notionally the bucket is stored in the 'hostname' part of the URI.
+        # However, Ceph S3 uses a "multi-tenant" syntax for bucket names in the
+        # form 'tenant:bucket'.  The part after the colon is parsed as the port
+        # portion of the URI, and urllib throws an exception if you try to read
+        # a non-integer port value.  So manually split off this portion of the
+        # URI.
+        split = self._uri.netloc.split("@")
+        num_components = len(split)
+        if num_components == 2:
+            # There is a profile@ portion of the URL, so take the second half.
+            bucket = split[1]
+        elif num_components == 1:
+            # There is no profile@, so take the whole netloc.
+            bucket = split[0]
+        else:
+            raise ValueError(f"Unexpected extra '@' in S3 URI: '{str(self)}'")
+
+        if not bucket:
+            raise ValueError(f"S3 URI does not include bucket name: '{str(self)}'")
+
+        return bucket
 
     @classmethod
     def _mexists(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, bool]:
-        # Force client to be created before creating threads.
-        getS3Client()
+        # Force client to be created for each profile before creating threads.
+        profiles = set[str | None]()
+        for path in uris:
+            if path.scheme == "s3":
+                path = cast(S3ResourcePath, path)
+                profiles.add(path._profile)
+        for profile in profiles:
+            getS3Client(profile)
 
         return super()._mexists(uris)
 
@@ -207,8 +242,8 @@ class S3ResourcePath(ResourcePath):
         """Check that the S3 resource exists."""
         if self.is_root:
             # Only check for the bucket since the path is irrelevant
-            return bucketExists(self.netloc)
-        exists, _ = s3CheckFileExists(self, client=self.client)
+            return bucketExists(self._bucket, self.client)
+        exists, _ = s3CheckFileExists(self, bucket=self._bucket, client=self.client)
         return exists
 
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
@@ -216,7 +251,7 @@ class S3ResourcePath(ResourcePath):
         """Return the size of the resource in bytes."""
         if self.dirLike:
             return 0
-        exists, sz = s3CheckFileExists(self, client=self.client)
+        exists, sz = s3CheckFileExists(self, bucket=self._bucket, client=self.client)
         if not exists:
             raise FileNotFoundError(f"Resource {self} does not exist")
         return sz
@@ -229,7 +264,7 @@ class S3ResourcePath(ResourcePath):
         # for checking all the keys again, reponse is  HTTP 204 OK
         # response all the time
         try:
-            self.client.delete_object(Bucket=self.netloc, Key=self.relativeToPathRoot)
+            self.client.delete_object(Bucket=self._bucket, Key=self.relativeToPathRoot)
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
             raise FileNotFoundError("No such resource: {self}") from err
 
@@ -239,7 +274,7 @@ class S3ResourcePath(ResourcePath):
         if size > 0:
             args["Range"] = f"bytes=0-{size-1}"
         try:
-            response = self.client.get_object(Bucket=self.netloc, Key=self.relativeToPathRoot, **args)
+            response = self.client.get_object(Bucket=self._bucket, Key=self.relativeToPathRoot, **args)
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
             raise FileNotFoundError(f"No such resource: {self}") from err
         except ClientError as err:
@@ -255,20 +290,20 @@ class S3ResourcePath(ResourcePath):
         if not overwrite and self.exists():
             raise FileExistsError(f"Remote resource {self} exists and overwrite has been disabled")
         with time_this(log, msg="Write to %s", args=(self,)):
-            self.client.put_object(Bucket=self.netloc, Key=self.relativeToPathRoot, Body=data)
+            self.client.put_object(Bucket=self._bucket, Key=self.relativeToPathRoot, Body=data)
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def mkdir(self) -> None:
         """Write a directory key to S3."""
-        if not bucketExists(self.netloc):
-            raise ValueError(f"Bucket {self.netloc} does not exist for {self}!")
+        if not bucketExists(self._bucket, self.client):
+            raise ValueError(f"Bucket {self._bucket} does not exist for {self}!")
 
         if not self.dirLike:
             raise NotADirectoryError(f"Can not create a 'directory' for file-like URI {self}")
 
         # don't create S3 key when root is at the top-level of an Bucket
         if self.path != "/":
-            self.client.put_object(Bucket=self.netloc, Key=self.relativeToPathRoot)
+            self.client.put_object(Bucket=self._bucket, Key=self.relativeToPathRoot)
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def _download_file(self, local_file: IO, progress: ProgressPercentage | None) -> None:
@@ -279,7 +314,7 @@ class S3ResourcePath(ResourcePath):
         """
         try:
             self.client.download_fileobj(
-                self.netloc,
+                self._bucket,
                 self.relativeToPathRoot,
                 local_file,
                 Callback=progress,
@@ -324,7 +359,7 @@ class S3ResourcePath(ResourcePath):
         """
         try:
             self.client.upload_file(
-                local_file.ospath, self.netloc, self.relativeToPathRoot, Callback=progress
+                local_file.ospath, self._bucket, self.relativeToPathRoot, Callback=progress
             )
         except self.client.exceptions.NoSuchBucket as err:
             raise NotADirectoryError(f"Target does not exist: {err}") from err
@@ -333,13 +368,13 @@ class S3ResourcePath(ResourcePath):
             raise
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
-    def _copy_from(self, src: ResourcePath) -> None:
+    def _copy_from(self, src: S3ResourcePath) -> None:
         copy_source = {
-            "Bucket": src.netloc,
+            "Bucket": src._bucket,
             "Key": src.relativeToPathRoot,
         }
         try:
-            self.client.copy_object(CopySource=copy_source, Bucket=self.netloc, Key=self.relativeToPathRoot)
+            self.client.copy_object(CopySource=copy_source, Bucket=self._bucket, Key=self.relativeToPathRoot)
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
             raise FileNotFoundError("No such resource to transfer: {self}") from err
         except ClientError as err:
@@ -469,7 +504,7 @@ class S3ResourcePath(ResourcePath):
         filenames = []
         files_there = False
 
-        for page in s3_paginator.paginate(Bucket=self.netloc, Prefix=prefix, Delimiter="/"):
+        for page in s3_paginator.paginate(Bucket=self._bucket, Prefix=prefix, Delimiter="/"):
             # All results are returned as full key names and we must
             # convert them back to the root form. The prefix is fixed
             # and delimited so that is a simple trim
@@ -507,7 +542,7 @@ class S3ResourcePath(ResourcePath):
         *,
         encoding: str | None = None,
     ) -> Iterator[ResourceHandleProtocol]:
-        with S3ResourceHandle(mode, log, self.client, self.netloc, self.relativeToPathRoot) as handle:
+        with S3ResourceHandle(mode, log, self.client, self._bucket, self.relativeToPathRoot) as handle:
             if "b" in mode:
                 yield handle
             else:
@@ -529,6 +564,6 @@ class S3ResourcePath(ResourcePath):
     def _generate_presigned_url(self, method: str, expiration_time_seconds: int) -> str:
         return self.client.generate_presigned_url(
             method,
-            Params={"Bucket": self.netloc, "Key": self.relativeToPathRoot},
+            Params={"Bucket": self._bucket, "Key": self.relativeToPathRoot},
             ExpiresIn=expiration_time_seconds,
         )
