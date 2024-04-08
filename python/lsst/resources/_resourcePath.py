@@ -417,7 +417,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         uri : `ResourcePath`
             Root URI.
         """
-        return self.replace(path="", forceDirectory=True)
+        return self.replace(path="", query="", fragment="", params="", forceDirectory=True)
 
     def split(self) -> tuple[ResourcePath, str]:
         """Split URI into head and tail.
