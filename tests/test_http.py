@@ -59,6 +59,29 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
     scheme = "http"
     netloc = "server.example"
 
+    def test_root_uri(self):
+        self.assertEqual(ResourcePath("http://server.com").root_uri(), ResourcePath("http://server.com/"))
+        self.assertEqual(
+            ResourcePath("http://user:password@server.com:3000/").root_uri(),
+            ResourcePath("http://user:password@server.com:3000/"),
+        )
+        self.assertEqual(
+            ResourcePath("http://user:password@server.com:3000/some/path").root_uri(),
+            ResourcePath("http://user:password@server.com:3000/"),
+        )
+        self.assertEqual(
+            ResourcePath("http://user:password@server.com:3000/some/path#fragment").root_uri(),
+            ResourcePath("http://user:password@server.com:3000/"),
+        )
+        self.assertEqual(
+            ResourcePath("http://user:password@server.com:3000/some/path?param=value").root_uri(),
+            ResourcePath("http://user:password@server.com:3000/"),
+        )
+        self.assertEqual(
+            ResourcePath("http://user:password@server.com:3000/some/path;parameters").root_uri(),
+            ResourcePath("http://user:password@server.com:3000/"),
+        )
+
 
 class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
     """Test with a real webDAV server, as opposed to mocking responses."""
