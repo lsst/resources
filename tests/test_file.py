@@ -145,6 +145,16 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertTrue(tmp.exists())
         self.assertFalse(tmp.exists(), f"uri: {tmp}")
 
+        with ResourcePath.temporary_uri(suffix=".yaml", delete=False) as tmp:
+            tmp.write(b"1234")
+            self.assertTrue(tmp.exists(), f"uri: {tmp}")
+        exists = tmp.exists()
+        try:
+            tmp.remove()
+        except Exception:
+            pass
+        self.assertTrue(exists, f"uri: {tmp} should still exist")
+
     def test_transfers_from_local(self):
         """Extra tests for local transfers."""
         target = self.tmpdir.join("a/target.txt")
