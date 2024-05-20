@@ -23,7 +23,6 @@ import os.path
 import random
 import re
 import stat
-import tempfile
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, BinaryIO, cast
 
@@ -1156,21 +1155,22 @@ class HttpResourcePath(ResourcePath):
                 )
 
             tmpdir, buffering = _get_temp_dir()
-            with tempfile.NamedTemporaryFile(
-                suffix=self.getExtension(), buffering=buffering, dir=tmpdir, delete=False
-            ) as tmpFile:
+            with ResourcePath.temporary_uri(
+                suffix=self.getExtension(), prefix=ResourcePath(tmpdir, forceDirectory=True), delete=False
+            ) as tmp_uri:
                 expected_length = int(resp.headers.get("Content-Length", "-1"))
                 with time_this(
                     log,
                     msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
-                    args=(self, expected_length, tmpFile.name, buffering),
+                    args=(self, expected_length, tmp_uri, buffering),
                     mem_usage=self._config.collect_memory_usage,
                     mem_unit=u.mebibyte,
                 ):
                     content_length = 0
-                    for chunk in resp.iter_content(chunk_size=buffering):
-                        tmpFile.write(chunk)
-                        content_length += len(chunk)
+                    with open(tmp_uri.ospath, "wb", buffering=buffering) as tmpFile:
+                        for chunk in resp.iter_content(chunk_size=buffering):
+                            tmpFile.write(chunk)
+                            content_length += len(chunk)
 
             # Check that the expected and actual content lengths match. Perform
             # this check only when the contents of the file was not encoded by

@@ -19,7 +19,6 @@ import logging
 import os
 import re
 import sys
-import tempfile
 import threading
 from collections.abc import Iterable, Iterator
 from functools import cache, cached_property
@@ -306,7 +305,9 @@ class S3ResourcePath(ResourcePath):
             self.client.put_object(Bucket=self._bucket, Key=self.relativeToPathRoot)
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
-    def _download_file(self, local_file: IO, progress: ProgressPercentage | None) -> None:
+    def _download_file(
+        self, local_file: IO | ResourceHandleProtocol, progress: ProgressPercentage | None
+    ) -> None:
         """Download the remote resource to a local file.
 
         Helper routine for _as_local to allow backoff without regenerating
@@ -340,7 +341,7 @@ class S3ResourcePath(ResourcePath):
             Always returns `True`. This is always a temporary file.
         """
         with (
-            tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile,
+            ResourcePath.temporary_uri(suffix=self.getExtension(), delete=False) as tmp_uri,
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             progress = (
@@ -348,8 +349,9 @@ class S3ResourcePath(ResourcePath):
                 if log.isEnabledFor(ProgressPercentage.log_level)
                 else None
             )
-            self._download_file(tmpFile, progress)
-        return tmpFile.name, True
+            with tmp_uri.open("wb") as tmpFile:
+                self._download_file(tmpFile, progress)
+        return tmp_uri.ospath, True
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def _upload_file(self, local_file: ResourcePath, progress: ProgressPercentage | None) -> None:
