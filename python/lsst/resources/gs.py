@@ -18,7 +18,6 @@ __all__ = ("GSResourcePath",)
 import contextlib
 import logging
 import re
-import tempfile
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
@@ -205,14 +204,15 @@ class GSResourcePath(ResourcePath):
 
     def _as_local(self) -> tuple[str, bool]:
         with (
-            tempfile.NamedTemporaryFile(suffix=self.getExtension(), delete=False) as tmpFile,
+            ResourcePath.temporary_uri(suffix=self.getExtension(), delete=False) as tmp_uri,
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             try:
-                self.blob.download_to_file(tmpFile, retry=_RETRY_POLICY)
+                with tmp_uri.open("wb") as tmpFile:
+                    self.blob.download_to_file(tmpFile, retry=_RETRY_POLICY)
             except NotFound as e:
                 raise FileNotFoundError(f"No such resource: {self}") from e
-        return tmpFile.name, True
+        return tmp_uri.ospath, True
 
     def transfer_from(
         self,

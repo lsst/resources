@@ -953,7 +953,10 @@ class ResourcePath:  # numpydoc ignore=PR02
     @classmethod
     @contextlib.contextmanager
     def temporary_uri(
-        cls, prefix: ResourcePath | None = None, suffix: str | None = None
+        cls,
+        prefix: ResourcePath | None = None,
+        suffix: str | None = None,
+        delete: bool = True,
     ) -> Iterator[ResourcePath]:
         """Create a temporary file-like URI.
 
@@ -966,6 +969,11 @@ class ResourcePath:  # numpydoc ignore=PR02
         suffix : `str`, optional
             A file suffix to be used. The ``.`` should be included in this
             suffix.
+        delete : `bool`, optional
+            By default the resource will be deleted when the context manager
+            is exited. Setting this flag to `False` will leave the resource
+            alone. `False` will also retain any directories that may have
+            been created.
 
         Yields
         ------
@@ -1002,13 +1010,14 @@ class ResourcePath:  # numpydoc ignore=PR02
         try:
             yield temporary_uri
         finally:
-            if use_tempdir:
-                shutil.rmtree(prefix.ospath, ignore_errors=True)
-            else:
-                with contextlib.suppress(FileNotFoundError):
-                    # It's okay if this does not work because the user removed
-                    # the file.
-                    temporary_uri.remove()
+            if delete:
+                if use_tempdir:
+                    shutil.rmtree(prefix.ospath, ignore_errors=True)
+                else:
+                    with contextlib.suppress(FileNotFoundError):
+                        # It's okay if this does not work because the user
+                        # removed the file.
+                        temporary_uri.remove()
 
     def read(self, size: int = -1) -> bytes:
         """Open the resource and return the contents in bytes.
