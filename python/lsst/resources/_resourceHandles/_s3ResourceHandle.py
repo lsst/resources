@@ -23,6 +23,7 @@ from botocore.exceptions import ClientError
 from lsst.utils.introspection import find_outside_stacklevel
 from lsst.utils.timer import time_this
 
+from .._resourcePath import ResourcePath
 from ..s3utils import all_retryable_errors, backoff, max_retry_time
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
@@ -46,6 +47,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         The name of the s3 bucket of this resource.
     key : `str`
         The identifier of the resource within the specified bucket.
+    uri : `ResourcePath`
+        The `ResourcePath` object corresponding to this handle.
     newline : `str`
         When doing multiline operations, break the stream on given character.
         Defaults to newline.
@@ -74,7 +77,14 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
     """
 
     def __init__(
-        self, mode: str, log: Logger, client: boto3.client, bucket: str, key: str, newline: bytes = b"\n"
+        self,
+        mode: str,
+        log: Logger,
+        client: boto3.client,
+        bucket: str,
+        key: str,
+        uri: ResourcePath,
+        newline: bytes = b"\n",
     ):
         super().__init__(mode, log, newline=newline)
         self._client = client
@@ -88,6 +98,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         self._readable = bool({"r", "+"} & set(self._mode))
         self._max_size: int | None = None
         self._recursing = False
+        self._uri = uri
+        self._total_size = -1  # Unknown size.
         if {"w", "a", "x", "+"} & set(self._mode):
             self._writable = True
             self._multiPartUpload = client.create_multipart_upload(Bucket=bucket, Key=key)
@@ -210,6 +222,12 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
     def isatty(self) -> bool:
         return False
 
+    def _size(self) -> int:
+        # To allow SEEK_END to work.
+        if self._total_size == -1:
+            self._total_size = self._uri.size()
+        return self._total_size
+
     def readable(self) -> bool:
         return self._readable
 
@@ -239,8 +257,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             elif whence == SEEK_CUR:
                 self._position += offset
             elif whence == SEEK_END:
-                offset = abs(offset)
-                self._position -= offset
+                self._position = self._size() + offset
         return self._position
 
     def seekable(self) -> bool:

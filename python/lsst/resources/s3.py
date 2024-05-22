@@ -544,7 +544,9 @@ class S3ResourcePath(ResourcePath):
         *,
         encoding: str | None = None,
     ) -> Iterator[ResourceHandleProtocol]:
-        with S3ResourceHandle(mode, log, self.client, self._bucket, self.relativeToPathRoot) as handle:
+        with S3ResourceHandle(
+            mode, log, self.client, self._bucket, self.relativeToPathRoot, uri=self
+        ) as handle:
             if "b" in mode:
                 yield handle
             else:

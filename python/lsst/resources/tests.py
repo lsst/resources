@@ -174,6 +174,15 @@ def _check_open(
                 read_buffer.seek(seek2)
                 content2 = read_buffer.read()
                 test_case.assertEqual(len(content2), size - seek2)
+            # Check that we can seek from end and read and seek and read.
+            # Negative seek only works in binary mode.
+            with uri.open("rb", **kwargs) as read_buffer:
+                read_buffer.seek(-5, 2)  # Relative to end
+                content_read = read_buffer.read()
+                test_case.assertEqual(len(content_read), 5)
+                read_buffer.seek(-10, 2)  # Relative to end
+                content_read = read_buffer.read()
+                test_case.assertEqual(len(content_read), 10)
         with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
             test_case.assertEqual(read_buffer.read(), content)
         # Remove file to make room for the next loop of tests with this URI.

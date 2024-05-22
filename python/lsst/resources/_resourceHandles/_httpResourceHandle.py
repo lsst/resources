@@ -22,6 +22,7 @@ from typing import AnyStr, NamedTuple
 import requests
 from lsst.utils.timer import time_this
 
+from .._resourcePath import ResourcePath
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 
@@ -75,6 +76,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         self._closed = CloseStatus.OPEN
         self._current_position = 0
         self._eof = False
+        self._total_size = -1  # Unknown
 
     def close(self) -> None:
         self._closed = CloseStatus.CLOSED
@@ -106,12 +108,19 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def readlines(self, size: int = -1) -> Iterable[bytes]:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
+    def _size(self) -> int:
+        if self._total_size == -1:
+            self._total_size = ResourcePath(self._url).size()
+        return self._total_size
+
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
         self._eof = False
         if whence == io.SEEK_CUR and (self._current_position + offset) >= 0:
             self._current_position += offset
         elif whence == io.SEEK_SET and offset >= 0:
             self._current_position = offset
+        elif whence == io.SEEK_END:
+            self._current_position = self._size() + offset
         else:
             raise io.UnsupportedOperation("Seek value is incorrect, or whence mode is unsupported")
 
@@ -195,6 +204,9 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         # server.
         if "Content-Range" in resp.headers:
             content_range = parse_content_range_header(resp.headers["Content-Range"])
+            if content_range.total is not None:
+                # Store in case we need this later.
+                self._total_size = content_range.total
             if (
                 content_range.total is not None
                 and content_range.range_end is not None
