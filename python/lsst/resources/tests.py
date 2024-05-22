@@ -160,6 +160,20 @@ def _check_open(
             rw_buffer.write(content)
             rw_buffer.seek(0)
             test_case.assertEqual(rw_buffer.read(), content)
+        # Check that two seeks with reads to end return correctly.
+        # Seek is only reliable with "b" mode.
+        if mode_suffix == "b":
+            with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
+                size = len(content)
+                seek1 = 2 * size // 3
+                read_buffer.seek(seek1)
+                content1 = read_buffer.read()
+                test_case.assertEqual(len(content1), size - seek1)
+                # Seek earlier and then read to end.
+                seek2 = size // 2
+                read_buffer.seek(seek2)
+                content2 = read_buffer.read()
+                test_case.assertEqual(len(content2), size - seek2)
         with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
             test_case.assertEqual(read_buffer.read(), content)
         # Remove file to make room for the next loop of tests with this URI.

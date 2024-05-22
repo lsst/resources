@@ -190,16 +190,6 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
                 f"Unable to read resource {self._url}, or bytes are out of range; status code: {code}"
             )
 
-        len_content = len(resp.content)
-
-        # verify this is not actually the whole file and the server did not lie
-        # about supporting ranges
-        if len_content > size or code != requests.codes.partial:
-            self._completeBuffer = io.BytesIO()
-            self._completeBuffer.write(resp.content)
-            self._completeBuffer.seek(0)
-            return self.read(size=size)
-
         # The response header should tell us the total number of bytes
         # in the file and also the current position we have got to in the
         # server.
@@ -215,6 +205,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         # Try to guess that we overran the end. This will not help if we
         # read exactly the number of bytes to get us to the end and so we
         # will need to do one more read and get a 416.
+        len_content = len(resp.content)
         if len_content < size:
             self._eof = True
 
