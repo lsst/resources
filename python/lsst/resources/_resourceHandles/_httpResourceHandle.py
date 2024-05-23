@@ -22,6 +22,7 @@ from typing import AnyStr, NamedTuple
 import requests
 from lsst.utils.timer import time_this
 
+from .._resourcePath import ResourcePath
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 
@@ -75,6 +76,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         self._closed = CloseStatus.OPEN
         self._current_position = 0
         self._eof = False
+        self._total_size = -1  # Unknown
 
     def close(self) -> None:
         self._closed = CloseStatus.CLOSED
@@ -106,12 +108,19 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def readlines(self, size: int = -1) -> Iterable[bytes]:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
+    def _size(self) -> int:
+        if self._total_size == -1:
+            self._total_size = ResourcePath(self._url).size()
+        return self._total_size
+
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
         self._eof = False
         if whence == io.SEEK_CUR and (self._current_position + offset) >= 0:
             self._current_position += offset
         elif whence == io.SEEK_SET and offset >= 0:
             self._current_position = offset
+        elif whence == io.SEEK_END:
+            self._current_position = self._size() + offset
         else:
             raise io.UnsupportedOperation("Seek value is incorrect, or whence mode is unsupported")
 
@@ -190,21 +199,14 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
                 f"Unable to read resource {self._url}, or bytes are out of range; status code: {code}"
             )
 
-        len_content = len(resp.content)
-
-        # verify this is not actually the whole file and the server did not lie
-        # about supporting ranges
-        if len_content > size or code != requests.codes.partial:
-            self._completeBuffer = io.BytesIO()
-            self._completeBuffer.write(resp.content)
-            self._completeBuffer.seek(0)
-            return self.read(size=size)
-
         # The response header should tell us the total number of bytes
         # in the file and also the current position we have got to in the
         # server.
         if "Content-Range" in resp.headers:
             content_range = parse_content_range_header(resp.headers["Content-Range"])
+            if content_range.total is not None:
+                # Store in case we need this later.
+                self._total_size = content_range.total
             if (
                 content_range.total is not None
                 and content_range.range_end is not None
@@ -215,6 +217,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         # Try to guess that we overran the end. This will not help if we
         # read exactly the number of bytes to get us to the end and so we
         # will need to do one more read and get a 416.
+        len_content = len(resp.content)
         if len_content < size:
             self._eof = True
 
