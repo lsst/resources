@@ -1,1 +1,0 @@
-``HttpResourcePath.exists()`` and ``HttpResourcePath.size()`` now work for S3 HTTP URLs pre-signed for GET.

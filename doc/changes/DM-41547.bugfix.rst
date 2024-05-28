@@ -1,1 +1,0 @@
-Installing optional dependencies for ``s3`` and ``https`` will no longer pull in libraries only required for running unit tests (``moto`` and ``responses``).
