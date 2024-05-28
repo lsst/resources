@@ -1,3 +1,50 @@
+Resources 27.0.0 2024-05-28
+===========================
+
+This release requires Python 3.11 or newer.
+
+New Features
+------------
+
+- Added methods to ResourcePath for generating presigned HTTP URLs: ``generate_presigned_get_url`` and ``generate_presigned_put_url``.  These are currently only implemented for S3. (`DM-41879 <https://jira.lsstcorp.org/browse/DM-41879>`_)
+- The ``forceDirectory`` flag now has three states.
+  As before `True` indicates that it is known that the URI refers to a directory-like entity.
+  Now `False` indicates that it is known that the URI refers to a file-like entity.
+  `None` is the new default and that indicates that the caller does not know and that the status should be inferred either by checking the file system or looking for a trailing ``/``.
+  It is now an error to create a ``ResourcePath`` which has a trailing ``/`` but with ``forceDirectory=False``. (`DM-42306 <https://jira.lsstcorp.org/browse/DM-42306>`_)
+- ``S3ResourcePath`` now supports using multiple S3 endpoints simultaneously.  This is configured using URIs in the form ``s3://profile@bucket/path`` and environment variables ``LSST_RESOURCES_S3_PROFILE_<profile>=https://<access key ID>:<secret key>@<s3 endpoint hostname>``. (`DM-42704 <https://jira.lsstcorp.org/browse/DM-42704>`_)
+- Allow threading of S3 downloads to be turned off by setting either the ``LSST_S3_USE_THREADS`` environment variable or the ``S3ResourcePath.use_threads`` class member. (`PREOPS-4765 <https://jira.lsstcorp.org/browse/PREOPS-4765>`_)
+
+
+Bug Fixes
+---------
+
+- When the process's filesystem umask set to a restrictive value like 0222, ``transfer_from``, ``write``, and ``mkdir`` no longer fail due to incorrect permissions on newly-created parent directories. (`DM-41112 <https://jira.lsstcorp.org/browse/DM-41112>`_)
+- Installing optional dependencies for ``s3`` and ``https`` will no longer pull in libraries only required for running unit tests (``moto`` and ``responses``). (`DM-41547 <https://jira.lsstcorp.org/browse/DM-41547>`_)
+- ``HttpResourcePath.exists()`` and ``HttpResourcePath.size()`` now work for S3 HTTP URLs pre-signed for GET. (`DM-42522 <https://jira.lsstcorp.org/browse/DM-42522>`_)
+- ``ResourePath.root_uri()`` now strips query parameters and fragments from the URL.  This fixes a memory leak where ``HttpResourcePath`` would create and cache a new HTTP session for each different set of query parameters. (`DM-43739 <https://jira.lsstcorp.org/browse/DM-43739>`_)
+
+
+Performance Enhancement
+-----------------------
+
+- * Schemeless URIs no longer check the file system on construction.
+  * Both ``getExtension`` and ``relativeToPathRoot`` have been rewritten to no longer use `pathlib`.
+  * It is now possible to declare that a URI is file-like on construction. Use ``forceDirectory=False``. (`DM-42306 <https://jira.lsstcorp.org/browse/DM-42306>`_)
+
+
+Miscellaneous Changes of Minor Interest
+---------------------------------------
+
+- * ``getExtension()`` now works for directories. (`DM-42306 <https://jira.lsstcorp.org/browse/DM-42306>`_)
+
+
+An API Removal or Deprecation
+-----------------------------
+
+- Deprecated ``clean_test_environment``, ``setAwsEnvCredentials``, and ``unsetAwsEnvCredentials`` from the ``s3utils`` submodule.  The new function ``clean_test_environment_for_s3`` replaces these. (`DM-41879 <https://jira.lsstcorp.org/browse/DM-41879>`_)
+
+
 Resources v26.0.0 2023-09-22
 ============================
 
