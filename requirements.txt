@@ -1,6 +1,4 @@
 lsst-utils  @ git+https://github.com/lsst/utils@main
-# Needed for Python <=3.10
-importlib_resources
 # optional
 backoff >= 1.10
 boto3 >= 1.13

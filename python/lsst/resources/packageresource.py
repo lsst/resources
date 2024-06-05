@@ -16,18 +16,8 @@ __all__ = ("PackageResourcePath",)
 import contextlib
 import logging
 import re
-import sys
-
-if sys.version_info < (3, 11, 0):
-    # Mypy will try to use the first import it encounters and ignores
-    # the sys.version_info. This means that the first import has to be
-    # the backwards compatibility import since we are currently using 3.10
-    # for mypy. Once we switch to 3.11 for mypy the order will have to change.
-    import importlib_resources as resources
-else:
-    from importlib import resources  # type: ignore[no-redef]
-
 from collections.abc import Iterator
+from importlib import resources
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourcePath
@@ -132,7 +122,9 @@ class PackageResourcePath(ResourcePath):
         ref = self._get_ref()
         if ref is None:
             raise FileNotFoundError(f"Could not open resource {self}.")
-        with ref.open(mode, encoding=encoding) as buffer:
+        # mypy uses the literal value of mode to work out the parameters
+        # and return value but mode here is a variable.
+        with ref.open(mode, encoding=encoding) as buffer:  # type: ignore[call-overload]
             yield buffer
 
     def walk(
