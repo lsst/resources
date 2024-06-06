@@ -16,72 +16,64 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           # Need to clone everything for the git tags.
           fetch-depth: 0
 
-      - uses: conda-incubator/setup-miniconda@v2
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          channels: conda-forge,defaults
-          channel-priority: strict
-          show-channel-urls: true
+          cache: "pip"
+          cache-dependency-path: "setup.cfg"
 
       - name: Update pip/wheel infrastructure
         shell: bash -l {0}
         run: |
-          conda install -y -q pip wheel
+          pip install --upgrade pip uv
+          uv pip install --system wheel
 
       - name: Install cryptography package for moto
-        shell: bash -l {0}
         run: |
-          conda install -y -q cryptography
+          uv pip install --system cryptography
 
       - name: Install WebDAV packages for testing
-        shell: bash -l {0}
         run: |
-          pip install cheroot wsgidav
+          uv pip install --system cheroot wsgidav
 
       - name: Install google cloud storage for testing
-        shell: bash -l {0}
         run: |
-          pip install google-cloud-storage
+          uv pip install --system google-cloud-storage
 
       - name: Install dependencies
-        shell: bash -l {0}
         run: |
-          pip install -r requirements.txt
+          uv pip install --system -r requirements.txt
 
       # We have two cores so we can speed up the testing with xdist
       - name: Install pytest packages
-        shell: bash -l {0}
         run: |
-          conda install -y -q \
-            pytest pytest-xdist pytest-openfiles pytest-cov
+          uv pip install --system pytest pytest-xdist pytest-cov
 
       - name: List installed packages
-        shell: bash -l {0}
         run: |
-          conda list
           pip list -v
 
       - name: Build and install
-        shell: bash -l {0}
         run: |
-          python -m pip install --no-deps -v -e .
+          uv pip install --system --no-deps -v -e .
 
       - name: Run tests
-        shell: bash -l {0}
         env:
           S3_ENDPOINT_URL: "https://google.com"
         run: |
-          pytest -r a -v -n 3 --open-files --cov=lsst.resources\
+          pytest -r a -v -n 3 --cov=lsst.resources\
                  --cov=tests --cov-report=xml --cov-report=term --cov-branch
       - name: Upload coverage to codecov
-        uses: codecov/codecov-action@v2
+        uses: codecov/codecov-action@v4
         with:
-          file: ./coverage.xml
+          files: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   pypi:
 
@@ -90,13 +82,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           # Need to clone everything to embed the version.
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
