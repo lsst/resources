@@ -134,7 +134,7 @@ class GSResourcePath(ResourcePath):
     @property
     def bucket(self) -> storage.Bucket:
         if self._bucket is None:
-            self._bucket = self.client.get_bucket(self.netloc, retry=_RETRY_POLICY)
+            self._bucket = self.client.bucket(self.netloc)
         return self._bucket
 
     @property
