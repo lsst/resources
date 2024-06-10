@@ -1333,7 +1333,10 @@ class HttpResourcePath(ResourcePath):
         )
 
     def _head(self) -> requests.Response:
-        """Send a HEAD webDAV request for this resource."""
+        """Send a HEAD request for this resource."""
+        if not self.is_webdav_endpoint:
+            # The remote is a plain HTTP server.
+            return self._head_non_webdav_url()
         return self._send_webdav_request("HEAD")
 
     def _mkcol(self) -> None:
