@@ -1563,7 +1563,7 @@ class HttpResourcePath(ResourcePath):
         handle: ResourceHandleProtocol
         if mode in ("rb", "r") and accepts_range:
             handle = HttpReadResourceHandle(
-                mode, log, url=self.geturl(), session=self.data_session, timeout=self._config.timeout
+                mode, log, self, session=self.data_session, timeout=self._config.timeout
             )
             if mode == "r":
                 # cast because the protocol is compatible, but does not have

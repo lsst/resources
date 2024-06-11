@@ -1470,6 +1470,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         in_bytes = self.read() if "r" in mode or "a" in mode else b""
         if "b" in mode:
             bytes_buffer = io.BytesIO(in_bytes)
+            bytes_buffer.name = str(self)
             if "a" in mode:
                 bytes_buffer.seek(0, io.SEEK_END)
             yield bytes_buffer
@@ -1478,6 +1479,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             if encoding is None:
                 encoding = locale.getpreferredencoding(False)
             str_buffer = io.StringIO(in_bytes.decode(encoding))
+            str_buffer.name = str(self)
             if "a" in mode:
                 str_buffer.seek(0, io.SEEK_END)
             yield str_buffer
