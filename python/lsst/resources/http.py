@@ -1565,9 +1565,7 @@ class HttpResourcePath(ResourcePath):
         accepts_range = resp.status_code == requests.codes.ok and resp.headers.get("Accept-Ranges") == "bytes"
         handle: ResourceHandleProtocol
         if mode in ("rb", "r") and accepts_range:
-            handle = HttpReadResourceHandle(
-                mode, log, url=self.geturl(), session=self.data_session, timeout=self._config.timeout
-            )
+            handle = HttpReadResourceHandle(mode, log, self, timeout=self._config.timeout)
             if mode == "r":
                 # cast because the protocol is compatible, but does not have
                 # BytesIO in the inheritance tree

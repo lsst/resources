@@ -479,7 +479,7 @@ class FileResourcePath(ResourcePath):
         *,
         encoding: str | None = None,
     ) -> Iterator[IO]:
-        with FileResourceHandle(mode=mode, log=log, filename=self.ospath, encoding=encoding) as buffer:
+        with FileResourceHandle(mode=mode, log=log, uri=self, encoding=encoding) as buffer:
             yield buffer  # type: ignore
 
 

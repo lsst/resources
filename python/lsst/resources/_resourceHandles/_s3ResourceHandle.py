@@ -13,22 +13,21 @@ from __future__ import annotations
 
 __all__ = ("S3ResourceHandle",)
 
+import logging
 import warnings
 from collections.abc import Iterable, Mapping
 from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO, UnsupportedOperation
-from logging import Logger
 from typing import TYPE_CHECKING
 
 from botocore.exceptions import ClientError
 from lsst.utils.introspection import find_outside_stacklevel
 from lsst.utils.timer import time_this
 
-from .._resourcePath import ResourcePath
 from ..s3utils import all_retryable_errors, backoff, max_retry_time
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 if TYPE_CHECKING:
-    import boto3
+    from ..s3 import S3ResourcePath
 
 
 class S3ResourceHandle(BaseResourceHandle[bytes]):
@@ -40,15 +39,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         Handle modes as described in the python `io` module.
     log : `~logging.Logger`
         Logger to used when writing messages.
-    client : `boto3.client`
-        An existing boto3 client that will be used for interacting with the
-        remote s3 server.
-    bucket : `str`
-        The name of the s3 bucket of this resource.
-    key : `str`
-        The identifier of the resource within the specified bucket.
-    uri : `ResourcePath`
-        The `ResourcePath` object corresponding to this handle.
+    uri : `lsst.resources.s3.S3ResourcePath`
+        The `~lsst.resources.ResourcePath` object corresponding to this handle.
     newline : `str`
         When doing multiline operations, break the stream on given character.
         Defaults to newline.
@@ -79,17 +71,14 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
     def __init__(
         self,
         mode: str,
-        log: Logger,
-        client: boto3.client,
-        bucket: str,
-        key: str,
-        uri: ResourcePath,
+        log: logging.Logger,
+        uri: S3ResourcePath,
         newline: bytes = b"\n",
     ):
-        super().__init__(mode, log, newline=newline)
-        self._client = client
-        self._bucket = bucket
-        self._key = key
+        super().__init__(mode, log, uri, newline=newline)
+        self._client = uri.client
+        self._bucket = uri._bucket
+        self._key = uri.relativeToPathRoot
         self._buffer = BytesIO()
         self._position = 0
         self._writable = False
@@ -98,11 +87,10 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         self._readable = bool({"r", "+"} & set(self._mode))
         self._max_size: int | None = None
         self._recursing = False
-        self._uri = uri
         self._total_size = -1  # Unknown size.
         if {"w", "a", "x", "+"} & set(self._mode):
             self._writable = True
-            self._multiPartUpload = client.create_multipart_upload(Bucket=bucket, Key=key)
+            self._multiPartUpload = self._client.create_multipart_upload(Bucket=self._bucket, Key=self._key)
             self._partNo = 1
             self._parts: list[Mapping] = []
             # Below is a workaround for append mode. It basically must read in
