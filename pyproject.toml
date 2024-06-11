@@ -104,7 +104,7 @@ version = { attr = "lsst_versions.get_lsst_version" }
 
 [tool.black]
 line-length = 110
-target-version = ["py310"]
+target-version = ["py311"]
 
 [tool.isort]
 profile = "black"
