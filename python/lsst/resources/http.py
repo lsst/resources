@@ -23,6 +23,7 @@ import os.path
 import random
 import re
 import stat
+import tempfile
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, BinaryIO, cast
 
@@ -364,8 +365,10 @@ def _get_temp_dir() -> tuple[str, int]:
         return _TMPDIR
 
     # Use the value of environment variables 'LSST_RESOURCES_TMPDIR' or
-    # 'TMPDIR', if defined. Otherwise use current working directory.
-    tmpdir = os.getcwd()
+    # 'TMPDIR', if defined. Otherwise use the system temporary directory,
+    # with a last-resort fallback to the current working directory if nothing
+    # else is available.
+    tmpdir = tempfile.gettempdir()
     for dir in (os.getenv(v) for v in ("LSST_RESOURCES_TMPDIR", "TMPDIR")):
         if dir and os.path.isdir(dir):
             tmpdir = dir
