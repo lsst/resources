@@ -14,9 +14,9 @@ from __future__ import annotations
 __all__ = ("HttpReadResourceHandle",)
 
 import io
+import logging
 import re
 from collections.abc import Callable, Iterable
-from logging import Logger
 from typing import AnyStr, NamedTuple
 
 import requests
@@ -35,10 +35,10 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         Handle modes as described in the python `io` module.
     log : `~logging.Logger`
         Logger to used when writing messages.
+    uri : `lsst.resources.ResourcePath`
+        URI of remote resource.
     session : `requests.Session`
         The session to use for this handle.
-    url : `str`
-        URL of remote resource.
     timeout : `tuple` [`int`, `int`]
         Timeout to use for connections: connection timeout and read timeout
         in a tuple.
@@ -52,17 +52,15 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def __init__(
         self,
         mode: str,
-        log: Logger,
+        log: logging.Logger,
+        uri: ResourcePath,
         *,
         session: requests.Session | None = None,
-        url: str | None = None,
         timeout: tuple[float, float] | None = None,
         newline: AnyStr | None = None,
     ) -> None:
-        super().__init__(mode, log, newline=newline)
-        if url is None:
-            raise ValueError("Url must be specified when constructing this object")
-        self._url = url
+        super().__init__(mode, log, uri, newline=newline)
+        self._url = uri.geturl()
         if session is None:
             raise ValueError("Session must be specified when constructing this object")
         self._session = session
