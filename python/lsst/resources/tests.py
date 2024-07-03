@@ -85,6 +85,9 @@ def _check_open(
         # Read the file we created and check the contents.
         with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
             test_case.assertEqual(read_buffer.read(), content)
+            # The names will not match if a local temporary is being written.
+            if not kwargs.get("prefer_file_temporary"):
+                test_case.assertIn(uri.basename(), read_buffer.name)
         # Check that we can read bytes in a loop and get EOF
         with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
             # Seek off the end of the file and should read empty back.

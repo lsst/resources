@@ -12,12 +12,15 @@ from __future__ import annotations
 
 __all__ = ("FileResourceHandle",)
 
+import logging
 from collections.abc import Iterable
 from io import SEEK_SET
-from logging import Logger
-from typing import IO, AnyStr, TypeVar
+from typing import IO, TYPE_CHECKING, AnyStr, TypeVar
 
 from ._baseResourceHandle import BaseResourceHandle
+
+if TYPE_CHECKING:
+    from .._resourcePath import ResourcePath
 
 U = TypeVar("U", str, bytes)
 
@@ -31,8 +34,8 @@ class FileResourceHandle(BaseResourceHandle[U]):
         Handle modes as described in the python `io` module.
     log : `~logging.Logger`
         Logger to used when writing messages.
-    filename : `str`
-        Name of the file on the filesystem to use.
+    uri : `lsst.resources.ResourcePath`
+        URI of the file on the filesystem to use.
     encoding : `str` or None
         Optionally supply the encoding of the file.
     newline : `str`
@@ -47,12 +50,19 @@ class FileResourceHandle(BaseResourceHandle[U]):
     corresponding methods in the `io` module.
     """
 
-    def __init__(self, mode: str, log: Logger, *, filename: str, encoding: str | None, newline: str = "\n"):
-        super().__init__(mode, log, newline=newline)
-        self._filename = filename
+    def __init__(
+        self, mode: str, log: logging.Logger, uri: ResourcePath, *, encoding: str | None, newline: str = "\n"
+    ):
+        super().__init__(mode, log, uri, newline=newline)
+        self._filename = uri.ospath
         # opening a file in binary mode does not support a newline argument
         newline_arg = None if "b" in mode else newline
-        self._fileHandle: IO = open(file=filename, mode=self._mode, newline=newline_arg, encoding=encoding)
+        self._fileHandle: IO = open(file=uri.ospath, mode=self._mode, newline=newline_arg, encoding=encoding)
+
+    @property
+    def name(self) -> str:
+        # More consistent to return the path without the file://.
+        return self._uri.ospath
 
     @property
     def mode(self) -> str:

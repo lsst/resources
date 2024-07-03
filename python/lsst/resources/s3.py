@@ -98,13 +98,15 @@ class ProgressPercentage:
             )
 
 
-def _translate_client_error(err: ClientError) -> None:
+def _translate_client_error(err: ClientError, uri: ResourcePath) -> None:
     """Translate a ClientError into a specialist error if relevant.
 
     Parameters
     ----------
     err : `ClientError`
         Exception to translate.
+    uri : `ResourcePath`
+        The URI of the resource that is resulting in the error.
 
     Raises
     ------
@@ -115,10 +117,10 @@ def _translate_client_error(err: ClientError) -> None:
         # ClientError includes the error code in the message
         # but no direct way to access it without looking inside the
         # response.
-        raise _TooManyRequestsError(str(err)) from err
+        raise _TooManyRequestsError(f"{err} when accessing {uri}") from err
     elif "(404)" in str(err):
         # Some systems can generate this rather than NoSuchKey.
-        raise FileNotFoundError("Resource not found: {self}")
+        raise FileNotFoundError(f"Resource not found (permission denied): {uri}")
 
 
 @cache
@@ -277,7 +279,7 @@ class S3ResourcePath(ResourcePath):
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
             raise FileNotFoundError(f"No such resource: {self}") from err
         except ClientError as err:
-            _translate_client_error(err)
+            _translate_client_error(err, self)
             raise
         with time_this(log, msg="Read from %s", args=(self,)):
             body = response["Body"].read()
@@ -327,7 +329,7 @@ class S3ResourcePath(ResourcePath):
         ) as err:
             raise FileNotFoundError(f"No such resource: {self}") from err
         except ClientError as err:
-            _translate_client_error(err)
+            _translate_client_error(err, self)
             raise
 
     def _as_local(self) -> tuple[str, bool]:
@@ -366,7 +368,7 @@ class S3ResourcePath(ResourcePath):
         except self.client.exceptions.NoSuchBucket as err:
             raise NotADirectoryError(f"Target does not exist: {err}") from err
         except ClientError as err:
-            _translate_client_error(err)
+            _translate_client_error(err, self)
             raise
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
@@ -380,7 +382,7 @@ class S3ResourcePath(ResourcePath):
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
             raise FileNotFoundError("No such resource to transfer: {self}") from err
         except ClientError as err:
-            _translate_client_error(err)
+            _translate_client_error(err, self)
             raise
 
     def transfer_from(
@@ -544,9 +546,7 @@ class S3ResourcePath(ResourcePath):
         *,
         encoding: str | None = None,
     ) -> Iterator[ResourceHandleProtocol]:
-        with S3ResourceHandle(
-            mode, log, self.client, self._bucket, self.relativeToPathRoot, uri=self
-        ) as handle:
+        with S3ResourceHandle(mode, log, self) as handle:
             if "b" in mode:
                 yield handle
             else:

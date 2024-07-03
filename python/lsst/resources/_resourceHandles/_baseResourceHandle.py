@@ -14,12 +14,16 @@ from types import TracebackType
 
 __all__ = ("BaseResourceHandle", "CloseStatus", "ResourceHandleProtocol")
 
+import logging
 from abc import ABC, abstractmethod, abstractproperty
 from collections.abc import Callable, Iterable
 from enum import Enum, auto
 from io import SEEK_SET
-from logging import Logger
-from typing import AnyStr, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, AnyStr, Generic, Protocol, TypeVar
+
+if TYPE_CHECKING:
+    # Circular import.
+    from .._resourcePath import ResourcePath
 
 S = TypeVar("S", bound="ResourceHandleProtocol")
 T = TypeVar("T", bound="BaseResourceHandle")
@@ -46,6 +50,9 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
 
     @abstractproperty
     def mode(self) -> str: ...
+
+    @abstractproperty
+    def name(self) -> str: ...
 
     @abstractmethod
     def close(self) -> None: ...
@@ -117,6 +124,8 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
         Handle modes as described in the python `io` module.
     log : `~logging.Logger`
         Logger to used when writing messages.
+    uri : `lsst.resources.ResourcePath`
+        The URI of the resource being opened.
     newline : `str`
         When doing multiline operations, break the stream on given character
         Defaults to newline.
@@ -129,10 +138,13 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
 
     _closed: CloseStatus
     _mode: str
-    _log: Logger
+    _log: logging.Logger
     _newline: U
+    _uri: ResourcePath
 
-    def __init__(self, mode: str, log: Logger, *, newline: AnyStr | None = None) -> None:
+    def __init__(
+        self, mode: str, log: logging.Logger, uri: ResourcePath, *, newline: AnyStr | None = None
+    ) -> None:
         if newline is None:
             if "b" in mode:
                 self._newline = b"\n"  # type: ignore
@@ -142,6 +154,12 @@ class BaseResourceHandle(ABC, ResourceHandleProtocol[U]):
             self._newline = newline  # type: ignore
         self._mode = mode
         self._log = log
+        self._uri = uri
+
+    @property
+    def name(self) -> str:
+        # Use name for compatibility with TextIOWrapper.
+        return str(self._uri)
 
     @property
     def mode(self) -> str:

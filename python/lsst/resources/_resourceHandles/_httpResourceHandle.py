@@ -14,16 +14,18 @@ from __future__ import annotations
 __all__ = ("HttpReadResourceHandle",)
 
 import io
+import logging
 import re
 from collections.abc import Callable, Iterable
-from logging import Logger
-from typing import AnyStr, NamedTuple
+from typing import TYPE_CHECKING, AnyStr, NamedTuple
 
 import requests
 from lsst.utils.timer import time_this
 
-from .._resourcePath import ResourcePath
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
+
+if TYPE_CHECKING:
+    from ..http import HttpResourcePath
 
 
 class HttpReadResourceHandle(BaseResourceHandle[bytes]):
@@ -35,10 +37,8 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         Handle modes as described in the python `io` module.
     log : `~logging.Logger`
         Logger to used when writing messages.
-    session : `requests.Session`
-        The session to use for this handle.
-    url : `str`
-        URL of remote resource.
+    uri : `lsst.resources.http.HttpResourcePath`
+        URI of remote resource.
     timeout : `tuple` [`int`, `int`]
         Timeout to use for connections: connection timeout and read timeout
         in a tuple.
@@ -52,20 +52,15 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def __init__(
         self,
         mode: str,
-        log: Logger,
+        log: logging.Logger,
+        uri: HttpResourcePath,
         *,
-        session: requests.Session | None = None,
-        url: str | None = None,
         timeout: tuple[float, float] | None = None,
         newline: AnyStr | None = None,
     ) -> None:
-        super().__init__(mode, log, newline=newline)
-        if url is None:
-            raise ValueError("Url must be specified when constructing this object")
-        self._url = url
-        if session is None:
-            raise ValueError("Session must be specified when constructing this object")
-        self._session = session
+        super().__init__(mode, log, uri, newline=newline)
+        self._url = uri.geturl()
+        self._session = uri.data_session
 
         if timeout is None:
             raise ValueError("timeout must be specified when constructing this object")
@@ -110,7 +105,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
 
     def _size(self) -> int:
         if self._total_size == -1:
-            self._total_size = ResourcePath(self._url).size()
+            self._total_size = self._uri.size()
         return self._total_size
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
