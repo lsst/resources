@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+__all__ = ("ResourcePath", "ResourcePathExpression")
+
 import concurrent.futures
 import contextlib
 import copy
@@ -26,7 +28,12 @@ import urllib.parse
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
 
-__all__ = ("ResourcePath", "ResourcePathExpression")
+try:
+    import fsspec
+    from fsspec.spec import AbstractFileSystem
+except ImportError:
+    fsspec = None
+    AbstractFileSystem = type
 
 from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Literal, overload
@@ -408,6 +415,21 @@ class ResourcePath:  # numpydoc ignore=PR02
             String form of URI.
         """
         return self._uri.geturl()
+
+    def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
+        """Return an abstract file system and path that can be used by fsspec.
+
+        Returns
+        -------
+        fs : `fsspec.spec.AbstractFileSystem`
+            A file system object suitable for use with the returned path.
+        path : `str`
+            A path that can be opened by the file system object.
+        """
+        if fsspec is None:
+            raise ImportError("fsspec is not available")
+        # By default give the URL to fsspec and hope.
+        return fsspec.url_to_fs(self.geturl())
 
     def root_uri(self) -> ResourcePath:
         """Return the base root URI.
