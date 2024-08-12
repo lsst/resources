@@ -1,0 +1,1 @@
+``S3ResourceHandle`` now correctly converts ``NoSuchKey`` exception to ``FileNotFoundError`` when a read is attempted.
