@@ -455,3 +455,28 @@ def unsetAwsEnvCredentials() -> None:
         del os.environ["AWS_ACCESS_KEY_ID"]
     if "AWS_SECRET_ACCESS_KEY" in os.environ:
         del os.environ["AWS_SECRET_ACCESS_KEY"]
+
+
+def translate_client_error(err: ClientError, uri: ResourcePath) -> None:
+    """Translate a ClientError into a specialist error if relevant.
+
+    Parameters
+    ----------
+    err : `ClientError`
+        Exception to translate.
+    uri : `ResourcePath`
+        The URI of the resource that is resulting in the error.
+
+    Raises
+    ------
+    _TooManyRequestsError
+        Raised if the `ClientError` looks like a 429 retry request.
+    """
+    if "(429)" in str(err):
+        # ClientError includes the error code in the message
+        # but no direct way to access it without looking inside the
+        # response.
+        raise _TooManyRequestsError(f"{err} when accessing {uri}") from err
+    elif "(404)" in str(err):
+        # Some systems can generate this rather than NoSuchKey.
+        raise FileNotFoundError(f"Resource not found (permission denied): {uri}")
