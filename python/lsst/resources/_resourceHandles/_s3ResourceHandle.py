@@ -23,7 +23,7 @@ from botocore.exceptions import ClientError
 from lsst.utils.introspection import find_outside_stacklevel
 from lsst.utils.timer import time_this
 
-from ..s3utils import all_retryable_errors, backoff, max_retry_time
+from ..s3utils import all_retryable_errors, backoff, max_retry_time, translate_client_error
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 if TYPE_CHECKING:
@@ -287,6 +287,8 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
             response["Body"].close()
             self._position += len(contents)
             return contents
+        except (self._client.exceptions.NoSuchKey, self._client.exceptions.NoSuchBucket) as err:
+            raise FileNotFoundError(f"No such resource: {self}") from err
         except ClientError as exc:
             if exc.response["ResponseMetadata"]["HTTPStatusCode"] == 416:
                 if self._recursing:
@@ -300,6 +302,7 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
                 self._recursing = False
                 return result
             else:
+                translate_client_error(exc, self._uri)
                 raise
 
     def write(self, b: bytes) -> int:

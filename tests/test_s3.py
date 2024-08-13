@@ -141,6 +141,11 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
             result = handle.read(1024)
             self.assertEqual(result, 1024 * b"a")
 
+        remote = self.root_uri.join("missing_file.dat")
+        with remote.open("rb") as handle:
+            with self.assertRaises(FileNotFoundError):
+                handle.read()
+
     def test_url_signing(self):
         self._test_url_signing_case("url-signing-test.txt", b"test123")
         # A zero byte presigned S3 HTTP URL is a weird edge case, because we
