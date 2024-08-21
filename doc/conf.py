@@ -12,6 +12,8 @@ html_short_title = project
 doxylink = {}
 exclude_patterns = ["changes/*"]
 
+intersphinx_mapping["fsspec"] = ("https://filesystem-spec.readthedocs.io/en/latest/", None)  # noqa: F405
+
 nitpick_ignore_regex = [
     ("py:(class|obj)", ".*ResourceHandle.U$"),
     ("py:(class|obj)", "re.Pattern"),
