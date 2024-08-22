@@ -29,6 +29,13 @@ from ._resourceHandles._fileResourceHandle import FileResourceHandle
 from ._resourcePath import ResourcePath
 from .utils import NoTransaction, ensure_directory_is_writeable, os2posix, posix2os
 
+try:
+    import fsspec
+    from fsspec.spec import AbstractFileSystem
+except ImportError:
+    fsspec = None
+    AbstractFileSystem = type
+
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
 
@@ -481,6 +488,22 @@ class FileResourcePath(ResourcePath):
     ) -> Iterator[IO]:
         with FileResourceHandle(mode=mode, log=log, uri=self, encoding=encoding) as buffer:
             yield buffer  # type: ignore
+
+    def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
+        """Return an abstract file system and path that can be used by fsspec.
+
+        Returns
+        -------
+        fs : `fsspec.spec.AbstractFileSystem`
+            A file system object suitable for use with the returned path.
+        path : `str`
+            A path that can be opened by the file system object.
+        """
+        if fsspec is None:
+            raise ImportError("fsspec is not available")
+        # fsspec does not like URL encodings in file URIs so pass it the os
+        # path instead.
+        return fsspec.url_to_fs(self.ospath)
 
 
 def _create_directories(name: str | bytes) -> None:
