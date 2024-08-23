@@ -47,6 +47,10 @@ jobs:
         run: |
           uv pip install --system google-cloud-storage
 
+      - name: Install fsspec for testing
+        run: |
+          uv pip install --system fsspec s3fs
+
       - name: Install dependencies
         run: |
           uv pip install --system -r requirements.txt
