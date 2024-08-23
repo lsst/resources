@@ -91,6 +91,10 @@ class ResourceReadTestCase(unittest.TestCase):
             with bad.open("r"):
                 pass
 
+        # fsspec is always not implemented.
+        with self.assertRaises(NotImplementedError):
+            bad.to_fsspec()
+
     def test_open(self):
         uri = self.root_uri.join("Icons/README.txt")
         with uri.open("rb") as buffer:
