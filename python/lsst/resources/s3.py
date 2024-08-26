@@ -32,6 +32,8 @@ from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
 from ._resourcePath import ResourcePath
 from .s3utils import (
     _get_s3_connection_parameters,
+    _s3_disable_bucket_validation,
+    _s3_should_validate_bucket,
     all_retryable_errors,
     backoff,
     bucketExists,
@@ -335,6 +337,11 @@ class S3ResourcePath(ResourcePath):
             key=endpoint_config.access_key_id,
             secret=endpoint_config.secret_access_key,
         )
+        if not _s3_should_validate_bucket():
+            # Accessing the s3 property forces the boto client to be
+            # constructed and cached and allows the validation to be removed.
+            _s3_disable_bucket_validation(s3.s3)
+
         return s3, f"{self._bucket}/{self.relativeToPathRoot}"
 
     def _as_local(self) -> tuple[str, bool]:

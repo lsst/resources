@@ -221,12 +221,21 @@ def getS3Client(profile: str | None = None) -> boto3.client:
     if botocore is None:
         raise ModuleNotFoundError("Could not find botocore. Are you sure it is installed?")
 
-    disable_value = os.environ.get("LSST_DISABLE_BUCKET_VALIDATION", "0")
-    skip_validation = not re.search(r"^(0|f|n|false)?$", disable_value, re.I)
-
     endpoint_config = _get_s3_connection_parameters(profile)
 
-    return _get_s3_client(endpoint_config, skip_validation)
+    return _get_s3_client(endpoint_config, not _s3_should_validate_bucket())
+
+
+def _s3_should_validate_bucket() -> bool:
+    """Indicate whether bucket validation should be enabled.
+
+    Returns
+    -------
+    validate : `bool`
+        If `True` bucket names should be validated.
+    """
+    disable_value = os.environ.get("LSST_DISABLE_BUCKET_VALIDATION", "0")
+    return bool(re.search(r"^(0|f|n|false)?$", disable_value, re.I))
 
 
 def _get_s3_connection_parameters(profile: str | None = None) -> _EndpointConfig:
@@ -254,6 +263,20 @@ def _get_s3_connection_parameters(profile: str | None = None) -> _EndpointConfig
     return _parse_endpoint_config(endpoint, profile)
 
 
+def _s3_disable_bucket_validation(client: boto3.client) -> None:
+    """Disable the bucket name validation in the client.
+
+    This removes the ``validate_bucket_name`` handler from the handlers
+    registered for this client.
+
+    Parameters
+    ----------
+    client : `boto3.client`
+        The client to modify.
+    """
+    client.meta.events.unregister("before-parameter-build.s3", validate_bucket_name)
+
+
 @functools.lru_cache
 def _get_s3_client(endpoint_config: _EndpointConfig, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
@@ -269,7 +292,7 @@ def _get_s3_client(endpoint_config: _EndpointConfig, skip_validation: bool) -> b
         config=config,
     )
     if skip_validation:
-        client.meta.events.unregister("before-parameter-build.s3", validate_bucket_name)
+        _s3_disable_bucket_validation(client)
     return client
 
 
