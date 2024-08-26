@@ -48,10 +48,10 @@ except ImportError:
     TransferConfig = None
 
 try:
-    import fsspec
+    import s3fs
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
+    s3fs = None
     AbstractFileSystem = type
 
 if TYPE_CHECKING:
@@ -325,17 +325,17 @@ class S3ResourcePath(ResourcePath):
         path : `str`
             A path that can be opened by the file system object.
         """
-        if fsspec is None:
-            raise ImportError("fsspec is not available")
+        if s3fs is None:
+            raise ImportError("s3fs is not available")
         # Must remove the profile from the URL and form it again.
         endpoint_config = _get_s3_connection_parameters(self._profile)
-        return fsspec.url_to_fs(
-            f"s3://{self._bucket}/{self.relativeToPathRoot}",
+        s3 = s3fs.S3FileSystem(
             profile=endpoint_config.profile,
             endpoint_url=endpoint_config.endpoint_url,
             key=endpoint_config.access_key_id,
             secret=endpoint_config.secret_access_key,
         )
+        return s3, f"{self._bucket}/{self.relativeToPathRoot}"
 
     def _as_local(self) -> tuple[str, bool]:
         """Download object from S3 and place in temporary directory.
