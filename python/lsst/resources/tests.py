@@ -23,6 +23,11 @@ import uuid
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+try:
+    import fsspec
+except ImportError:
+    fsspec = None
+
 from lsst.resources import ResourcePath
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
@@ -881,6 +886,24 @@ class GenericReadWriteTestCase(_GenericTestCase):
         with self.assertRaises(NotImplementedError):
             with ResourcePath.temporary_uri(prefix=self.root_uri, suffix="xxx/") as tmp:
                 pass
+
+    @unittest.skipIf(fsspec is None, "fsspec is not available.")
+    def test_fsspec(self) -> None:
+        """Simple read of a file."""
+        uri = self.tmpdir.join("test.txt")
+        self.assertFalse(uri.exists(), f"{uri} should not exist")
+        self.assertTrue(uri.path.endswith("test.txt"))
+
+        content = "abcdefghijklmnopqrstuv\n"
+        uri.write(content.encode())
+
+        try:
+            fs, path = uri.to_fsspec()
+        except NotImplementedError as e:
+            raise unittest.SkipTest(str(e)) from e
+        with fs.open(path, "r") as fd:
+            as_read = fd.read()
+        self.assertEqual(as_read, content)
 
     def test_open(self) -> None:
         tmpdir = ResourcePath(self.tmpdir, forceDirectory=True)

@@ -31,6 +31,9 @@ from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
 from ._resourcePath import ResourcePath
 from .s3utils import (
+    _get_s3_connection_parameters,
+    _s3_disable_bucket_validation,
+    _s3_should_validate_bucket,
     all_retryable_errors,
     backoff,
     bucketExists,
@@ -45,6 +48,13 @@ try:
     from boto3.s3.transfer import TransferConfig  # type: ignore
 except ImportError:
     TransferConfig = None
+
+try:
+    import s3fs
+    from fsspec.spec import AbstractFileSystem
+except ImportError:
+    s3fs = None
+    AbstractFileSystem = type
 
 if TYPE_CHECKING:
     with contextlib.suppress(ImportError):
@@ -306,6 +316,33 @@ class S3ResourcePath(ResourcePath):
         except ClientError as err:
             translate_client_error(err, self)
             raise
+
+    def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
+        """Return an abstract file system and path that can be used by fsspec.
+
+        Returns
+        -------
+        fs : `fsspec.spec.AbstractFileSystem`
+            A file system object suitable for use with the returned path.
+        path : `str`
+            A path that can be opened by the file system object.
+        """
+        if s3fs is None:
+            raise ImportError("s3fs is not available")
+        # Must remove the profile from the URL and form it again.
+        endpoint_config = _get_s3_connection_parameters(self._profile)
+        s3 = s3fs.S3FileSystem(
+            profile=endpoint_config.profile,
+            endpoint_url=endpoint_config.endpoint_url,
+            key=endpoint_config.access_key_id,
+            secret=endpoint_config.secret_access_key,
+        )
+        if not _s3_should_validate_bucket():
+            # Accessing the s3 property forces the boto client to be
+            # constructed and cached and allows the validation to be removed.
+            _s3_disable_bucket_validation(s3.s3)
+
+        return s3, f"{self._bucket}/{self.relativeToPathRoot}"
 
     def _as_local(self) -> tuple[str, bool]:
         """Download object from S3 and place in temporary directory.

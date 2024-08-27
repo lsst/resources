@@ -37,6 +37,12 @@ except ImportError:
         return cls
 
 
+try:
+    import fsspec
+except ImportError:
+    fsspec = None
+
+
 class GenericS3TestCase(GenericTestCase, unittest.TestCase):
     """Generic tests of S3 URIs."""
 
@@ -224,6 +230,17 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
             self.assertFalse(test_resource_path._transfer_config.use_threads)
 
             self.test_local()
+
+    @unittest.skipIf(fsspec is None, "fsspec is not available")
+    def test_fsspec_constructor(self) -> None:
+        """Test that we can obtain an s3fs object."""
+        uri = self.root_uri.join("test_file.dat")
+        fs, path = uri.to_fsspec()
+        self.assertEqual(path, f"{uri._bucket}/{uri.relativeToPathRoot}")
+        self.assertTrue(hasattr(fs, "open"))
+
+    def test_fsspec(self) -> None:
+        raise unittest.SkipTest("fsspec s3fs incompatible with moto")
 
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")

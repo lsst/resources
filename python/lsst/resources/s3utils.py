@@ -221,6 +221,36 @@ def getS3Client(profile: str | None = None) -> boto3.client:
     if botocore is None:
         raise ModuleNotFoundError("Could not find botocore. Are you sure it is installed?")
 
+    endpoint_config = _get_s3_connection_parameters(profile)
+
+    return _get_s3_client(endpoint_config, not _s3_should_validate_bucket())
+
+
+def _s3_should_validate_bucket() -> bool:
+    """Indicate whether bucket validation should be enabled.
+
+    Returns
+    -------
+    validate : `bool`
+        If `True` bucket names should be validated.
+    """
+    disable_value = os.environ.get("LSST_DISABLE_BUCKET_VALIDATION", "0")
+    return bool(re.search(r"^(0|f|n|false)?$", disable_value, re.I))
+
+
+def _get_s3_connection_parameters(profile: str | None = None) -> _EndpointConfig:
+    """Calculate the connection details.
+
+    Parameters
+    ----------
+    profile : `str`, optional
+        The name of an S3 profile describing which S3 service to use.
+
+    Returns
+    -------
+    config : _EndPointConfig
+        All the information necessary to connect to the bucket.
+    """
     endpoint = None
     if profile is not None:
         var_name = f"LSST_RESOURCES_S3_PROFILE_{profile}"
@@ -230,26 +260,29 @@ def getS3Client(profile: str | None = None) -> boto3.client:
     if not endpoint:
         endpoint = None  # Handle ""
 
-    disable_value = os.environ.get("LSST_DISABLE_BUCKET_VALIDATION", "0")
-    skip_validation = not re.search(r"^(0|f|n|false)?$", disable_value, re.I)
+    return _parse_endpoint_config(endpoint, profile)
 
-    return _get_s3_client(endpoint, profile, skip_validation)
+
+def _s3_disable_bucket_validation(client: boto3.client) -> None:
+    """Disable the bucket name validation in the client.
+
+    This removes the ``validate_bucket_name`` handler from the handlers
+    registered for this client.
+
+    Parameters
+    ----------
+    client : `boto3.client`
+        The client to modify.
+    """
+    client.meta.events.unregister("before-parameter-build.s3", validate_bucket_name)
 
 
 @functools.lru_cache
-def _get_s3_client(endpoint: str | None, profile: str | None, skip_validation: bool) -> boto3.client:
+def _get_s3_client(endpoint_config: _EndpointConfig, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
     config = botocore.config.Config(read_timeout=180, retries={"mode": "adaptive", "max_attempts": 10})
 
-    endpoint_config = _parse_endpoint_config(endpoint)
-
-    if endpoint_config.access_key_id is not None and endpoint_config.secret_access_key is not None:
-        # We already have the necessary configuration for the profile, so do
-        # not pass the profile to boto3.  boto3 will raise an exception if the
-        # profile is not defined in its configuration file, whether or not it
-        # needs to read the configuration from it.
-        profile = None
-    session = boto3.Session(profile_name=profile)
+    session = boto3.Session(profile_name=endpoint_config.profile)
 
     client = session.client(
         "s3",
@@ -259,7 +292,7 @@ def _get_s3_client(endpoint: str | None, profile: str | None, skip_validation: b
         config=config,
     )
     if skip_validation:
-        client.meta.events.unregister("before-parameter-build.s3", validate_bucket_name)
+        _s3_disable_bucket_validation(client)
     return client
 
 
@@ -267,11 +300,12 @@ class _EndpointConfig(NamedTuple):
     endpoint_url: str | None = None
     access_key_id: str | None = None
     secret_access_key: str | None = None
+    profile: str | None = None
 
 
-def _parse_endpoint_config(endpoint: str | None) -> _EndpointConfig:
+def _parse_endpoint_config(endpoint: str | None, profile: str | None = None) -> _EndpointConfig:
     if not endpoint:
-        return _EndpointConfig()
+        return _EndpointConfig(profile=profile)
 
     parsed = parse_url(endpoint)
 
@@ -288,8 +322,18 @@ def _parse_endpoint_config(endpoint: str | None) -> _EndpointConfig:
         access_key_id = urllib.parse.unquote(access_key_id)
         secret_access_key = urllib.parse.unquote(secret_access_key)
 
+    if access_key_id is not None and secret_access_key is not None:
+        # We already have the necessary configuration for the profile, so do
+        # not pass the profile to boto3.  boto3 will raise an exception if the
+        # profile is not defined in its configuration file, whether or not it
+        # needs to read the configuration from it.
+        profile = None
+
     return _EndpointConfig(
-        endpoint_url=endpoint_url, access_key_id=access_key_id, secret_access_key=secret_access_key
+        endpoint_url=endpoint_url,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        profile=profile,
     )
 
 

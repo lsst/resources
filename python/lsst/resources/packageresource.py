@@ -18,6 +18,15 @@ import logging
 import re
 from collections.abc import Iterator
 from importlib import resources
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    try:
+        import fsspec
+        from fsspec.spec import AbstractFileSystem
+    except ImportError:
+        fsspec = None
+        AbstractFileSystem = type
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourcePath
@@ -163,3 +172,21 @@ class PackageResourcePath(ResourcePath):
         for dir in dirs:
             new_uri = self.join(dir, forceDirectory=True)
             yield from new_uri.walk(file_filter)
+
+    def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
+        """Return an abstract file system and path that can be used by fsspec.
+
+        Python package resources are effectively local files in most cases
+        but can be found inside ZIP files. To support this we would have
+        to change this API to a context manager (using
+        ``importlib.resources.as_file``) or find an API where fsspec knows
+        about python package resource.
+
+        Returns
+        -------
+        fs : `fsspec.spec.AbstractFileSystem`
+            A file system object suitable for use with the returned path.
+        path : `str`
+            A path that can be opened by the file system object.
+        """
+        raise NotImplementedError("fsspec can not be used with python package resources.")
