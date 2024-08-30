@@ -161,6 +161,7 @@ def clean_test_environment_for_s3() -> Iterator[None]:
         {
             "AWS_ACCESS_KEY_ID": "test-access-key",
             "AWS_SECRET_ACCESS_KEY": "test-secret-access-key",
+            "AWS_DEFAULT_REGION": "us-east-1",
         },
     ) as patched_environ:
         for var in (
