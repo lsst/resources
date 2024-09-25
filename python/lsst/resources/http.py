@@ -14,18 +14,21 @@ from __future__ import annotations
 __all__ = ("HttpResourcePath",)
 
 import contextlib
+import enum
 import functools
 import io
+import json
 import logging
 import math
 import os
 import os.path
 import random
 import re
+import ssl
 import stat
 import tempfile
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 try:
     # Prefer 'defusedxml' (not part of standard library) if available, since
@@ -34,8 +37,16 @@ try:
 except ImportError:
     import xml.etree.ElementTree as eTree
 
+try:
+    import fsspec
+    from fsspec.spec import AbstractFileSystem
+except ImportError:
+    fsspec = None
+    AbstractFileSystem = type
+
 from urllib.parse import parse_qs
 
+import aiohttp
 import requests
 from astropy import units as u
 from lsst.utils.timer import time_this
@@ -700,6 +711,15 @@ class SessionStore:
         return session
 
 
+class ActivityCaveat(enum.Enum):
+    """Helper class for enumerating accepted activity caveats for requesting
+    macaroons.
+    """
+
+    DOWNLOAD = 1
+    UPLOAD = 2
+
+
 class HttpResourcePath(ResourcePath):
     """General HTTP(S) resource.
 
@@ -854,6 +874,29 @@ class HttpResourcePath(ResourcePath):
 
         self._is_webdav = _is_webdav_endpoint(self.root_uri())
         return self._is_webdav
+
+    @property
+    def server(self) -> str | None:
+        """Return the lowercased identifier of the remote server, retrieved
+        from the response header 'Server' from an 'OPTIONS' HTTP request.
+
+        If the remote server does not include that header in its response
+        to an 'OPTIONS' request, server() returns None.
+
+        Examples of return values are "dcache", "xrootd".
+        """
+        if hasattr(self, "_server"):
+            return self._server
+
+        self._server: str | None = None
+        resp = self._options()
+        if resp.status_code == requests.codes.ok:  # 200
+            if "Server" in resp.headers:
+                # Server header is expected to be of the form 'dCache/9.2.4'
+                # or 'XrootD/v5.7.1'. Strip version and put in lowercase.
+                self._server = resp.headers["Server"].split("/")[0].lower()
+
+        return self._server
 
     def exists(self) -> bool:
         """Check that a remote HTTP resource exists."""
@@ -1204,6 +1247,116 @@ class HttpResourcePath(ResourcePath):
                 new_uri = self.join(dir, forceDirectory=True)
                 yield from new_uri.walk(file_filter)
 
+    def generate_presigned_get_url(self, *, expiration_time_seconds: int) -> str:
+        """Return a pre-signed URL that can be used to retrieve this resource
+        using an HTTP GET without supplying any access credentials.
+
+        Parameters
+        ----------
+        expiration_time_seconds : `int`
+            Number of seconds until the generated URL is no longer valid.
+
+        Returns
+        -------
+        url : `str`
+            HTTP URL signed for GET.
+        """
+        return self._sign_with_macaroon(ActivityCaveat.DOWNLOAD, expiration_time_seconds)
+
+    def generate_presigned_put_url(self, *, expiration_time_seconds: int) -> str:
+        """Return a pre-signed URL that can be used to upload a file to this
+        path using an HTTP PUT without supplying any access credentials.
+
+        Parameters
+        ----------
+        expiration_time_seconds : `int`
+            Number of seconds until the generated URL is no longer valid.
+
+        Returns
+        -------
+        url : `str`
+            HTTP URL signed for PUT.
+        """
+        return self._sign_with_macaroon(ActivityCaveat.UPLOAD, expiration_time_seconds)
+
+    def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
+        """Return an abstract file system and path that can be used by fsspec.
+
+        Returns
+        -------
+        fs : `fsspec.spec.AbstractFileSystem`
+            A file system object suitable for use with the returned path.
+        path : `str`
+            A path that can be opened by the file system object.
+        """
+        if self.isdir():
+            raise NotImplementedError(
+                f"method HttpResourcePath.to_fsspec() not implemented for directory {self}"
+            )
+
+        if fsspec is None:
+            raise ImportError("fsspec is not available")
+
+        async def get_client(**kwargs: Any) -> aiohttp.ClientSession:
+            # Create a SSL context equipped with the required certificates of
+            # the trusted certificate authorities. fsspect client must use
+            # that context to download the file.
+            ssl_context = ssl.create_default_context()
+            if self._config.ca_bundle is not None:
+                ssl_context.load_verify_locations(capath=self._config.ca_bundle)
+            return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context), **kwargs)
+
+        # Retrieve a signed URL for a duration of 1 hour. We assume the URL
+        # is to be used only for downloading, to avoid the risk the caller
+        # modify its contents inadvertently.
+        url = self.generate_presigned_get_url(expiration_time_seconds=3_600)
+
+        # We are returning a a fsspec built-in filesystem implemented by
+        # class 'fsspec.implementations.http.HTTPFileSystem'. The constructor
+        # of this class accepts the argument 'block_size'. The default
+        # value is 'fsspec.utils.DEFAULT_BLOCK_SIZE' which is 5 MB.
+        # That seems to be a reasonable block size for downloading files.
+        return fsspec.core.url_to_fs(url, get_client=get_client)
+
+    def _sign_with_macaroon(self, activity: ActivityCaveat, expiration_time_seconds: int) -> str:
+        # dCache and XrootD servers support delivering of macaroons
+        if self.server is None:
+            raise NotImplementedError(f"server for '{self}' does not support signing URLs")
+
+        # dCache and XrootD servers support delivering of macaroons
+        if self.server not in ("dcache", "xrootd"):
+            raise NotImplementedError(f"server '{self._server}' does not support signing for {self}")
+
+        match activity:
+            case ActivityCaveat.DOWNLOAD:
+                activity_caveat = "DOWNLOAD,LIST"
+            case ActivityCaveat.UPLOAD:
+                activity_caveat = "UPLOAD,LIST"
+
+        # Request a macaroon for the requested activities and duration duration
+        headers = {"Content-Type": "application/macaroon-request"}
+        body = {
+            "caveats": [
+                f"activity:{activity_caveat}",
+            ],
+            "validity": f"PT{expiration_time_seconds}S",
+        }
+        resp = self._post(data=json.dumps(body), headers=headers)
+
+        # We are expecting the body of to be formatted in JSON.
+        # dCache sets the 'Content-Type' of the response to 'application/json'
+        # but XRootD does not set any 'Content-Type' header 8-[
+        try:
+            response_body = json.loads(resp.text)
+            if "macaroon" in response_body:
+                return f"{self}?authz={response_body['macaroon']}"
+            else:
+                raise ValueError(f"could not retrieve macaroon for URL {self}")
+        except json.JSONDecodeError:
+            raise ValueError(f"could not deserialize response to POST request for URL {self}")
+        except Exception as e:
+            raise e
+
     def _as_local(self) -> tuple[str, bool]:
         """Download object over HTTP and place in temporary directory.
 
@@ -1534,6 +1687,28 @@ class HttpResourcePath(ResourcePath):
             The source of the contents to move to `self`.
         """
         return self._copy_or_move("MOVE", src)
+
+    def _post(self, data: str | None = None, headers: dict[str, str] | None = None) -> requests.Response:
+        """Perform an HTTP POST request and returns the received response.
+
+        Parameters
+        ----------
+        body : `bytes`
+            The contents of the request body.
+        """
+        resp = self.metadata_session.request(
+            "POST",
+            self.geturl(),
+            data=data,
+            headers=headers,
+            stream=False,
+            timeout=self._config.timeout,
+            allow_redirects=True,
+        )
+        if resp.status_code == requests.codes.ok:
+            return resp
+
+        raise ValueError(f"POST request for {self} failed, status: {resp.status_code} {resp.reason}")
 
     def _put(self, data: BinaryIO | bytes) -> None:
         """Perform an HTTP PUT request and handle redirection.
