@@ -107,14 +107,23 @@ class HttpResourcePathConfig:
     # Accepted digest algorithms
     ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
 
-    _front_end_connections: int | None = None
-    _back_end_connections: int | None = None
-    _digest_algorithm: str | None = None
-    _send_expect_on_put: bool | None = None
-    _timeout: tuple[float, float] | None = None
-    _collect_memory_usage: bool | None = None
-    _backoff_min: float | None = None
-    _backoff_max: float | None = None
+    # Default location for trusted certificate authorities
+    DEFAULT_CA_PATHS = "/etc/grid-security/certificates"
+
+    def __init__(self) -> None:
+        self._front_end_connections: int | None = None
+        self._back_end_connections: int | None = None
+        self._digest_algorithm: str | None = None
+        self._send_expect_on_put: bool | None = None
+        self._timeout: tuple[float, float] | None = None
+        self._collect_memory_usage: bool | None = None
+        self._backoff_min: float | None = None
+        self._backoff_max: float | None = None
+        self._ca_bundle: str | None = ""
+        self._client_token: str | None = ""
+        self._client_cert: str | None = ""
+        self._client_key: str | None = ""
+        self._tmpdir_buffersize: tuple[str, int] | None = None
 
     @property
     def front_end_connections(self) -> int:
@@ -249,6 +258,111 @@ class HttpResourcePathConfig:
 
         return self._backoff_max
 
+    @property
+    def ca_bundle(self) -> str | None:
+        """Local path to the certificate bundle file or directory where the
+        certifcates of the trusted authorities are located.
+
+        Return None if this host system's certificate bundle should be
+        used for authenticating remote servers' certificates.
+        """
+        if self._ca_bundle != "":
+            return self._ca_bundle
+
+        # If a bundle was specified via the environment variable
+        # 'LSST_HTTP_CACERT_BUNDLE' use it.
+        self._ca_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
+        if self._ca_bundle is None and os.path.isdir(self.DEFAULT_CA_PATHS):
+            # If the default bundle directory exists in this host use it.
+            self._ca_bundle = self.DEFAULT_CA_PATHS
+
+        return self._ca_bundle
+
+    @property
+    def client_token(self) -> str | None:
+        """Value of a bearer token or path to a local file which contains
+        the bearer token to use for authenticating the client when sending
+        requests to the webDAV or HTTP server.
+
+        Return None if no bearer token is configured in the environment.
+        """
+        if self._client_token != "":
+            return self._client_token
+
+        # If environment variable LSST_HTTP_AUTH_BEARER_TOKEN is
+        # initialized use its value as the bearer token.
+        self._client_token = os.getenv("LSST_HTTP_AUTH_BEARER_TOKEN")
+        return self._client_token
+
+    @property
+    def client_cert_key(self) -> tuple[str | None, str | None]:
+        """Paths to a local file where the client certificate and associated
+        private key are located.
+
+        Return a tuple (client certificate, private key) or (None, None) if no
+        client certificate is configured via environment variables.
+        """
+        if self._client_cert != "" and self._client_key != "":
+            return (self._client_cert, self._client_key)
+
+        # If the environment variables LSST_HTTP_AUTH_CLIENT_CERT
+        # and LSST_HTTP_AUTH_CLIENT_KEY are initialized use their values.
+        self._client_cert = os.getenv("LSST_HTTP_AUTH_CLIENT_CERT")
+        self._client_key = os.getenv("LSST_HTTP_AUTH_CLIENT_KEY")
+        if self._client_cert and self._client_key:
+            if not _is_protected(self._client_key):
+                raise PermissionError(
+                    f"Private key file at {self._client_key} must be protected for access only by its owner"
+                )
+            return (self._client_cert, self._client_key)
+
+        # If only the certificate was provided raise.
+        if self._client_cert:
+            raise ValueError(
+                "Environment variable LSST_HTTP_AUTH_CLIENT_KEY must be set to client private key file path"
+            )
+
+        # If only the private key was provided raise.
+        if self._client_key:
+            raise ValueError(
+                "Environment variable LSST_HTTP_AUTH_CLIENT_CERT must be set to client certificate file path"
+            )
+
+        # If a X.509 user proxy is available, use it as client credentials.
+        self._client_cert = self._client_key = os.getenv("X509_USER_PROXY")
+        return (self._client_cert, self._client_key)
+
+    @property
+    def tmpdir_buffersize(self) -> tuple[str, int]:
+        """Return the path to a temporary directory and the preferred buffer
+        size to use when reading or writing files in that directory.
+        """
+        if self._tmpdir_buffersize is not None:
+            return self._tmpdir_buffersize
+
+        # Use the value of environment variables 'LSST_RESOURCES_TMPDIR' or
+        # 'TMPDIR', if defined. Otherwise use the system temporary directory,
+        # with a last-resort fallback to the current working directory if
+        # nothing else is available.
+        tmpdir = None
+        for dir in (os.getenv(v) for v in ("LSST_RESOURCES_TMPDIR", "TMPDIR")):
+            if dir and os.path.isdir(dir):
+                tmpdir = dir
+                break
+
+        if tmpdir is None:
+            tmpdir = tempfile.gettempdir()
+
+        # Compute the block size as 256 blocks of typical size
+        # (i.e. 4096 bytes) or 10 times the file system block size,
+        # whichever is higher. This is a reasonable compromise between
+        # using memory for buffering and the number of system calls
+        # issued to read from or write to temporary files.
+        fsstats = os.statvfs(tmpdir)
+        self._tmpdir_buffersize = (tmpdir, max(10 * fsstats.f_bsize, 256 * 4096))
+
+        return self._tmpdir_buffersize
+
 
 @functools.lru_cache
 def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
@@ -307,17 +421,15 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
     )
 
     try:
+        config = HttpResourcePathConfig()
         session = requests.Session()
         session.mount(str(path), HTTPAdapter(max_retries=retries))
-        session.verify = os.environ.get("LSST_HTTP_CACERT_BUNDLE", True)
+        session.verify = True if config.ca_bundle is None else config.ca_bundle
         with session:
             resp = session.options(
                 str(path),
                 stream=False,
-                timeout=(
-                    _timeout_from_environment("LSST_HTTP_TIMEOUT_CONNECT", 30.0),
-                    _timeout_from_environment("LSST_HTTP_TIMEOUT_READ", 60.0),
-                ),
+                timeout=config.timeout,
             )
             if resp.status_code not in (requests.codes.ok, requests.codes.created):
                 return False
@@ -343,44 +455,11 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
     except requests.exceptions.SSLError as e:
         log.warning(
             "Environment variable LSST_HTTP_CACERT_BUNDLE can be used to "
-            "specify tha path to a bundle of certificate authorities you trust "
+            "specify the path to a bundle of certificate authorities you trust "
             "which are not included in the default set of trusted authorities "
             "of this system."
         )
         raise e
-
-
-# Tuple (path, block_size) pointing to the location of a local directory
-# to save temporary files and the block size of the underlying file system.
-_TMPDIR: tuple[str, int] | None = None
-
-
-def _get_temp_dir() -> tuple[str, int]:
-    """Return the temporary directory path and block size.
-
-    This function caches its results in _TMPDIR.
-    """
-    global _TMPDIR
-    if _TMPDIR:
-        return _TMPDIR
-
-    # Use the value of environment variables 'LSST_RESOURCES_TMPDIR' or
-    # 'TMPDIR', if defined. Otherwise use the system temporary directory,
-    # with a last-resort fallback to the current working directory if nothing
-    # else is available.
-    tmpdir = tempfile.gettempdir()
-    for dir in (os.getenv(v) for v in ("LSST_RESOURCES_TMPDIR", "TMPDIR")):
-        if dir and os.path.isdir(dir):
-            tmpdir = dir
-            break
-
-    # Compute the block size as 256 blocks of typical size
-    # (i.e. 4096 bytes) or 10 times the file system block size,
-    # whichever is higher. This is a reasonable compromise between
-    # using memory for buffering and the number of system calls
-    # issued to read from or write to temporary files.
-    fsstats = os.statvfs(tmpdir)
-    return (_TMPDIR := (tmpdir, max(10 * fsstats.f_bsize, 256 * 4096)))
 
 
 class BearerTokenAuth(AuthBase):
@@ -434,6 +513,8 @@ class SessionStore:
 
     Parameters
     ----------
+    config : `HttpResourcePathConfig`
+        Configuration items shared by all instances of HttpResourcePath.
     num_pools : `int`, optional
         Number of connection pools to keep: there is one pool per remote
         host.
@@ -450,6 +531,7 @@ class SessionStore:
 
     def __init__(
         self,
+        config: HttpResourcePathConfig,
         num_pools: int = 10,
         max_persistent_connections: int = 1,
         backoff_min: float = 1.0,
@@ -458,6 +540,9 @@ class SessionStore:
         # Dictionary to store the session associated to a given URI. The key
         # of the dictionary is a root URI and the value is the session.
         self._sessions: dict[str, requests.Session] = {}
+
+        # Configuration for all instances of HttpResourcePath objects.
+        self._config = config
 
         # See documentation of urllib3 PoolManager class:
         # https://urllib3.readthedocs.io
@@ -504,27 +589,6 @@ class SessionStore:
 
         Note that "https://www.example.org" and "https://www.example.org:12345"
         will have different sessions since the port number is not identical.
-
-        In order to configure the session, some environment variables are
-        inspected:
-
-        - LSST_HTTP_CACERT_BUNDLE: path to a .pem file containing the CA
-            certificates to trust when verifying the server's certificate.
-
-        - LSST_HTTP_AUTH_BEARER_TOKEN: value of a bearer token or path to a
-            local file containing a bearer token to be used as the client
-            authentication mechanism with all requests.
-            The permissions of the token file must be set so that only its
-            owner can access it.
-            If initialized, takes precedence over LSST_HTTP_AUTH_CLIENT_CERT
-            and LSST_HTTP_AUTH_CLIENT_KEY.
-
-        - LSST_HTTP_AUTH_CLIENT_CERT: path to a .pem file which contains the
-            client certificate for authenticating to the server.
-            If initialized, the variable LSST_HTTP_AUTH_CLIENT_KEY must also be
-            initialized with the path of the client private key file.
-            The permissions of the client private key must be set so that only
-            its owner can access it, at least for reading.
         """
         root_uri = str(rpath.root_uri())
         if root_uri not in self._sessions:
@@ -612,43 +676,22 @@ class SessionStore:
         if rpath.scheme != "https":
             return session
 
-        # Should we use a specific CA cert bundle for authenticating the
-        # server?
-        session.verify = True
-        if ca_bundle := os.getenv("LSST_HTTP_CACERT_BUNDLE"):
-            session.verify = ca_bundle
+        # Set the trusted CA certificates bundle for authenticating remote
+        # servers.
+        session.verify = True if self._config.ca_bundle is None else self._config.ca_bundle
 
-        # Should we use bearer tokens for client authentication?
-        if token := os.getenv("LSST_HTTP_AUTH_BEARER_TOKEN"):
+        # Should we use a bearer token for client authentication?
+        if (token := self._config.client_token) is not None:
             log.debug("... using bearer token authentication")
             session.auth = BearerTokenAuth(token)
             return session
 
-        # Should we instead use client certificate and private key? If so, both
-        # LSST_HTTP_AUTH_CLIENT_CERT and LSST_HTTP_AUTH_CLIENT_KEY must be
-        # initialized.
-        client_cert = os.getenv("LSST_HTTP_AUTH_CLIENT_CERT")
-        client_key = os.getenv("LSST_HTTP_AUTH_CLIENT_KEY")
+        # Should we instead use client certificate and private key?
+        client_cert, client_key = self._config.client_cert_key
         if client_cert and client_key:
-            if not _is_protected(client_key):
-                raise PermissionError(
-                    f"Private key file at {client_key} must be protected for access only by its owner"
-                )
             log.debug("... using client certificate authentication.")
             session.cert = (client_cert, client_key)
             return session
-
-        if client_cert:
-            # Only the client certificate was provided.
-            raise ValueError(
-                "Environment variable LSST_HTTP_AUTH_CLIENT_KEY must be set to client private key file path"
-            )
-
-        if client_key:
-            # Only the client private key was provided.
-            raise ValueError(
-                "Environment variable LSST_HTTP_AUTH_CLIENT_CERT must be set to client certificate file path"
-            )
 
         log.debug(
             "Neither LSST_HTTP_AUTH_BEARER_TOKEN nor (LSST_HTTP_AUTH_CLIENT_CERT and "
@@ -664,6 +707,28 @@ class HttpResourcePath(ResourcePath):
     -----
     In order to configure the behavior of instances of this class, the
     environment variables below are inspected:
+
+    - LSST_HTTP_CACERT_BUNDLE: path to a .pem file or to a directory which
+        contains the .pem files of the trusted certificate authorities's
+        certificates. If the remote server presents a server certificate
+        issued by one of those trusted authorities, we trust it.
+        If this environment variable is not initialized, the default
+        authorities of the the execution host are trusted.
+
+    - LSST_HTTP_AUTH_BEARER_TOKEN: value of a bearer token or path to a
+        local file containing a bearer token to be used as the client
+        authentication mechanism with all requests.
+        The permissions of the token file must be set so that only its
+        owner can access it.
+        If initialized, takes precedence over LSST_HTTP_AUTH_CLIENT_CERT
+        and LSST_HTTP_AUTH_CLIENT_KEY.
+
+    - LSST_HTTP_AUTH_CLIENT_CERT: path to a .pem file which contains the
+        client certificate for authenticating to the server.
+        If initialized, the variable LSST_HTTP_AUTH_CLIENT_KEY must also be
+        initialized with the path of the client private key file.
+        The permissions of the client private key must be set so that only
+        its owner can access it, at least for reading.
 
     - LSST_HTTP_PUT_SEND_EXPECT_HEADER: if set (with any value), a
         "Expect: 100-Continue" header will be added to all HTTP PUT requests.
@@ -702,6 +767,7 @@ class HttpResourcePath(ResourcePath):
     # keep the connection to the front end servers open, to reduce the cost
     # associated to TCP and TLS handshaking for each new request.
     _metadata_session_store = SessionStore(
+        config=_config,
         num_pools=5,
         max_persistent_connections=_config.front_end_connections,
         backoff_min=_config.backoff_min,
@@ -716,6 +782,7 @@ class HttpResourcePath(ResourcePath):
     # the client to a back end server, for instance when serving a PUT
     # request.
     _data_session_store = SessionStore(
+        config=_config,
         num_pools=25,
         max_persistent_connections=_config.back_end_connections,
         backoff_min=_config.backoff_min,
@@ -1157,7 +1224,7 @@ class HttpResourcePath(ResourcePath):
                     f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
                 )
 
-            tmpdir, buffering = _get_temp_dir()
+            tmpdir, buffer_size = self._config.tmpdir_buffersize
             with ResourcePath.temporary_uri(
                 suffix=self.getExtension(), prefix=ResourcePath(tmpdir, forceDirectory=True), delete=False
             ) as tmp_uri:
@@ -1165,13 +1232,13 @@ class HttpResourcePath(ResourcePath):
                 with time_this(
                     log,
                     msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
-                    args=(self, expected_length, tmp_uri, buffering),
+                    args=(self, expected_length, tmp_uri, buffer_size),
                     mem_usage=self._config.collect_memory_usage,
                     mem_unit=u.mebibyte,
                 ):
                     content_length = 0
-                    with open(tmp_uri.ospath, "wb", buffering=buffering) as tmpFile:
-                        for chunk in resp.iter_content(chunk_size=buffering):
+                    with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
+                        for chunk in resp.iter_content(chunk_size=buffer_size):
                             tmpFile.write(chunk)
                             content_length += len(chunk)
 
