@@ -376,8 +376,9 @@ class HttpResourcePathConfig:
 
 
 @functools.lru_cache
-def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
-    """Check whether the remote HTTP endpoint implements WebDAV features.
+def _get_dav_and_server_headers(path: ResourcePath | str) -> tuple[str | None, str | None]:
+    """Retrieve the "DAV" and "Server" headers sent by the remote server as
+    part of the response to a single "OPTIONS" HTTP request.
 
     Parameters
     ----------
@@ -388,80 +389,28 @@ def _is_webdav_endpoint(path: ResourcePath | str) -> bool:
 
     Returns
     -------
-    _is_webdav_endpoint : `bool`
-        True if the endpoint implements WebDAV, False if it doesn't.
+    _get_dav_and_server_headers : `tuple[str|None, str|None]`
+        Values of the "DAV" and "Server" headers found in the response or
+        None if any of those headers was not part of the response.
     """
-    log.debug("Detecting HTTP endpoint type for '%s'...", path)
-
-    # Send an OPTIONS request and inspect its response. An OPTIONS
-    # request does not need authentication of the client, so we don't need
-    # to provide a client certificate or a bearer token. We set a
-    # relatively short timeout since an OPTIONS request is relatively cheap
-    # for the server to compute.
-
-    # Create a session for configuring retries
-    retries = Retry(
-        # Total number of retries to allow. Takes precedence over other
-        # counts.
-        total=6,
-        # How many connection-related errors to retry on.
-        connect=3,
-        # How many times to retry on read errors.
-        read=3,
-        # How many times to retry on bad status codes.
-        status=5,
-        # Set of uppercased HTTP method verbs that we should retry on.
-        allowed_methods=frozenset(
-            [
-                "OPTIONS",
-            ]
-        ),
-        # HTTP status codes that we should force a retry on.
-        status_forcelist=frozenset(
-            [
-                requests.codes.too_many_requests,  # 429
-                requests.codes.internal_server_error,  # 500
-                requests.codes.bad_gateway,  # 502
-                requests.codes.service_unavailable,  # 503
-                requests.codes.gateway_timeout,  # 504
-            ]
-        ),
-        # Whether to respect 'Retry-After' header on status codes defined
-        # above.
-        respect_retry_after_header=True,
-    )
-
     try:
+        if not isinstance(path, HttpResourcePath):
+            path = HttpResourcePath(path)
+
         config = HttpResourcePathConfig()
-        session = requests.Session()
-        session.mount(str(path), HTTPAdapter(max_retries=retries))
-        session.verify = True if config.ca_bundle is None else config.ca_bundle
-        with session:
+        with SessionStore(config=config).get(path) as session:
             resp = session.options(
                 str(path),
                 stream=False,
                 timeout=config.timeout,
             )
-            if resp.status_code not in (requests.codes.ok, requests.codes.created):
-                return False
 
-            # Check that "1" is part of the value of the "DAV" header. We don't
-            # use locks, so a server complying to class 1 is enough for our
-            # purposes. All webDAV servers must advertise at least compliance
-            # class "1".
-            #
-            # Compliance classes are documented in
-            #    http://www.webdav.org/specs/rfc4918.html#dav.compliance.classes
-            #
-            # Examples of values for header DAV are:
-            #   DAV: 1, 2
-            #   DAV: 1, <http://apache.org/dav/propset/fs/1>
-            if "DAV" not in resp.headers:
-                return False
-            else:
-                # Convert to str to keep mypy happy
-                compliance_class = str(resp.headers.get("DAV"))
-                return "1" in compliance_class.replace(" ", "").split(",")
+            dav_header = server_header = None
+            if resp.status_code == requests.codes.ok:
+                dav_header = resp.headers.get("DAV") if "DAV" in resp.headers else None
+                server_header = resp.headers.get("Server") if "Server" in resp.headers else None
+
+            return (dav_header, server_header)
 
     except requests.exceptions.SSLError as e:
         log.warning(
@@ -776,8 +725,6 @@ class HttpResourcePath(ResourcePath):
         Valid values are those in ACCEPTED_DIGESTS.
     """
 
-    _is_webdav: bool | None = None
-
     # Configuration items for this class instances.
     _config = HttpResourcePathConfig()
 
@@ -862,17 +809,48 @@ class HttpResourcePath(ResourcePath):
         if hasattr(self, "_data_session"):
             delattr(self, "_data_session")
 
+    def _init_server_properties(self) -> None:
+        """
+        Initialize instance variables '_is_webdav' and '_server' by
+        sending a single OPTIONS request to the remote server and
+        saving the results.
+        """
+        # Retrieve the "DAV" and the "Server" headers for the root URL of this
+        # path
+        dav_header, server_header = _get_dav_and_server_headers(self.root_uri())
+
+        # Check that "1" is part of the value of the "DAV" header. We don't
+        # use locks, so a server complying to class 1 is enough for our
+        # purposes. All webDAV servers must advertise at least compliance
+        # class "1".
+        #
+        # Compliance classes are documented in
+        #    http://www.webdav.org/specs/rfc4918.html#dav.compliance.classes
+        #
+        # Examples of values for header DAV are:
+        #   DAV: 1, 2
+        #   DAV: 1, <http://apache.org/dav/propset/fs/1>
+        self._is_webdav: bool = False
+        if dav_header is not None:
+            self._is_webdav = "1" in dav_header.replace(" ", "").split(",")
+
+        self._server: str | None = None
+        if server_header is not None:
+            # Server header is expected to be of the form 'dCache/9.2.4'
+            # or 'XrootD/v5.7.1'. Strip version and put in lowercase.
+            self._server = server_header.split("/")[0].lower()
+
     @property
     def is_webdav_endpoint(self) -> bool:
         """Check if the current endpoint implements WebDAV features.
 
-        This is stored per URI but cached by root so there is
-        only one check per hostname.
+        This is stored per URI but cached by root so there is only one check
+        per hostname.
         """
-        if self._is_webdav is not None:
+        if hasattr(self, "_is_webdav"):
             return self._is_webdav
 
-        self._is_webdav = _is_webdav_endpoint(self.root_uri())
+        self._init_server_properties()
         return self._is_webdav
 
     @property
@@ -888,14 +866,7 @@ class HttpResourcePath(ResourcePath):
         if hasattr(self, "_server"):
             return self._server
 
-        self._server: str | None = None
-        resp = self._options()
-        if resp.status_code == requests.codes.ok:  # 200
-            if "Server" in resp.headers:
-                # Server header is expected to be of the form 'dCache/9.2.4'
-                # or 'XrootD/v5.7.1'. Strip version and put in lowercase.
-                self._server = resp.headers["Server"].split("/")[0].lower()
-
+        self._init_server_properties()
         return self._server
 
     def exists(self) -> bool:
@@ -1323,7 +1294,7 @@ class HttpResourcePath(ResourcePath):
         if self.server is None:
             raise NotImplementedError(f"server for '{self}' does not support signing URLs")
 
-        # dCache and XrootD servers support delivering of macaroons
+        # dCache and XrootD servers are known to support delivery of macaroons.
         if self.server not in ("dcache", "xrootd"):
             raise NotImplementedError(f"server '{self._server}' does not support signing for {self}")
 

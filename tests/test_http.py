@@ -39,13 +39,7 @@ from lsst.resources._resourceHandles._httpResourceHandle import (
     HttpReadResourceHandle,
     parse_content_range_header,
 )
-from lsst.resources.http import (
-    BearerTokenAuth,
-    HttpResourcePathConfig,
-    SessionStore,
-    _is_protected,
-    _is_webdav_endpoint,
-)
+from lsst.resources.http import BearerTokenAuth, HttpResourcePathConfig, SessionStore, _is_protected
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
@@ -416,6 +410,31 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertFalse(subdir.exists())
         os.remove(local_file)
 
+    @responses.activate
+    def test_is_webdav_endpoint(self):
+        davEndpoint = "http://www.lsstwithwebdav.org"
+        responses.add(responses.OPTIONS, davEndpoint, status=200, headers={"DAV": "1,2,3"})
+        self.assertTrue(ResourcePath(davEndpoint).is_webdav_endpoint)
+
+        plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
+        responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
+        self.assertFalse(ResourcePath(plainHttpEndpoint).is_webdav_endpoint)
+
+        notWebdavEndpoint = "http://www.notwebdav.org"
+        responses.add(responses.OPTIONS, notWebdavEndpoint, status=403)
+        self.assertFalse(ResourcePath(notWebdavEndpoint).is_webdav_endpoint)
+
+    @responses.activate
+    def test_server_identity(self):
+        server = "MyServer/v1.2.3"
+        endpointWithServer = "http://www.lsstwithserverheader.org"
+        responses.add(responses.OPTIONS, endpointWithServer, status=200, headers={"Server": server})
+        self.assertEqual(ResourcePath(endpointWithServer).server, "myserver")
+
+        endpointWithoutServer = "http://www.lsstwithoutserverheader.org"
+        responses.add(responses.OPTIONS, endpointWithoutServer, status=200)
+        self.assertIsNone(ResourcePath(endpointWithoutServer).server)
+
     @classmethod
     def _get_port_number(cls) -> int:
         """Return a port number the webDAV server can use to listen to."""
@@ -509,7 +528,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         os.close(tmpfile)
 
         if remove_when_done:
-            self.local_files_to_remove.append(path)
+            HttpReadWriteWebdavTestCase.local_files_to_remove.append(path)
 
         return path, size
 
@@ -788,20 +807,6 @@ class WebdavUtilsTestCase(unittest.TestCase):
     def tearDown(self):
         if self.tmpdir and self.tmpdir.isLocal:
             removeTestTempDir(self.tmpdir.ospath)
-
-    @responses.activate
-    def test_is_webdav_endpoint(self):
-        davEndpoint = "http://www.lsstwithwebdav.org"
-        responses.add(responses.OPTIONS, davEndpoint, status=200, headers={"DAV": "1,2,3"})
-        self.assertTrue(_is_webdav_endpoint(davEndpoint))
-
-        plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
-        responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
-        self.assertFalse(_is_webdav_endpoint(plainHttpEndpoint))
-
-        notWebdavEndpoint = "http://www.notwebdav.org"
-        responses.add(responses.OPTIONS, notWebdavEndpoint, status=403)
-        self.assertFalse(_is_webdav_endpoint(notWebdavEndpoint))
 
     def test_is_protected(self):
         self.assertFalse(_is_protected("/this-file-does-not-exist"))
