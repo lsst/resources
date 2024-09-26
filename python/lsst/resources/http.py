@@ -1693,7 +1693,26 @@ class HttpResourcePath(ResourcePath):
         # no content. Follow a single server redirection to retrieve the
         # final URL.
         headers = {"Content-Length": "0"}
-        if self._config.send_expect_on_put:
+
+        # If we are explicitly configured for or if we know the remote server
+        # is dCache, send an "Expect" header to signal the server that this
+        # client knows how to handle redirection in PUT requests.
+        #
+        # The goal is that the contents of the file we want to upload is sent
+        # directly to the dCache pool without transiting through the dCache
+        # webDAV door. Otherwise, the uploaded data would transit twice over
+        # the network: first from this client to the dCache webDAV door and
+        # second from webDAV door to the target pool (i.e. the dCache file
+        # server which will ultimately store the data we will upload).
+        #
+        # Systematically uploading data via dCache webDAV door could add
+        # unnecessary load to the door which we can avoid by instead uploading
+        # directly to the dCache pool.
+        #
+        # For further details see section "Redirection on upload":
+        #
+        # https://www.dcache.org/manuals/UserGuide-9.2/webdav.shtml#redirection
+        if self._config.send_expect_on_put or self.server == "dcache":
             headers["Expect"] = "100-continue"
 
         url = self.geturl()
