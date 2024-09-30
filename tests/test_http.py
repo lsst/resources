@@ -80,11 +80,11 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
     """Test with a real webDAV server, as opposed to mocking responses."""
 
     scheme = "http"
+    local_files_to_remove: list[str] = []
 
     @classmethod
     def setUpClass(cls):
         cls.webdav_tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
-        cls.local_files_to_remove = []
         cls.server_thread = None
 
         # Disable warnings about socket connections left open. We purposedly
@@ -409,6 +409,42 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertIsNone(subdir.remove())
         self.assertFalse(subdir.exists())
         os.remove(local_file)
+
+    def test_dav_to_fsspec(self):
+        # Upload a randomly-generated file via write() with overwrite
+        local_file, file_size = self._generate_file()
+        with open(local_file, "rb") as f:
+            data = f.read()
+
+        remote_file = self.tmpdir.join(self._get_file_name())
+        self.assertIsNone(remote_file.write(data, overwrite=True))
+        self.assertTrue(remote_file.exists())
+        self.assertEqual(remote_file.size(), file_size)
+
+        try:
+            # Ensure that the contents of the remote file we just uploaded is
+            # identical to the contents of that file when retrieved via
+            # fsspec.open().
+            fsys, url = remote_file.to_fsspec()
+            with fsys.open(url) as f:
+                self.assertEqual(data, f.read())
+
+            # Ensure the contents is identical to the result of fsspec.cat()
+            self.assertEqual(data, fsys.cat(url))
+        except NotImplementedError as e:
+            # to_fsspec() must succeed if remote server knows how to sign URLs
+            if remote_file.server_signs_urls:
+                raise e
+        finally:
+            os.remove(local_file)
+
+        # Ensure that attempting to modify a remote via via fsspec fails.
+        # fsspect.rm() raises NotImplementedError if it cannot remove the
+        # remote file.
+        if remote_file.server_signs_urls:
+            fsys, url = remote_file.to_fsspec()
+            with self.assertRaises(NotImplementedError):
+                fsys.rm(url)
 
     @responses.activate
     def test_is_webdav_endpoint(self):

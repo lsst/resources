@@ -39,14 +39,16 @@ except ImportError:
 
 try:
     import fsspec
+    from aiohttp import ClientSession, TCPConnector
+    from fsspec.implementations.http import HTTPFileSystem
     from fsspec.spec import AbstractFileSystem
 except ImportError:
     fsspec = None
     AbstractFileSystem = type
+    HTTPFileSystem = type
 
 from urllib.parse import parse_qs
 
-import aiohttp
 import requests
 from astropy import units as u
 from lsst.utils.timer import time_this
@@ -101,25 +103,22 @@ class HttpResourcePathConfig:
     """
 
     # Default timeouts for all HTTP requests (seconds).
-    DEFAULT_TIMEOUT_CONNECT = 30.0
-    DEFAULT_TIMEOUT_READ = 1_500.0
+    DEFAULT_TIMEOUT_CONNECT: float = 30.0
+    DEFAULT_TIMEOUT_READ: float = 1_500.0
 
     # Default lower and upper bounds for the backoff interval (seconds).
     # A value in this interval is randomly selected as the backoff factor when
     # requests need to be retried.
-    DEFAULT_BACKOFF_MIN = 1.0
-    DEFAULT_BACKOFF_MAX = 3.0
+    DEFAULT_BACKOFF_MIN: float = 1.0
+    DEFAULT_BACKOFF_MAX: float = 3.0
 
     # Default number of connections to persist with both the front end and
     # back end servers.
-    DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS = 2
-    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS = 1
+    DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS: int = 2
+    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS: int = 1
 
     # Accepted digest algorithms
-    ACCEPTED_DIGESTS = ("adler32", "md5", "sha-256", "sha-512")
-
-    # Default location for trusted certificate authorities
-    DEFAULT_CA_PATHS = "/etc/grid-security/certificates"
+    ACCEPTED_DIGESTS: list[str] = ["adler32", "md5", "sha-256", "sha-512"]
 
     def __init__(self) -> None:
         self._front_end_connections: int | None = None
@@ -135,6 +134,7 @@ class HttpResourcePathConfig:
         self._client_cert: str | None = ""
         self._client_key: str | None = ""
         self._tmpdir_buffersize: tuple[str, int] | None = None
+        self._ssl_context: ssl.SSLContext | None = None
 
     @property
     def front_end_connections(self) -> int:
@@ -274,7 +274,7 @@ class HttpResourcePathConfig:
         """Local path to the certificate bundle file or directory where the
         certifcates of the trusted authorities are located.
 
-        Return None if this host system's certificate bundle should be
+        Return None if this host's system certificate bundle should be
         used for authenticating remote servers' certificates.
         """
         if self._ca_bundle != "":
@@ -283,10 +283,6 @@ class HttpResourcePathConfig:
         # If a bundle was specified via the environment variable
         # 'LSST_HTTP_CACERT_BUNDLE' use it.
         self._ca_bundle = os.getenv("LSST_HTTP_CACERT_BUNDLE")
-        if self._ca_bundle is None and os.path.isdir(self.DEFAULT_CA_PATHS):
-            # If the default bundle directory exists in this host use it.
-            self._ca_bundle = self.DEFAULT_CA_PATHS
-
         return self._ca_bundle
 
     @property
@@ -373,6 +369,21 @@ class HttpResourcePathConfig:
         self._tmpdir_buffersize = (tmpdir, max(10 * fsstats.f_bsize, 256 * 4096))
 
         return self._tmpdir_buffersize
+
+    @property
+    def ssl_context(self) -> ssl.SSLContext:
+        """Return an SSL context equiped with the certificates of the trusted
+        authorities.
+        """
+        if self._ssl_context is None:
+            self._ssl_context = ssl.create_default_context()
+            if self.ca_bundle is not None:
+                if os.path.isdir(self.ca_bundle):
+                    self._ssl_context.load_verify_locations(capath=self.ca_bundle)
+                elif os.path.isfile(self.ca_bundle):
+                    self._ssl_context.load_verify_locations(cafile=self.ca_bundle)
+
+        return self._ssl_context
 
 
 @functools.lru_cache
@@ -725,6 +736,11 @@ class HttpResourcePath(ResourcePath):
         Valid values are those in ACCEPTED_DIGESTS.
     """
 
+    # WebDAV servers known to be able to sign URLs. The values are lowercased
+    # server identifiers retrieved from the 'Server' header included in
+    # the response to a HTTP OPTIONS request.
+    SUPPORTED_URL_SIGNERS = ("dcache", "xrootd")
+
     # Configuration items for this class instances.
     _config = HttpResourcePathConfig()
 
@@ -760,6 +776,11 @@ class HttpResourcePath(ResourcePath):
     # to replace sessions created by a parent process and inherited by a
     # child process after a fork, to avoid confusing the SSL layer.
     _pid: int = -1
+
+    # Connector used by a session pool to establish network connections to
+    # remote servers. This connector is exclusively used by fsspec file system
+    # and is shared by all instances of this class.
+    _tcp_connector: TCPConnector | None = None
 
     @property
     def metadata_session(self) -> requests.Session:
@@ -868,6 +889,13 @@ class HttpResourcePath(ResourcePath):
 
         self._init_server_properties()
         return self._server
+
+    @property
+    def server_signs_urls(self) -> bool:
+        """Return true if the remote server support signing or URLs for
+        download and upload.
+        """
+        return self.server in HttpResourcePath.SUPPORTED_URL_SIGNERS
 
     def exists(self) -> bool:
         """Check that a remote HTTP resource exists."""
@@ -1232,6 +1260,9 @@ class HttpResourcePath(ResourcePath):
         url : `str`
             HTTP URL signed for GET.
         """
+        if not self.is_webdav_endpoint:
+            return super().generate_presigned_get_url(expiration_time_seconds=expiration_time_seconds)
+
         return self._sign_with_macaroon(ActivityCaveat.DOWNLOAD, expiration_time_seconds)
 
     def generate_presigned_put_url(self, *, expiration_time_seconds: int) -> str:
@@ -1248,6 +1279,9 @@ class HttpResourcePath(ResourcePath):
         url : `str`
             HTTP URL signed for PUT.
         """
+        if not self.is_webdav_endpoint:
+            return super().generate_presigned_put_url(expiration_time_seconds=expiration_time_seconds)
+
         return self._sign_with_macaroon(ActivityCaveat.UPLOAD, expiration_time_seconds)
 
     def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
@@ -1260,43 +1294,56 @@ class HttpResourcePath(ResourcePath):
         path : `str`
             A path that can be opened by the file system object.
         """
+        if (
+            fsspec is None
+            or not self.is_webdav_endpoint
+            or self.server not in HttpResourcePath.SUPPORTED_URL_SIGNERS
+        ):
+            return super().to_fsspec()
+
         if self.isdir():
             raise NotImplementedError(
                 f"method HttpResourcePath.to_fsspec() not implemented for directory {self}"
             )
 
-        if fsspec is None:
-            raise ImportError("fsspec is not available")
+        async def get_client_session(**kwargs: Any) -> ClientSession:
+            """Return a aiohttp.ClientSession configured to use an
+            `aiohttp.TCPConnector` shared by all instances of this class.
 
-        async def get_client(**kwargs: Any) -> aiohttp.ClientSession:
-            # Create a SSL context equipped with the required certificates of
-            # the trusted certificate authorities. fsspect client must use
-            # that context to download the file.
-            ssl_context = ssl.create_default_context()
-            if self._config.ca_bundle is not None:
-                ssl_context.load_verify_locations(capath=self._config.ca_bundle)
-            return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context), **kwargs)
+            Parameters
+            ----------
+            **kwargs : `Any`
+                Keyword arguments passed unmodified to the contructor of
+                `aiohttp.ClientSession`.
 
-        # Retrieve a signed URL for a duration of 1 hour. We assume the URL
-        # is to be used only for downloading, to avoid the risk the caller
-        # modify its contents inadvertently.
+            Returns
+            -------
+            session : `aiohttp.ClientSession`
+                Client session that `aiohttp.HTTPFileSystem` will use to pool
+                TCP connections to the server.
+            """
+            if HttpResourcePath._tcp_connector is None:
+                HttpResourcePath._tcp_connector = TCPConnector(ssl=self._config.ssl_context)
+
+            return ClientSession(connector=HttpResourcePath._tcp_connector, **kwargs)
+
+        # Retrieve a signed URL for download valid for 1 hour.
         url = self.generate_presigned_get_url(expiration_time_seconds=3_600)
 
-        # We are returning a a fsspec built-in filesystem implemented by
-        # class 'fsspec.implementations.http.HTTPFileSystem'. The constructor
-        # of this class accepts the argument 'block_size'. The default
-        # value is 'fsspec.utils.DEFAULT_BLOCK_SIZE' which is 5 MB.
+        # HTTPFileSystem constructors accepts the argument 'block_size'. The
+        # default value is 'fsspec.utils.DEFAULT_BLOCK_SIZE' which is 5 MB.
         # That seems to be a reasonable block size for downloading files.
-        return fsspec.core.url_to_fs(url, get_client=get_client)
+        return HTTPFileSystem(get_client=get_client_session), url
 
     def _sign_with_macaroon(self, activity: ActivityCaveat, expiration_time_seconds: int) -> str:
-        # dCache and XrootD servers support delivering of macaroons
+        # dCache and XRootD webDAV servers support delivery of macaroons.
+        #
+        # For details about dCache macaroons see:
+        #    https://www.dcache.org/manuals/UserGuide-9.2/macaroons.shtml
         if self.server is None:
             raise NotImplementedError(f"server for '{self}' does not support signing URLs")
-
-        # dCache and XrootD servers are known to support delivery of macaroons.
-        if self.server not in ("dcache", "xrootd"):
-            raise NotImplementedError(f"server '{self._server}' does not support signing for {self}")
+        elif self.server not in HttpResourcePath.SUPPORTED_URL_SIGNERS:
+            raise NotImplementedError(f"server '{self.server}' does not support signing for {self}")
 
         match activity:
             case ActivityCaveat.DOWNLOAD:
@@ -1304,7 +1351,7 @@ class HttpResourcePath(ResourcePath):
             case ActivityCaveat.UPLOAD:
                 activity_caveat = "UPLOAD,LIST"
 
-        # Request a macaroon for the requested activities and duration duration
+        # Retrieve a macaroon for the requested activities and duration
         headers = {"Content-Type": "application/macaroon-request"}
         body = {
             "caveats": [
@@ -1313,10 +1360,31 @@ class HttpResourcePath(ResourcePath):
             "validity": f"PT{expiration_time_seconds}S",
         }
         resp = self._post(data=json.dumps(body), headers=headers)
+        if resp.status_code != requests.codes.ok:
+            raise ValueError(
+                f"could not retrieve a macaroon for URL {self}, status: {resp.status_code} {resp.reason}"
+            )
 
-        # We are expecting the body of to be formatted in JSON.
+        # We are expecting the body of the response to be formatted in JSON.
         # dCache sets the 'Content-Type' of the response to 'application/json'
         # but XRootD does not set any 'Content-Type' header 8-[
+        #
+        # An example of a response body returned by dCache is shown below:
+        # {
+        #    "macaroon": "MDA[...]Qo",
+        #    "uri": {
+        #      "targetWithMacaroon": "https://dcache.example.org/?authz=MD...",
+        #      "baseWithMacaroon": "https://dcache.example.org/?authz=MD...",
+        #      "target": "https://dcache.example.org/",
+        #      "base": "https://dcache.example.org/"
+        #    }
+        # }
+        #
+        # An example of a response body returned by XRootD is shown below:
+        # {
+        #    "macaroon": "MDA[...]Qo",
+        #    "expires_in": 86400
+        # }
         try:
             response_body = json.loads(resp.text)
             if "macaroon" in response_body:
@@ -1325,8 +1393,6 @@ class HttpResourcePath(ResourcePath):
                 raise ValueError(f"could not retrieve macaroon for URL {self}")
         except json.JSONDecodeError:
             raise ValueError(f"could not deserialize response to POST request for URL {self}")
-        except Exception as e:
-            raise e
 
     def _as_local(self) -> tuple[str, bool]:
         """Download object over HTTP and place in temporary directory.
