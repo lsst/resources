@@ -375,7 +375,11 @@ class S3ResourcePath(ResourcePath):
         """
         try:
             self.client.upload_file(
-                local_file.ospath, self._bucket, self.relativeToPathRoot, Callback=progress
+                local_file.ospath,
+                self._bucket,
+                self.relativeToPathRoot,
+                Callback=progress,
+                Config=self._transfer_config,
             )
         except self.client.exceptions.NoSuchBucket as err:
             raise NotADirectoryError(f"Target does not exist: {err}") from err
