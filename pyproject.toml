@@ -21,7 +21,6 @@ classifiers = [
 keywords = ["lsst"]
 dependencies = [
     "lsst-utils",
-    "deprecated"
 ]
 dynamic = ["version"]
 requires-python = ">=3.11.0"
