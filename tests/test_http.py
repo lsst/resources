@@ -10,7 +10,6 @@
 # license that can be found in the LICENSE file.
 
 import hashlib
-import importlib
 import io
 import os.path
 import random
@@ -40,13 +39,7 @@ from lsst.resources._resourceHandles._httpResourceHandle import (
     HttpReadResourceHandle,
     parse_content_range_header,
 )
-from lsst.resources.http import (
-    BearerTokenAuth,
-    HttpResourcePathConfig,
-    SessionStore,
-    _is_protected,
-    _is_webdav_endpoint,
-)
+from lsst.resources.http import BearerTokenAuth, HttpResourcePathConfig, SessionStore, _is_protected
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
@@ -87,11 +80,11 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
     """Test with a real webDAV server, as opposed to mocking responses."""
 
     scheme = "http"
+    local_files_to_remove: list[str] = []
 
     @classmethod
     def setUpClass(cls):
         cls.webdav_tmpdir = tempfile.mkdtemp(prefix="webdav-server-test-")
-        cls.local_files_to_remove = []
         cls.server_thread = None
 
         # Disable warnings about socket connections left open. We purposedly
@@ -417,6 +410,67 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertFalse(subdir.exists())
         os.remove(local_file)
 
+    def test_dav_to_fsspec(self):
+        # Upload a randomly-generated file via write() with overwrite
+        local_file, file_size = self._generate_file()
+        with open(local_file, "rb") as f:
+            data = f.read()
+
+        remote_file = self.tmpdir.join(self._get_file_name())
+        self.assertIsNone(remote_file.write(data, overwrite=True))
+        self.assertTrue(remote_file.exists())
+        self.assertEqual(remote_file.size(), file_size)
+
+        try:
+            # Ensure that the contents of the remote file we just uploaded is
+            # identical to the contents of that file when retrieved via
+            # fsspec.open().
+            fsys, url = remote_file.to_fsspec()
+            with fsys.open(url) as f:
+                self.assertEqual(data, f.read())
+
+            # Ensure the contents is identical to the result of fsspec.cat()
+            self.assertEqual(data, fsys.cat(url))
+        except NotImplementedError as e:
+            # to_fsspec() must succeed if remote server knows how to sign URLs
+            if remote_file.server_signs_urls:
+                raise e
+        finally:
+            os.remove(local_file)
+
+        # Ensure that attempting to modify a remote via via fsspec fails.
+        # fsspect.rm() raises NotImplementedError if it cannot remove the
+        # remote file.
+        if remote_file.server_signs_urls:
+            fsys, url = remote_file.to_fsspec()
+            with self.assertRaises(NotImplementedError):
+                fsys.rm(url)
+
+    @responses.activate
+    def test_is_webdav_endpoint(self):
+        davEndpoint = "http://www.lsstwithwebdav.org"
+        responses.add(responses.OPTIONS, davEndpoint, status=200, headers={"DAV": "1,2,3"})
+        self.assertTrue(ResourcePath(davEndpoint).is_webdav_endpoint)
+
+        plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
+        responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
+        self.assertFalse(ResourcePath(plainHttpEndpoint).is_webdav_endpoint)
+
+        notWebdavEndpoint = "http://www.notwebdav.org"
+        responses.add(responses.OPTIONS, notWebdavEndpoint, status=403)
+        self.assertFalse(ResourcePath(notWebdavEndpoint).is_webdav_endpoint)
+
+    @responses.activate
+    def test_server_identity(self):
+        server = "MyServer/v1.2.3"
+        endpointWithServer = "http://www.lsstwithserverheader.org"
+        responses.add(responses.OPTIONS, endpointWithServer, status=200, headers={"Server": server})
+        self.assertEqual(ResourcePath(endpointWithServer).server, "myserver")
+
+        endpointWithoutServer = "http://www.lsstwithoutserverheader.org"
+        responses.add(responses.OPTIONS, endpointWithoutServer, status=200)
+        self.assertIsNone(ResourcePath(endpointWithoutServer).server)
+
     @classmethod
     def _get_port_number(cls) -> int:
         """Return a port number the webDAV server can use to listen to."""
@@ -510,7 +564,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         os.close(tmpfile)
 
         if remove_when_done:
-            self.local_files_to_remove.append(path)
+            HttpReadWriteWebdavTestCase.local_files_to_remove.append(path)
 
         return path, size
 
@@ -537,16 +591,21 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 class HttpResourcePathConfigTestCase(unittest.TestCase):
     """Test for the HttpResourcePathConfig class."""
 
+    def setUp(self):
+        self.tmpdir = ResourcePath(makeTestTempDir(TESTDIR))
+
+    def tearDown(self):
+        if self.tmpdir and self.tmpdir.isLocal:
+            removeTestTempDir(self.tmpdir.ospath)
+
     def test_send_expect_header(self):
         # Ensure environment variable LSST_HTTP_PUT_SEND_EXPECT_HEADER is
         # inspected to initialize the HttpResourcePathConfig config class.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertFalse(config.send_expect_on_put)
 
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "true"}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertTrue(config.send_expect_on_put)
 
@@ -554,12 +613,10 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # Ensure environment variable LSST_HTTP_COLLECT_MEMORY_USAGE is
         # inspected to initialize the HttpResourcePathConfig class.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertFalse(config.collect_memory_usage)
 
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_COLLECT_MEMORY_USAGE": "true"}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertTrue(config.collect_memory_usage)
 
@@ -567,7 +624,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # Ensure that when the connect and read timeouts are not specified
         # the default values are stored in the config.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertAlmostEqual(config.timeout[0], config.DEFAULT_TIMEOUT_CONNECT)
             self.assertAlmostEqual(config.timeout[1], config.DEFAULT_TIMEOUT_READ)
@@ -580,8 +636,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             {"LSST_HTTP_TIMEOUT_CONNECT": str(connect_timeout), "LSST_HTTP_TIMEOUT_READ": str(read_timeout)},
             clear=True,
         ):
-            # Force module reload.
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertAlmostEqual(config.timeout[0], connect_timeout)
             self.assertAlmostEqual(config.timeout[1], read_timeout)
@@ -594,8 +648,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
                 {"LSST_HTTP_TIMEOUT_CONNECT": value, "LSST_HTTP_TIMEOUT_READ": value},
                 clear=True,
             ):
-                # Force module reload.
-                importlib.reload(lsst.resources.http)
                 with self.assertRaises(ValueError):
                     config = HttpResourcePathConfig()
                     config.timeout()
@@ -604,7 +656,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # Ensure that when the number of front end connections is not specified
         # the default is stored in the config.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertEqual(config.front_end_connections, config.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
 
@@ -614,7 +665,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(
             os.environ, {"LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
         ):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertTrue(config.front_end_connections, connections)
 
@@ -622,7 +672,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # Ensure that when the number of back end connections is not specified
         # the default is stored in the config.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertEqual(config.back_end_connections, config.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
 
@@ -632,7 +681,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(
             os.environ, {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": str(connections)}, clear=True
         ):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertTrue(config.back_end_connections, connections)
 
@@ -640,21 +688,18 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # Ensure that when no digest is specified in the environment, the
         # configured digest algorithm is the empty string.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertEqual(config.digest_algorithm, "")
 
         # Ensure that an invalid digest algorithm is ignored.
         digest = "invalid"
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertEqual(config.digest_algorithm, "")
 
         # Ensure that an accepted digest algorithm is stored.
         for digest in HttpResourcePathConfig().ACCEPTED_DIGESTS:
             with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIGEST": digest}, clear=True):
-                importlib.reload(lsst.resources.http)
                 config = HttpResourcePathConfig()
                 self.assertTrue(config.digest_algorithm, digest)
 
@@ -662,7 +707,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         # Ensure that when no backoff interval is defined, the default values
         # are used.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertAlmostEqual(config.backoff_min, config.DEFAULT_BACKOFF_MIN)
             self.assertAlmostEqual(config.backoff_max, config.DEFAULT_BACKOFF_MAX)
@@ -672,7 +716,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(
             os.environ, {"LSST_HTTP_BACKOFF_MIN": "XXX", "LSST_HTTP_BACKOFF_MAX": "YYY"}, clear=True
         ):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertAlmostEqual(config.backoff_min, config.DEFAULT_BACKOFF_MIN)
             self.assertAlmostEqual(config.backoff_max, config.DEFAULT_BACKOFF_MAX)
@@ -681,7 +724,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(
             os.environ, {"LSST_HTTP_BACKOFF_MIN": "NaN", "LSST_HTTP_BACKOFF_MAX": "NaN"}, clear=True
         ):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertAlmostEqual(config.backoff_min, config.DEFAULT_BACKOFF_MIN)
             self.assertAlmostEqual(config.backoff_max, config.DEFAULT_BACKOFF_MAX)
@@ -693,10 +735,103 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             {"LSST_HTTP_BACKOFF_MIN": str(backoff_min), "LSST_HTTP_BACKOFF_MAX": str(backoff_max)},
             clear=True,
         ):
-            importlib.reload(lsst.resources.http)
             config = HttpResourcePathConfig()
             self.assertAlmostEqual(config.backoff_min, backoff_min)
             self.assertAlmostEqual(config.backoff_max, backoff_max)
+
+    def test_ca_bundle(self):
+        # Ensure that when no bundle is defined via environment variable
+        # LSST_HTTP_CACERT_BUNDLE either None is returned or the returned
+        # path does exist.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            if config.ca_bundle is not None:
+                self.assertTrue(os.path.exists(config.ca_bundle))
+
+        # Ensure that if LSST_HTTP_CACERT_BUNDLE is specified, the returned
+        # path is identical to the value of that variable (we don't check
+        # here that the path actually exists).
+        ca_bundle = "/path/to/bundle/dir"
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_CACERT_BUNDLE": ca_bundle}, clear=True):
+            config = HttpResourcePathConfig()
+            self.assertEqual(config.ca_bundle, ca_bundle)
+
+    def test_client_token(self):
+        # Ensure that when no token is defined via environment variable
+        # LSST_HTTP_AUTH_BEARER_TOKEN None is returned.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            self.assertIsNone(config.client_token)
+
+        # Ensure that if LSST_HTTP_AUTH_BEARER_TOKEN is specified, the returned
+        # path is identical to the value of that variable (we don't check
+        # here that the path actually exists).
+        token = "ABCDE12345"
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_AUTH_BEARER_TOKEN": token}, clear=True):
+            config = HttpResourcePathConfig()
+            self.assertEqual(config.client_token, token)
+
+    def test_client_cert_key(self):
+        """Ensure if user certificate and private key are provided via
+        environment variables, the configuration is correctly configured.
+        """
+        # Ensure that when no client certificate nor private key are provided
+        # via environment variables, both certificate and key are None.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            cert, key = config.client_cert_key
+            self.assertIsNone(cert)
+            self.assertIsNone(key)
+
+        # Create mock certificate and private key files.
+        with tempfile.NamedTemporaryFile(mode="wt", dir=self.tmpdir.ospath, delete=False) as f:
+            f.write("CERT")
+            client_cert = f.name
+
+        with tempfile.NamedTemporaryFile(mode="wt", dir=self.tmpdir.ospath, delete=False) as f:
+            f.write("KEY")
+            client_key = f.name
+
+        # Check that if only LSST_HTTP_AUTH_CLIENT_CERT is initialized
+        # an exception is raised.
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_AUTH_CLIENT_CERT": client_cert}, clear=True):
+            with self.assertRaises(ValueError):
+                HttpResourcePathConfig().client_cert_key
+
+        # Check that if only LSST_HTTP_AUTH_CLIENT_KEY is initialized
+        # an exception is raised.
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_AUTH_CLIENT_KEY": client_key}, clear=True):
+            with self.assertRaises(ValueError):
+                HttpResourcePathConfig().client_cert_key
+
+        # Check that the private key file must be accessible only by its owner.
+        with unittest.mock.patch.dict(
+            os.environ,
+            {"LSST_HTTP_AUTH_CLIENT_CERT": client_cert, "LSST_HTTP_AUTH_CLIENT_KEY": client_key},
+            clear=True,
+        ):
+            # Ensure the client certificate is initialized when only the owner
+            # can read the private key file.
+            os.chmod(client_key, stat.S_IRUSR)
+            config = HttpResourcePathConfig()
+            cert, key = config.client_cert_key
+            self.assertEqual(cert, client_cert)
+            self.assertEqual(key, client_key)
+
+            # Ensure an exception is raised if either group or other can access
+            # the private key file.
+            for mode in (stat.S_IRGRP, stat.S_IWGRP, stat.S_IXGRP, stat.S_IROTH, stat.S_IWOTH, stat.S_IXOTH):
+                os.chmod(client_key, stat.S_IRUSR | mode)
+                with self.assertRaises(PermissionError):
+                    HttpResourcePathConfig().client_cert_key
+
+        # Check that if environment variable X509_USER_PROXY is initialized
+        # the configuration uses its value as the client's certificate and key.
+        with unittest.mock.patch.dict(os.environ, {"X509_USER_PROXY": client_cert}, clear=True):
+            config = HttpResourcePathConfig()
+            cert, key = config.client_cert_key
+            self.assertEqual(cert, client_cert)
+            self.assertEqual(key, client_cert)
 
 
 class WebdavUtilsTestCase(unittest.TestCase):
@@ -708,20 +843,6 @@ class WebdavUtilsTestCase(unittest.TestCase):
     def tearDown(self):
         if self.tmpdir and self.tmpdir.isLocal:
             removeTestTempDir(self.tmpdir.ospath)
-
-    @responses.activate
-    def test_is_webdav_endpoint(self):
-        davEndpoint = "http://www.lsstwithwebdav.org"
-        responses.add(responses.OPTIONS, davEndpoint, status=200, headers={"DAV": "1,2,3"})
-        self.assertTrue(_is_webdav_endpoint(davEndpoint))
-
-        plainHttpEndpoint = "http://www.lsstwithoutwebdav.org"
-        responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
-        self.assertFalse(_is_webdav_endpoint(plainHttpEndpoint))
-
-        notWebdavEndpoint = "http://www.notwebdav.org"
-        responses.add(responses.OPTIONS, notWebdavEndpoint, status=403)
-        self.assertFalse(_is_webdav_endpoint(notWebdavEndpoint))
 
     def test_is_protected(self):
         self.assertFalse(_is_protected("/this-file-does-not-exist"))
@@ -812,15 +933,16 @@ class SessionStoreTestCase(unittest.TestCase):
             removeTestTempDir(self.tmpdir.ospath)
 
     def test_ca_cert_bundle(self):
-        """Ensure a certificate authorities bundle is used to authentify
-        the remote server.
+        """Ensure that, if specified, a certificate authorities bundle is used
+        to authentify the remote server.
         """
         with tempfile.NamedTemporaryFile(mode="wt", dir=self.tmpdir.ospath, delete=False) as f:
             f.write("CERT BUNDLE")
             cert_bundle = f.name
 
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_CACERT_BUNDLE": cert_bundle}, clear=True):
-            session = SessionStore().get(self.rpath)
+            config = HttpResourcePathConfig()
+            session = SessionStore(config=config).get(self.rpath)
             self.assertEqual(session.verify, cert_bundle)
 
     def test_user_cert(self):
@@ -840,11 +962,13 @@ class SessionStoreTestCase(unittest.TestCase):
         # must be initialized.
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_AUTH_CLIENT_CERT": client_cert}, clear=True):
             with self.assertRaises(ValueError):
-                SessionStore().get(self.rpath)
+                config = HttpResourcePathConfig()
+                SessionStore(config=config).get(self.rpath)
 
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_AUTH_CLIENT_KEY": client_key}, clear=True):
             with self.assertRaises(ValueError):
-                SessionStore().get(self.rpath)
+                config = HttpResourcePathConfig()
+                SessionStore(config=config).get(self.rpath)
 
         # Check private key file must be accessible only by its owner.
         with unittest.mock.patch.dict(
@@ -855,7 +979,8 @@ class SessionStoreTestCase(unittest.TestCase):
             # Ensure the session client certificate is initialized when
             # only the owner can read the private key file.
             os.chmod(client_key, stat.S_IRUSR)
-            session = SessionStore().get(self.rpath)
+            config = HttpResourcePathConfig()
+            session = SessionStore(config=config).get(self.rpath)
             self.assertEqual(session.cert[0], client_cert)
             self.assertEqual(session.cert[1], client_key)
 
@@ -864,15 +989,17 @@ class SessionStoreTestCase(unittest.TestCase):
             for mode in (stat.S_IRGRP, stat.S_IWGRP, stat.S_IXGRP, stat.S_IROTH, stat.S_IWOTH, stat.S_IXOTH):
                 os.chmod(client_key, stat.S_IRUSR | mode)
                 with self.assertRaises(PermissionError):
-                    SessionStore().get(self.rpath)
+                    config = HttpResourcePathConfig()
+                    SessionStore(config=config).get(self.rpath)
 
     def test_token_env(self):
-        """Ensure when the token is provided via an environment variable
+        """Ensure when a token is provided via an environment variable
         the sessions are equipped with a BearerTokenAuth.
         """
         token = "ABCDE"
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_AUTH_BEARER_TOKEN": token}, clear=True):
-            session = SessionStore().get(self.rpath)
+            config = HttpResourcePathConfig()
+            session = SessionStore(config=config).get(self.rpath)
             self.assertEqual(type(session.auth), lsst.resources.http.BearerTokenAuth)
             self.assertEqual(session.auth._token, token)
             self.assertIsNone(session.auth._path)
@@ -881,7 +1008,8 @@ class SessionStoreTestCase(unittest.TestCase):
         """Ensure the session caching mechanism works."""
         # Ensure the store provides a session for a given URL
         root_url = "https://example.org"
-        store = SessionStore()
+        config = HttpResourcePathConfig()
+        store = SessionStore(config=config)
         session = store.get(ResourcePath(root_url))
         self.assertIsNotNone(session)
 
