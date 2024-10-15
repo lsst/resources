@@ -461,6 +461,25 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertFalse(ResourcePath(notWebdavEndpoint).is_webdav_endpoint)
 
     @responses.activate
+    def test_plain_http_url_signing(self):
+        # As in test_is_webdav_endpoint above, configure a URL to appear as a
+        # non-webdav HTTP server.
+        plainHttpEndpoint = "http://nonwebdav.test"
+        responses.add(responses.OPTIONS, plainHttpEndpoint, status=200)
+
+        # Plain HTTP URLs are already readable without authentication, so
+        # generating a pre-signed URL is a no-op.
+        path = ResourcePath("http://nonwebdav.test/file")
+        self.assertEqual(
+            path.generate_presigned_get_url(expiration_time_seconds=300), "http://nonwebdav.test/file"
+        )
+
+        # Writing to an arbitrary plain HTTP URL is unlikely to work, so we
+        # don't generate put URLs.
+        with self.assertRaises(NotImplementedError):
+            path.generate_presigned_put_url(expiration_time_seconds=300)
+
+    @responses.activate
     def test_server_identity(self):
         server = "MyServer/v1.2.3"
         endpointWithServer = "http://www.lsstwithserverheader.org"

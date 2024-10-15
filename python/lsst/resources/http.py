@@ -1261,7 +1261,9 @@ class HttpResourcePath(ResourcePath):
             HTTP URL signed for GET.
         """
         if not self.is_webdav_endpoint:
-            return super().generate_presigned_get_url(expiration_time_seconds=expiration_time_seconds)
+            # This is already an HTTP URL readable without any authentication
+            # credentials, so return it as-is.
+            return str(self)
 
         return self._sign_with_macaroon(ActivityCaveat.DOWNLOAD, expiration_time_seconds)
 
