@@ -1869,7 +1869,7 @@ class HttpResourcePath(ResourcePath):
             if mode == "r":
                 # cast because the protocol is compatible, but does not have
                 # BytesIO in the inheritance tree
-                yield io.TextIOWrapper(cast(io.BytesIO, handle), encoding=encoding)
+                yield io.TextIOWrapper(cast(Any, handle), encoding=encoding)
             else:
                 yield handle
         else:
