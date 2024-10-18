@@ -474,9 +474,22 @@ class GenericTestCase(_GenericTestCase):
         self.assertFalse(up_relative.isdir())
         self.assertEqual(up_relative.geturl(), f"{root_str}b/c.txt")
 
+        # Check that fragment is passed through join (simple unquoted case).
+        fnew3 = root.join("a/b.txt#fragment")
+        self.assertEqual(fnew3.fragment, "fragment")
+        self.assertEqual(fnew3.basename(), "b.txt", msg=f"Got: {fnew3._uri}")
+
+        # Join a resource path.
+        subpath = ResourcePath("a/b.txt#fragment2", forceAbsolute=False, forceDirectory=False)
+        fnew3 = root.join(subpath)
+        self.assertEqual(fnew3.fragment, "fragment2")
+        self.assertEqual(fnew3.basename(), "b.txt", msg=f"Got: {fnew3._uri}")
+
+        # Quoted string with fragment.
         quote_example = "hsc/payload/b&c.t@x#t"
         needs_quote = root.join(quote_example)
-        self.assertEqual(needs_quote.unquoted_path, "/" + quote_example)
+        self.assertEqual(needs_quote.unquoted_path, "/" + quote_example[:-2])
+        self.assertEqual(needs_quote.fragment, "t")
 
         other = ResourcePath(f"{self.root}test.txt")
         self.assertEqual(root.join(other), other)
