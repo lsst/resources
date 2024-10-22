@@ -1390,7 +1390,7 @@ class HttpResourcePath(ResourcePath):
         try:
             response_body = json.loads(resp.text)
             if "macaroon" in response_body:
-                return f"{self}?authz={response_body['macaroon']}"
+                return str(self.replace(query=f"authz={response_body['macaroon']}"))
             else:
                 raise ValueError(f"could not retrieve macaroon for URL {self}")
         except json.JSONDecodeError:

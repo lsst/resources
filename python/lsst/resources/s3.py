@@ -582,8 +582,12 @@ class S3ResourcePath(ResourcePath):
         return self._generate_presigned_url("put_object", expiration_time_seconds)
 
     def _generate_presigned_url(self, method: str, expiration_time_seconds: int) -> str:
-        return self.client.generate_presigned_url(
+        url = self.client.generate_presigned_url(
             method,
             Params={"Bucket": self._bucket, "Key": self.relativeToPathRoot},
             ExpiresIn=expiration_time_seconds,
         )
+        if self.fragment:
+            resource = ResourcePath(url)
+            url = str(resource.replace(fragment=self.fragment))
+        return url

@@ -393,8 +393,13 @@ class ResourcePath:  # numpydoc ignore=PR02
 
     @property
     def fragment(self) -> str:
-        """Return the fragment component of the URI."""
+        """Return the fragment component of the URI. May be quoted."""
         return self._uri.fragment
+
+    @property
+    def unquoted_fragment(self) -> str:
+        """Return unquoted fragment."""
+        return urllib.parse.unquote(self.fragment)
 
     @property
     def params(self) -> str:
@@ -693,7 +698,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             quoted depending on the associated URI scheme. If the path looks
             like a URI referring to an absolute location, it will be returned
             directly (matching the behavior of `os.path.join`). It can
-            also be a `ResourcePath`.
+            also be a `ResourcePath`. Fragments are propagated.
         isTemporary : `bool`, optional
             Indicate that the resulting URI represents a temporary resource.
             Default is ``self.isTemporary``.
@@ -722,6 +727,9 @@ class ResourcePath:  # numpydoc ignore=PR02
         It is an error to attempt to join to something that is known to
         refer to a file. Use `updatedFile` if the file is to be
         replaced.
+
+        If an unquoted ``#`` is included in the path it is assumed to be
+        referring to a fragment and not part of the file name.
 
         Raises
         ------
@@ -757,10 +765,10 @@ class ResourcePath:  # numpydoc ignore=PR02
             # Absolute URI so return it directly.
             return path_uri
 
-        # If this was originally a ResourcePath extract the unquoted path from
-        # it. Otherwise we use the string we were given to allow "#" to appear
-        # in the filename if given as a plain string.
-        if not isinstance(path, str):
+        # We want to propagate fragments to the joined path and we rely on
+        # the ResourcePath parser to find these fragments for us even in plain
+        # strings. Must assume there are no `#` characters in filenames.
+        if not isinstance(path, str) or path_uri.fragment:
             path = path_uri.unquoted_path
 
         # Might need to quote the path.
@@ -780,6 +788,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             path=newpath,
             forceDirectory=forceDirectory,
             isTemporary=isTemporary,
+            fragment=path_uri.fragment,
         )
 
     def relative_to(self, other: ResourcePath) -> str | None:
