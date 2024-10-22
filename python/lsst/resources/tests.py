@@ -444,6 +444,12 @@ class GenericTestCase(_GenericTestCase):
         uri = ResourcePath(hash_path)
         self.assertEqual(uri.ospath, hash_path[:hpos])
         self.assertEqual(uri.fragment, hash_path[hpos + 1 :])
+        self.assertEqual(uri.unquoted_fragment, uri.fragment)
+
+        # Fragments can be quoted, although this is not enforced anywhere.
+        with_frag = ResourcePath(self._make_uri("a/b.txt#" + urllib.parse.quote("zip-path=ingést")))
+        self.assertEqual(with_frag.fragment, "zip-path%3Ding%C3%A9st")
+        self.assertEqual(with_frag.unquoted_fragment, "zip-path=ingést")
 
     def test_hash(self) -> None:
         """Test that we can store URIs in sets and as keys."""

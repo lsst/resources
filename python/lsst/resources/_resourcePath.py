@@ -393,8 +393,13 @@ class ResourcePath:  # numpydoc ignore=PR02
 
     @property
     def fragment(self) -> str:
-        """Return the fragment component of the URI."""
+        """Return the fragment component of the URI. May be quoted."""
         return self._uri.fragment
+
+    @property
+    def unquoted_fragment(self) -> str:
+        """Return unquoted fragment."""
+        return urllib.parse.unquote(self.fragment)
 
     @property
     def params(self) -> str:
