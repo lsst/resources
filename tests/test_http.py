@@ -469,9 +469,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Plain HTTP URLs are already readable without authentication, so
         # generating a pre-signed URL is a no-op.
-        path = ResourcePath("http://nonwebdav.test/file")
+        path = ResourcePath("http://nonwebdav.test/file#frag")
         self.assertEqual(
-            path.generate_presigned_get_url(expiration_time_seconds=300), "http://nonwebdav.test/file"
+            path.generate_presigned_get_url(expiration_time_seconds=300), "http://nonwebdav.test/file#frag"
         )
 
         # Writing to an arbitrary plain HTTP URL is unlikely to work, so we
