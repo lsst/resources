@@ -169,6 +169,15 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
         get_url = s3_path.generate_presigned_get_url(expiration_time_seconds=3600)
         self._check_presigned_url(get_url, 3600)
 
+        # Check that fragments are retained.
+        s3_path = s3_path.replace(fragment="zip-path=X")
+        put_url = s3_path.generate_presigned_put_url(expiration_time_seconds=1800)
+        self.assertEqual(ResourcePath(put_url).fragment, "zip-path=X")
+        self._check_presigned_url(put_url, 1800)
+        get_url = s3_path.generate_presigned_get_url(expiration_time_seconds=3600)
+        self.assertEqual(ResourcePath(get_url).fragment, "zip-path=X")
+        self._check_presigned_url(get_url, 3600)
+
         # Moto monkeypatches the 'requests' library to mock access to presigned
         # URLs, so we are able to use HttpResourcePath to access the URLs in
         # this test.
