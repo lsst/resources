@@ -39,7 +39,7 @@ except ImportError:
 
 try:
     import fsspec
-    from aiohttp import ClientSession, TCPConnector
+    from aiohttp import ClientSession, ClientTimeout, TCPConnector
     from fsspec.implementations.http import HTTPFileSystem
     from fsspec.spec import AbstractFileSystem
 except ImportError:
@@ -103,7 +103,7 @@ class HttpResourcePathConfig:
     """
 
     # Default timeouts for all HTTP requests (seconds).
-    DEFAULT_TIMEOUT_CONNECT: float = 30.0
+    DEFAULT_TIMEOUT_CONNECT: float = 60.0
     DEFAULT_TIMEOUT_READ: float = 1_500.0
 
     # Default lower and upper bounds for the backoff interval (seconds).
@@ -1325,14 +1325,43 @@ class HttpResourcePath(ResourcePath):
                 TCP connections to the server.
             """
             if HttpResourcePath._tcp_connector is None:
-                HttpResourcePath._tcp_connector = TCPConnector(ssl=self._config.ssl_context)
+                HttpResourcePath._tcp_connector = TCPConnector(
+                    # SSL context equipped with client credentials and
+                    # configured to validate server certificates.
+                    ssl=self._config.ssl_context,
+                    # Total number of simultaneous connections this connector
+                    # keeps open with any host.
+                    #
+                    # The default is 100 but we deliberately reduced it to
+                    # avoid keeping a large number of open connexions to file
+                    # servers when thousands of quanta execute simultaneously.
+                    #
+                    # In any case, new connexions are automatically established
+                    # when needed.
+                    limit=10,
+                    # Number of simultaneous connections to a single host:port.
+                    limit_per_host=1,
+                    # Time to keep open connections alive (unit is likely
+                    # seconds, even if not documented). The default is 15.0
+                    keepalive_timeout=15.0,
+                )
 
-            return ClientSession(connector=HttpResourcePath._tcp_connector, **kwargs)
+            connect_timeout, read_timeout = self._config.timeout
+            return ClientSession(
+                connector=HttpResourcePath._tcp_connector,
+                timeout=ClientTimeout(
+                    connect=connect_timeout,
+                    sock_connect=connect_timeout,
+                    sock_read=read_timeout,
+                    total=2 * read_timeout,
+                ),
+                **kwargs,
+            )
 
-        # Retrieve a signed URL for download valid for 1 hour.
-        url = self.generate_presigned_get_url(expiration_time_seconds=3_600)
+        # Retrieve a signed URL for download valid for 2 hours.
+        url = self.generate_presigned_get_url(expiration_time_seconds=2 * 3_600)
 
-        # HTTPFileSystem constructors accepts the argument 'block_size'. The
+        # HTTPFileSystem constructor accepts the argument 'block_size'. The
         # default value is 'fsspec.utils.DEFAULT_BLOCK_SIZE' which is 5 MB.
         # That seems to be a reasonable block size for downloading files.
         return HTTPFileSystem(get_client=get_client_session), url
