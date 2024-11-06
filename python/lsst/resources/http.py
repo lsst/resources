@@ -1343,7 +1343,9 @@ class HttpResourcePath(ResourcePath):
                     limit_per_host=1,
                     # Time to keep open connections alive (unit is likely
                     # seconds, even if not documented). The default is 15.0
-                    keepalive_timeout=15.0,
+                    # keepalive_timeout=15.0,
+                    # Close network connection after usage
+                    force_close=True,
                 )
 
             connect_timeout, read_timeout = self._config.timeout
