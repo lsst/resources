@@ -125,6 +125,7 @@ class HttpResourcePathConfig:
         self._back_end_connections: int | None = None
         self._digest_algorithm: str | None = None
         self._send_expect_on_put: bool | None = None
+        self._fsspec_is_enabled: bool | None = None
         self._timeout: tuple[float, float] | None = None
         self._collect_memory_usage: bool | None = None
         self._backoff_min: float | None = None
@@ -205,6 +206,20 @@ class HttpResourcePathConfig:
 
         self._send_expect_on_put = "LSST_HTTP_PUT_SEND_EXPECT_HEADER" in os.environ
         return self._send_expect_on_put
+
+    @property
+    def fsspec_is_enabled(self) -> bool:
+        """Return True if `fsspec` is enabled for objects of class
+        HttpResourcePath.
+
+        To determine if `fsspec` is enabled, this method inspects the presence
+        of the environment variable `LSST_HTTP_ENABLE_FSSPEC` (with any value).
+        """
+        if self._fsspec_is_enabled is not None:
+            return self._fsspec_is_enabled
+
+        self._fsspec_is_enabled = "LSST_HTTP_ENABLE_FSSPEC" in os.environ
+        return self._fsspec_is_enabled
 
     @property
     def timeout(self) -> tuple[float, float]:
@@ -734,6 +749,10 @@ class HttpResourcePath(ResourcePath):
         via a PUT request. No digest is requested if this variable is not set
         or is set to an invalid value.
         Valid values are those in ACCEPTED_DIGESTS.
+
+    - LSST_HTTP_ENABLE_FSSPEC: the presence of this environment variable
+        activates the usage of `fsspec` compatible file system to read
+        a HTTP URL. The value of the variable is not inspected.
     """
 
     # WebDAV servers known to be able to sign URLs. The values are lowercased
@@ -896,6 +915,15 @@ class HttpResourcePath(ResourcePath):
         download and upload.
         """
         return self.server in HttpResourcePath.SUPPORTED_URL_SIGNERS
+
+    @classmethod
+    def _reload_config(cls) -> None:
+        """Reload the configuration for all instances of this class. That
+        configuration is instantiated from the environment.
+
+        This is an internal method mainly intended for tests.
+        """
+        HttpResourcePath._config = HttpResourcePathConfig()
 
     def exists(self) -> bool:
         """Check that a remote HTTP resource exists."""
@@ -1308,6 +1336,26 @@ class HttpResourcePath(ResourcePath):
                 f"method HttpResourcePath.to_fsspec() not implemented for directory {self}"
             )
 
+        # If usage of fsspec-compatible file system is disabled in the
+        # configuration we raise an exception which signals the caller
+        # that it cannot use fsspec. An example of such a caller is
+        # `lsst.daf.butler.formatters.ParquetFormatter`.
+        #
+        # Note that we don't call super().to_fsspec() since that method
+        # assumes that fsspec can be used provided fsspec package is
+        # importable.
+        #
+        # The motivation for making this configurable is that for HTTP
+        # URLs fsspec.HTTPFileSystem uses async I/O and we have found
+        # unexpected behavior by clients when used against dCache for reading
+        # parquet files via a ParquetFormatter instance. That behavior cannot
+        # be reproduced when using other callers.
+        #
+        # This needs more investigation to discard the possibility that async
+        # I/O, used by fsspec.HTTPFileSystem, is related to this behavior.
+        if not self._config.fsspec_is_enabled:
+            raise ImportError("fsspec is disabled for HttpResourcePath objects")
+
         async def get_client_session(**kwargs: Any) -> ClientSession:
             """Return a aiohttp.ClientSession configured to use an
             `aiohttp.TCPConnector` shared by all instances of this class.
@@ -1341,9 +1389,6 @@ class HttpResourcePath(ResourcePath):
                     limit=10,
                     # Number of simultaneous connections to a single host:port.
                     limit_per_host=1,
-                    # Time to keep open connections alive (unit is likely
-                    # seconds, even if not documented). The default is 15.0
-                    # keepalive_timeout=15.0,
                     # Close network connection after usage
                     force_close=True,
                 )
