@@ -1354,7 +1354,7 @@ class HttpResourcePath(ResourcePath):
         # This needs more investigation to discard the possibility that async
         # I/O, used by fsspec.HTTPFileSystem, is related to this behavior.
         if not self._config.fsspec_is_enabled:
-            raise ImportError("fsspec is disabled for HttpResourcePath objects")
+            raise ImportError("fsspec is disabled for HttpResourcePath objects with webDAV back end")
 
         async def get_client_session(**kwargs: Any) -> ClientSession:
             """Return a aiohttp.ClientSession configured to use an

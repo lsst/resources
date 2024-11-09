@@ -469,7 +469,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 if rpath.server_signs_urls:
                     raise e
 
-        # Clean up
+        # Force reinitialization of the config from the environment and
+        # clean up local file.
+        HttpResourcePath._reload_config()
         os.remove(local_file)
 
     @responses.activate

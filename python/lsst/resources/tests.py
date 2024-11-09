@@ -920,6 +920,10 @@ class GenericReadWriteTestCase(_GenericTestCase):
             fs, path = uri.to_fsspec()
         except NotImplementedError as e:
             raise unittest.SkipTest(str(e)) from e
+        except ImportError as e:
+            # HttpResourcePath.to_fsspec() raises if support
+            # of fsspec for webDAV back ends is disabled.
+            raise unittest.SkipTest(str(e)) from e
         with fs.open(path, "r") as fd:
             as_read = fd.read()
         self.assertEqual(as_read, content)
