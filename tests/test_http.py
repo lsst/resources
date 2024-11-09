@@ -39,7 +39,13 @@ from lsst.resources._resourceHandles._httpResourceHandle import (
     HttpReadResourceHandle,
     parse_content_range_header,
 )
-from lsst.resources.http import BearerTokenAuth, HttpResourcePathConfig, SessionStore, _is_protected
+from lsst.resources.http import (
+    BearerTokenAuth,
+    HttpResourcePath,
+    HttpResourcePathConfig,
+    SessionStore,
+    _is_protected,
+)
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
@@ -411,7 +417,7 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         os.remove(local_file)
 
     def test_dav_to_fsspec(self):
-        # Upload a randomly-generated file via write() with overwrite
+        # Upload a randomly-generated file via write() with overwrite.
         local_file, file_size = self._generate_file()
         with open(local_file, "rb") as f:
             data = f.read()
@@ -420,31 +426,57 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertIsNone(remote_file.write(data, overwrite=True))
         self.assertTrue(remote_file.exists())
         self.assertEqual(remote_file.size(), file_size)
+        remote_file_url = remote_file.geturl()
 
-        try:
-            # Ensure that the contents of the remote file we just uploaded is
-            # identical to the contents of that file when retrieved via
-            # fsspec.open().
-            fsys, url = remote_file.to_fsspec()
-            with fsys.open(url) as f:
-                self.assertEqual(data, f.read())
+        # to_fsspec() may raise if that feature is not specifically
+        # enabled in the environment and remote server is one of the
+        # webDAV servers that support signing URLs.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            try:
+                # Force reinitialization of the config from the environment
+                HttpResourcePath._reload_config()
+                fsys, url = ResourcePath(remote_file_url).to_fsspec()
+                self.assertEqual(data, fsys.cat(url))
+            except ImportError as e:
+                self.assertTrue("disable" in str(e))
 
-            # Ensure the contents is identical to the result of fsspec.cat()
-            self.assertEqual(data, fsys.cat(url))
-        except NotImplementedError as e:
-            # to_fsspec() must succeed if remote server knows how to sign URLs
-            if remote_file.server_signs_urls:
-                raise e
-        finally:
-            os.remove(local_file)
+        # Ensure to_fsspec() works if that feature is enabled in the
+        # environment.
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_ENABLE_FSSPEC": "true"}, clear=True):
+            try:
+                # Force reinitialization of the config from the environment.
+                HttpResourcePath._reload_config()
+                rpath = ResourcePath(remote_file_url)
 
-        # Ensure that attempting to modify a remote via via fsspec fails.
-        # fsspect.rm() raises NotImplementedError if it cannot remove the
-        # remote file.
-        if remote_file.server_signs_urls:
-            fsys, url = remote_file.to_fsspec()
-            with self.assertRaises(NotImplementedError):
-                fsys.rm(url)
+                # Ensure that the contents of the remote file we just
+                # uploaded is identical to the contents of that file when
+                # retrieved via fsspec.open().
+                fsys, url = rpath.to_fsspec()
+                with fsys.open(url) as f:
+                    self.assertEqual(data, f.read())
+
+                # Ensure the contents is identical to the result of
+                # fsspec.cat()
+                self.assertEqual(data, fsys.cat(url))
+
+                # Ensure that attempting to modify a remote via via fsspec
+                # fails, since the returned URL is signed for download only.
+                # fsspec.rm() raises NotImplementedError if it cannot remove
+                # the remote file.
+                if rpath.server_signs_urls:
+                    with self.assertRaises(NotImplementedError):
+                        fsys, url = rpath.to_fsspec()
+                        fsys.rm(url)
+            except NotImplementedError as e:
+                # to_fsspec() must succeed if remote server knows how to
+                # sign URLs
+                if rpath.server_signs_urls:
+                    raise e
+
+        # Force reinitialization of the config from the environment and
+        # clean up local file.
+        HttpResourcePath._reload_config()
+        os.remove(local_file)
 
     @responses.activate
     def test_is_webdav_endpoint(self):
@@ -619,7 +651,7 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
 
     def test_send_expect_header(self):
         # Ensure environment variable LSST_HTTP_PUT_SEND_EXPECT_HEADER is
-        # inspected to initialize the HttpResourcePathConfig config class.
+        # inspected to initialize the HttpResourcePathConfig class.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             config = HttpResourcePathConfig()
             self.assertFalse(config.send_expect_on_put)
@@ -627,6 +659,17 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_PUT_SEND_EXPECT_HEADER": "true"}, clear=True):
             config = HttpResourcePathConfig()
             self.assertTrue(config.send_expect_on_put)
+
+    def test_enable_fsspec(self):
+        # Ensure environment variable LSST_HTTP_ENABLE_FSSPEC is
+        # inspected to initialize the HttpResourcePathConfig class.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            self.assertFalse(config.fsspec_is_enabled)
+
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_ENABLE_FSSPEC": "any value"}, clear=True):
+            config = HttpResourcePathConfig()
+            self.assertTrue(config.fsspec_is_enabled)
 
     def test_collect_memory_usage(self):
         # Ensure environment variable LSST_HTTP_COLLECT_MEMORY_USAGE is
