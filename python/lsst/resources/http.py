@@ -761,7 +761,7 @@ class HttpResourcePath(ResourcePath):
     SUPPORTED_URL_SIGNERS = ("dcache", "xrootd")
 
     # Configuration items for this class instances.
-    _config = HttpResourcePathConfig()
+    _config: HttpResourcePathConfig = HttpResourcePathConfig()
 
     # The session for metadata requests is used for interacting with
     # the front end servers for requests such as PROPFIND, HEAD, etc. Those

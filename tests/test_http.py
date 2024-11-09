@@ -428,13 +428,17 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertEqual(remote_file.size(), file_size)
         remote_file_url = remote_file.geturl()
 
-        # Ensure to_fsspec() raises if that feature is not specifically
-        # enabled in the environment.
+        # to_fsspec() may raise if that feature is not specifically
+        # enabled in the environment and remote server is one of the
+        # webDAV servers that support signing URLs.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            with self.assertRaises(ImportError):
+            try:
                 # Force reinitialization of the config from the environment
                 HttpResourcePath._reload_config()
-                ResourcePath(remote_file_url).to_fsspec()
+                fsys, url = ResourcePath(remote_file_url).to_fsspec()
+                self.assertEqual(data, fsys.cat(url))
+            except ImportError as e:
+                self.assertTrue("disable" in str(e))
 
         # Ensure to_fsspec() works if that feature is enabled in the
         # environment.
