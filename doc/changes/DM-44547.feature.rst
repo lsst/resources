@@ -1,1 +1,0 @@
-Added a new method ``ResourcePath.to_fsspec()`` to return ``fsspec`` file system objects suitable for use in packages such as Astropy and Pyarrow.
