@@ -1,1 +1,0 @@
-Fixed the usage of ``SEEK_END`` in S3 and HTTP resource path handles.
