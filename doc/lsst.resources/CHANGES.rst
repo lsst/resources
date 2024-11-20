@@ -1,3 +1,28 @@
+Resources v28.0.0 2024-11-20
+============================
+
+New Features
+------------
+
+- Added a new method ``ResourcePath.to_fsspec()`` to return ``fsspec`` file system objects suitable for use in packages such as Astropy and Pyarrow. (`DM-44547 <https://rubinobs.atlassian.net/browse/DM-44547>`_)
+- Added a ``.name`` (string) property to the handles returned by ``ResourcePath.open()``.
+  Previously only the handle for local files had this property. (`DM-44762 <https://rubinobs.atlassian.net/browse/DM-44762>`_)
+- Added support for the ``LSST_S3_USE_THREADS`` environment variable to control multithreading for S3 uploads, in addition to downloads. (`DM-46139 <https://rubinobs.atlassian.net/browse/DM-46139>`_)
+
+
+Bug Fixes
+---------
+
+- Fixed the usage of ``SEEK_END`` in S3 and HTTP resource path handles. (`DM-44486 <https://rubinobs.atlassian.net/browse/DM-44486>`_)
+- If there is no environment variable set explicitly declaring the directory to use for temporary files, ``HttpResourcePath`` now creates temporary files in the system default temporary directory instead of the current working directory. (`DM-44840 <https://rubinobs.atlassian.net/browse/DM-44840>`_)
+
+
+Miscellaneous Changes of Minor Interest
+---------------------------------------
+
+- ``S3ResourceHandle`` now correctly converts ``NoSuchKey`` exception to ``FileNotFoundError`` when a read is attempted. (`DM-45732 <https://rubinobs.atlassian.net/browse/DM-45732>`_)
+
+
 Resources 27.0.0 2024-05-28
 ===========================
 

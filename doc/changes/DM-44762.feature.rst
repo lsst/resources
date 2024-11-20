@@ -1,2 +1,0 @@
-Added a ``.name`` (string) property to the handles returned by ``ResourcePath.open()``.
-Previously only the handle for local files had this property.
