@@ -168,12 +168,7 @@ class S3ResourcePath(ResourcePath):
         if self.use_threads is None:
             self.use_threads = self._environ_use_threads
 
-        if self.use_threads is None:
-            transfer_config = TransferConfig()
-        else:
-            transfer_config = TransferConfig(use_threads=self.use_threads)
-
-        return transfer_config
+        return TransferConfig(use_threads=False, multipart_threshold=100_000_000_000_000)
 
     @property
     def client(self) -> boto3.client:
