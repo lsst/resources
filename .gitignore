@@ -24,3 +24,4 @@ bin/*
 mypy.log
 build/*
 dist/*
+python/*.dist-info/
