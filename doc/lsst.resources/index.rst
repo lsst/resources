@@ -24,6 +24,12 @@ Design and Development
 
 It is available from PyPI as ``lsst-resources``: https://pypi.org/project/lsst-resources/
 
+Configuration
+=============
+
+.. toctree::
+   s3.rst
+
 .. _lsst.resources-pyapi:
 
 Python API reference

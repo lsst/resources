@@ -1,0 +1,88 @@
+S3 ResourcePath
+=================
+
+The basic syntax for using an S3 `~lsst.resources.ResourcePath` is:
+
+.. code-block::
+
+    ResourcePath("s3://bucketname/key")
+
+Configuration
+-------------
+To access files hosted in S3 using `~lsst.resources.ResourcePath`, the environment must be
+configured to choose an S3 service and provide credentials for authentication.
+
+Choosing an S3 service
+^^^^^^^^^^^^^^^^^^^^^^
+By default, the library will attempt to use AWS S3.  To connect to another S3
+service, set the environment variable ``S3_ENDPOINT_URL`` to the HTTP URL where
+the service is hosted.  For example, for Google Cloud Storage:
+
+.. code-block::
+
+    S3_ENDPOINT_URL=https://storage.googleapis.com
+
+Authentication credentials
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Authentication for S3 services can be configured in `a variety of ways
+<https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html>`_.
+The simplest and most common is to provide an access key ID and secret.  This
+can be accomplished using `environment variables
+<https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html#shared-credentials-file>`_:
+
+.. code-block::
+
+    AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+    AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+or a `credentials file <https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html#shared-credentials-file>`_.
+By default, the credentials file is located at ``~/.aws/credentials``. This
+path can be changed by setting the environment variable
+``AWS_SHARED_CREDENTIALS_FILE``.  A basic credentials file looks like this:
+
+.. code-block::
+
+    [default]
+    aws_access_key_id=AKIAIOSFODNN7EXAMPLE
+    aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+Using multiple S3 services or sets of credentials
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If you need to connect to more than one S3 service, you can configure
+additional S3 "profiles".  The profile name is added to the S3 URI as a
+``profile_name@`` prefix to the bucket name.  For example, a
+`~lsst.resources.ResourcePath` URI for an S3 profile called ``myprofile`` looks
+like:
+
+.. code-block::
+
+    ResourcePath("s3://myprofile@bucket/key")
+
+Each profile must set an environment variable to identify the S3 service it
+should connect to.  The variable name is in the form
+``LSST_RESOURCES_S3_PROFILE_<profile_name>``, for example:
+
+.. code-block::
+
+    LSST_RESOURCES_S3_PROFILE_myprofile=https://private-s3-service.example
+
+The credentials for each profile should be configured by adding additional
+profile blocks to the `credentials file
+<https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html#shared-credentials-file>`_.
+For example:
+
+.. code-block::
+
+    # Will be used for S3 URIs without an explicit profile name, e.g.
+    # s3://bucket/key
+    [default]
+    aws_access_key_id=AKIAIOSFODNN7EXAMPLE
+    aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+    # Will be used for S3 URIs with a profile name of "myprofile", e.g.
+    # s3://myprofile@bucket/key
+    [myprofile]
+    aws_access_key_id=AKIAIOSFSDAD7EXAMPLE2
+    aws_secret_access_key=wJakjASDWREMI/FAMDENG/bPxRfiCYEXAMPLEKEY2
