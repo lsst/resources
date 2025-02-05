@@ -8,4 +8,4 @@ on:
 
 jobs:
   call-workflow:
-    uses: lsst/rubin_workflows/.github/workflows/formatting.yaml@main
+    uses: lsst/rubin_workflows/.github/workflows/formatting.yaml@tickets/DM-48788
