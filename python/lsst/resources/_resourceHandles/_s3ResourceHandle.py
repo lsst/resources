@@ -20,6 +20,7 @@ from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO, UnsupportedOperation
 from typing import TYPE_CHECKING
 
 from botocore.exceptions import ClientError
+
 from lsst.utils.introspection import find_outside_stacklevel
 from lsst.utils.timer import time_this
 

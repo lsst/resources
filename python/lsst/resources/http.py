@@ -51,10 +51,11 @@ from urllib.parse import parse_qs
 
 import requests
 from astropy import units as u
-from lsst.utils.timer import time_this
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 from urllib3.util.retry import Retry
+
+from lsst.utils.timer import time_this
 
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle, parse_content_range_header

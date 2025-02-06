@@ -25,6 +25,7 @@ from functools import cache, cached_property
 from typing import IO, TYPE_CHECKING, cast
 
 from botocore.exceptions import ClientError
+
 from lsst.utils.timer import time_this
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol

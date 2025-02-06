@@ -107,6 +107,7 @@ target-version = ["py311"]
 [tool.isort]
 profile = "black"
 line_length = 110
+known_first_party = ["lsst"]
 
 [tool.lsst_versions]
 write_to = "python/lsst/resources/version.py"
@@ -167,10 +168,14 @@ select = [
     "D",  # pydocstyle
     "UP",  # pyupgrade
     "C4",
+    "I",  # isort
 ]
 extend-select = [
     "RUF100", # Warn about unused noqa
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["lsst"]
 
 [tool.ruff.lint.pycodestyle]
 max-doc-length = 79
