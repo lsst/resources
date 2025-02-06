@@ -259,7 +259,7 @@ class S3ResourcePath(ResourcePath):
     def read(self, size: int = -1) -> bytes:
         args = {}
         if size > 0:
-            args["Range"] = f"bytes=0-{size-1}"
+            args["Range"] = f"bytes=0-{size - 1}"
         try:
             response = self.client.get_object(Bucket=self._bucket, Key=self.relativeToPathRoot, **args)
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
