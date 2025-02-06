@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-__all__ = ("os2posix", "posix2os", "NoTransaction", "TransactionProtocol")
+__all__ = ("NoTransaction", "TransactionProtocol", "os2posix", "posix2os")
 
 import contextlib
 import logging

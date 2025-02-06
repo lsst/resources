@@ -10,7 +10,7 @@
 # license that can be found in the LICENSE file.
 from __future__ import annotations
 
-__all__ = ["GenericTestCase", "GenericReadWriteTestCase"]
+__all__ = ["GenericReadWriteTestCase", "GenericTestCase"]
 
 import logging
 import os
