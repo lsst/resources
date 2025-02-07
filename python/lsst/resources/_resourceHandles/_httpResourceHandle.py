@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, AnyStr, NamedTuple
 
 import requests
+
 from lsst.utils.timer import time_this
 
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus

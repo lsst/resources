@@ -34,6 +34,8 @@ try:
 except ImportError:
     boto3 = None
 
+from urllib3.exceptions import LocationParseError
+
 from lsst.resources import ResourcePath
 from lsst.resources.location import Location
 from lsst.resources.s3utils import (
@@ -43,7 +45,6 @@ from lsst.resources.s3utils import (
     getS3Client,
     s3CheckFileExists,
 )
-from urllib3.exceptions import LocationParseError
 
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")

@@ -31,9 +31,10 @@ try:
 except ImportError:
     WsgiDAVApp = None
 
-import lsst.resources
 import requests
 import responses
+
+import lsst.resources
 from lsst.resources import ResourcePath
 from lsst.resources._resourceHandles._httpResourceHandle import (
     HttpReadResourceHandle,
