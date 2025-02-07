@@ -169,6 +169,7 @@ select = [
     "UP",  # pyupgrade
     "C4",
     "I",  # isort
+    "RUF022",  # __all__ sorting
 ]
 extend-select = [
     "RUF100", # Warn about unused noqa
