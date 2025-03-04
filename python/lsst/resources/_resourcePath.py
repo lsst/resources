@@ -35,7 +35,7 @@ except ImportError:
     fsspec = None
     AbstractFileSystem = type
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
@@ -894,6 +894,59 @@ class ResourcePath:  # numpydoc ignore=PR02
             except Exception:
                 exists = False
             results[uri] = exists
+        return results
+
+    @classmethod
+    def mtransfer(
+        cls,
+        transfer: str,
+        from_to: Sequence[tuple[ResourcePath, ResourcePath]],
+        overwrite: bool = False,
+        transaction: TransactionProtocol | None = None,
+    ) -> dict[ResourcePath, bool]:
+        """Transfer many files in bulk.
+
+        Parameters
+        ----------
+        transfer : `str`
+            Mode to use for transferring the resource. Generically there are
+            many standard options: copy, link, symlink, hardlink, relsymlink.
+            Not all URIs support all modes.
+        from_to : `list` [ `tuple` [ `ResourcePath`, `ResourcePath` ] ]
+            A sequence of the source URIs and the target URIs.
+        overwrite : `bool`, optional
+            Allow an existing file to be overwritten. Defaults to `False`.
+        transaction : `~lsst.resources.utils.TransactionProtocol`, optional
+            A transaction object that can (depending on implementation)
+            rollback transfers on error.  Not guaranteed to be implemented.
+
+        Returns
+        -------
+        copy_status : `dict` [ `ResourcePath`, `bool` ]
+            A dict of all the transfer attempts with a boolean indicating
+            whether the transfer succeeded for the target URI.
+        """
+        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        future_transfers = {
+            exists_executor.submit(
+                to_uri.transfer_from,
+                from_uri,
+                transfer=transfer,
+                overwrite=overwrite,
+                transaction=transaction,
+            ): to_uri
+            for from_uri, to_uri in from_to
+        }
+        results: dict[ResourcePath, bool] = {}
+        for future in concurrent.futures.as_completed(future_transfers):
+            to_uri = future_transfers[future]
+            try:
+                future.result()
+            except Exception:
+                transferred = False
+            else:
+                transferred = True
+            results[to_uri] = transferred
         return results
 
     def remove(self) -> None:
