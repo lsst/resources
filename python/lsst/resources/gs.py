@@ -202,7 +202,7 @@ class GSResourcePath(ResourcePath):
         # Should this method do anything at all?
         self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
         with (
             ResourcePath.temporary_uri(suffix=self.getExtension(), delete=False) as tmp_uri,
             time_this(log, msg="Downloading %s to local file", args=(self,)),
@@ -220,6 +220,7 @@ class GSResourcePath(ResourcePath):
         transfer: str = "copy",
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         if transfer not in self.transferModes:
             raise ValueError(f"Transfer mode '{transfer}' not supported by URI scheme {self.scheme}")
@@ -271,7 +272,10 @@ class GSResourcePath(ResourcePath):
                         break
         else:
             # Use local file and upload it
-            with src.as_local() as local_uri, time_this(log, msg=timer_msg, args=timer_args):
+            with (
+                src.as_local(multithreaded=multithreaded) as local_uri,
+                time_this(log, msg=timer_msg, args=timer_args),
+            ):
                 self.blob.upload_from_filename(local_uri.ospath, retry=_RETRY_POLICY)
 
         # This was an explicit move requested from a remote resource

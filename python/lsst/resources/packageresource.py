@@ -85,14 +85,21 @@ class PackageResourcePath(ResourcePath):
             return fh.read(size)
 
     @contextlib.contextmanager
-    def as_local(self) -> Iterator[ResourcePath]:
+    def as_local(self, multithreaded: bool = True) -> Iterator[ResourcePath]:
         """Return the location of the Python resource as local file.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            Unused.
 
         Yields
         ------
         local : `ResourcePath`
             This might be the original resource or a copy on the local file
             system.
+        multithreaded : `bool`, optional
+            Unused.
 
         Notes
         -----

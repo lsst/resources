@@ -976,10 +976,19 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         return self
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
         """Return the location of the (possibly remote) resource as local file.
 
         This is a helper function for `as_local` context manager.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
 
         Returns
         -------
@@ -994,8 +1003,17 @@ class ResourcePath:  # numpydoc ignore=PR02
         raise NotImplementedError()
 
     @contextlib.contextmanager
-    def as_local(self) -> Iterator[ResourcePath]:
+    def as_local(self, multithreaded: bool = True) -> Iterator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
 
         Yields
         ------
@@ -1021,7 +1039,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         if self.isdir():
             raise IsADirectoryError(f"Directory-like URI {self} cannot be fetched as local.")
-        local_src, is_temporary = self._as_local()
+        local_src, is_temporary = self._as_local(multithreaded=multithreaded)
         local_uri = ResourcePath(local_src, isTemporary=is_temporary)
 
         try:
@@ -1300,6 +1318,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         transfer: str,
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         """Transfer to this URI from another.
 
@@ -1316,6 +1335,12 @@ class ResourcePath:  # numpydoc ignore=PR02
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             A transaction object that can (depending on implementation)
             rollback transfers on error.  Not guaranteed to be implemented.
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
 
         Notes
         -----

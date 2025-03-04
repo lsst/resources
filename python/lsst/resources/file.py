@@ -79,10 +79,15 @@ class FileResourcePath(ResourcePath):
         """Remove the resource."""
         os.remove(self.ospath)
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
         """Return the local path of the file.
 
         This is an internal helper for ``as_local()``.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            Unused.
 
         Returns
         -------
@@ -141,6 +146,7 @@ class FileResourcePath(ResourcePath):
         transfer: str,
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         """Transfer the current resource to a local file.
 
@@ -155,6 +161,8 @@ class FileResourcePath(ResourcePath):
             Allow an existing file to be overwritten. Defaults to `False`.
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             If a transaction is provided, undo actions will be registered.
+        multithreaded : `bool`, optional
+            Whether threads are allowed to be used or not.
         """
         # Fail early to prevent delays if remote resources are requested
         if transfer not in self.transferModes:
@@ -174,7 +182,7 @@ class FileResourcePath(ResourcePath):
 
         # We do not have to special case FileResourcePath here because
         # as_local handles that.
-        with src.as_local() as local_uri:
+        with src.as_local(multithreaded=multithreaded) as local_uri:
             is_temporary = local_uri.isTemporary
             local_src = local_uri.ospath
 

@@ -1160,6 +1160,7 @@ class HttpResourcePath(ResourcePath):
         transfer: str = "copy",
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         """Transfer the current resource to a Webdav repository.
 
@@ -1174,6 +1175,12 @@ class HttpResourcePath(ResourcePath):
             Whether overwriting the remote resource is allowed or not.
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             Currently unused.
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
         """
         # Fail early to prevent delays if remote resources are requested.
         if transfer not in self.transferModes:
@@ -1473,8 +1480,17 @@ class HttpResourcePath(ResourcePath):
         except json.JSONDecodeError:
             raise ValueError(f"could not deserialize response to POST request for URL {self}")
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
         """Download object over HTTP and place in temporary directory.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+          throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
 
         Returns
         -------
