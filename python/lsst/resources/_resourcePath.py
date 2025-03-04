@@ -934,6 +934,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                 transfer=transfer,
                 overwrite=overwrite,
                 transaction=transaction,
+                multithreaded=False,
             ): to_uri
             for from_uri, to_uri in from_to
         }
