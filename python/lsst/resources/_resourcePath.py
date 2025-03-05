@@ -19,12 +19,14 @@ import copy
 import io
 import locale
 import logging
+import multiprocessing
 import os
 import posixpath
 import re
 import shutil
 import tempfile
 import urllib.parse
+from functools import cache
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
 
@@ -57,6 +59,38 @@ ESCAPED_HASH = urllib.parse.quote("#")
 # If greater than 10, be aware that this number has to be consistent
 # with connection pool sizing (for example in urllib3).
 MAX_WORKERS = 10
+
+
+def _get_int_env_var(env_var: str) -> int | None:
+    int_value = None
+    env_value = os.getenv(env_var)
+    if env_value is not None:
+        with contextlib.suppress(TypeError):
+            int_value = int(env_value)
+    return int_value
+
+
+@cache
+def _get_num_workers() -> int:
+    f"""Calculate the number of workers to use.
+
+    Returns
+    -------
+    num : `int`
+        The number of workers to use. Will use the value of the
+        ``LSST_RESOURCES_NUM_WORKERS`` environment variable if set. Will fall
+        back to using the CPU count (plus 2) but capped at {MAX_WORKERS}.
+    """
+    num_workers: int | None = None
+    num_workers = _get_int_env_var("LSST_RESOURCES_NUM_WORKERS")
+    if num_workers is None:
+        # CPU_LIMIT is used on nublado.
+        cpu_limit = _get_int_env_var("CPU_LIMIT") or multiprocessing.cpu_count()
+        if cpu_limit is not None:
+            num_workers = cpu_limit + 2
+
+    # But don't ever return more than the maximum allowed.
+    return min([num_workers, MAX_WORKERS])
 
 
 class ResourcePath:  # numpydoc ignore=PR02
@@ -883,7 +917,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
-        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers())
         future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
         results: dict[ResourcePath, bool] = {}
@@ -926,7 +960,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             A dict of all the transfer attempts with a boolean indicating
             whether the transfer succeeded for the target URI.
         """
-        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers())
         future_transfers = {
             exists_executor.submit(
                 to_uri.transfer_from,
