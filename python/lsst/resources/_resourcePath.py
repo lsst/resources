@@ -38,7 +38,7 @@ except ImportError:
     AbstractFileSystem = type
 
 from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from .utils import ensure_directory_is_writeable
@@ -59,6 +59,13 @@ ESCAPED_HASH = urllib.parse.quote("#")
 # If greater than 10, be aware that this number has to be consistent
 # with connection pool sizing (for example in urllib3).
 MAX_WORKERS = 10
+
+
+class MTransferResult(NamedTuple):
+    """Report on a bulk transfer."""
+
+    success: bool
+    exception: Exception | None
 
 
 def _get_int_env_var(env_var: str) -> int | None:
@@ -937,7 +944,8 @@ class ResourcePath:  # numpydoc ignore=PR02
         from_to: Iterable[tuple[ResourcePath, ResourcePath]],
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
-    ) -> dict[ResourcePath, bool]:
+        do_raise: bool = True,
+    ) -> dict[ResourcePath, MTransferResult]:
         """Transfer many files in bulk.
 
         Parameters
@@ -953,11 +961,15 @@ class ResourcePath:  # numpydoc ignore=PR02
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             A transaction object that can (depending on implementation)
             rollback transfers on error.  Not guaranteed to be implemented.
+        do_raise : `bool`, optional
+            If `True` an `ExceptionGroup` will be raised containing any
+            exceptions raised by the individual transfers. Else a dict
+            reporting the status of each `ResourcePath` will be returned.
 
         Returns
         -------
-        copy_status : `dict` [ `ResourcePath`, `bool` ]
-            A dict of all the transfer attempts with a boolean indicating
+        copy_status : `dict` [ `ResourcePath`, `MTransferResult` ]
+            A dict of all the transfer attempts with a value indicating
             whether the transfer succeeded for the target URI.
         """
         exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers())
@@ -972,16 +984,25 @@ class ResourcePath:  # numpydoc ignore=PR02
             ): to_uri
             for from_uri, to_uri in from_to
         }
-        results: dict[ResourcePath, bool] = {}
+        results: dict[ResourcePath, MTransferResult] = {}
+        failed = False
         for future in concurrent.futures.as_completed(future_transfers):
             to_uri = future_transfers[future]
             try:
                 future.result()
-            except Exception:
-                transferred = False
+            except Exception as e:
+                transferred = MTransferResult(False, e)
+                failed = True
             else:
-                transferred = True
+                transferred = MTransferResult(True, None)
             results[to_uri] = transferred
+
+        if do_raise and failed:
+            raise ExceptionGroup(
+                f"Errors transferring {len(results)} artifacts",
+                tuple(res.exception for res in results.values() if res.exception is not None),
+            )
+
         return results
 
     def remove(self) -> None:
