@@ -37,7 +37,7 @@ except ImportError:
     fsspec = None
     AbstractFileSystem = type
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
@@ -934,7 +934,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     def mtransfer(
         cls,
         transfer: str,
-        from_to: Sequence[tuple[ResourcePath, ResourcePath]],
+        from_to: Iterable[tuple[ResourcePath, ResourcePath]],
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
     ) -> dict[ResourcePath, bool]:
