@@ -353,7 +353,7 @@ class S3ResourcePath(ResourcePath):
 
         return s3, f"{self._bucket}/{self.relativeToPathRoot}"
 
-    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         """Download object from S3 and place in temporary directory.
 
         Parameters
@@ -364,6 +364,9 @@ class S3ResourcePath(ResourcePath):
             effect if the URI scheme does not support parallel streams or
             if a global override has been applied. If `False` parallel
             streams will be disabled.
+        tmpdir : `ResourcePath` or `None`, optional
+            Explicit override of the temporary directory to use for remote
+            downloads.
 
         Returns
         -------
@@ -373,7 +376,7 @@ class S3ResourcePath(ResourcePath):
             Always returns `True`. This is always a temporary file.
         """
         with (
-            ResourcePath.temporary_uri(suffix=self.getExtension(), delete=False) as tmp_uri,
+            ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=False) as tmp_uri,
             self._use_threads_temp_override(multithreaded),
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):

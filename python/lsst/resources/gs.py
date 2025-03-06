@@ -202,9 +202,9 @@ class GSResourcePath(ResourcePath):
         # Should this method do anything at all?
         self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
 
-    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         with (
-            ResourcePath.temporary_uri(suffix=self.getExtension(), delete=False) as tmp_uri,
+            ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=False) as tmp_uri,
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             try:

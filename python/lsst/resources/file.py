@@ -79,7 +79,7 @@ class FileResourcePath(ResourcePath):
         """Remove the resource."""
         os.remove(self.ospath)
 
-    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         """Return the local path of the file.
 
         This is an internal helper for ``as_local()``.
@@ -87,6 +87,8 @@ class FileResourcePath(ResourcePath):
         Parameters
         ----------
         multithreaded : `bool`, optional
+            Unused.
+        tmpdir : `ResourcePath` or `None`, optional
             Unused.
 
         Returns

@@ -1011,7 +1011,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         return self
 
-    def _as_local(self, multithreaded: bool = True) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         """Return the location of the (possibly remote) resource as local file.
 
         This is a helper function for `as_local` context manager.
@@ -1024,6 +1024,9 @@ class ResourcePath:  # numpydoc ignore=PR02
             effect if the URI scheme does not support parallel streams or
             if a global override has been applied. If `False` parallel
             streams will be disabled.
+        tmpdir : `ResourcePath` or `None`, optional
+            Explicit override of the temporary directory to use for remote
+            downloads.
 
         Returns
         -------
@@ -1038,7 +1041,9 @@ class ResourcePath:  # numpydoc ignore=PR02
         raise NotImplementedError()
 
     @contextlib.contextmanager
-    def as_local(self, multithreaded: bool = True) -> Iterator[ResourcePath]:
+    def as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePathExpression | None = None
+    ) -> Iterator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
 
         Parameters
@@ -1049,6 +1054,10 @@ class ResourcePath:  # numpydoc ignore=PR02
             effect if the URI scheme does not support parallel streams or
             if a global override has been applied. If `False` parallel
             streams will be disabled.
+        tmpdir : `ResourcePathExpression` or `None`, optional
+            Explicit override of the temporary directory to use for remote
+            downloads. This directory must be a local POSIX directory and
+            must exist.
 
         Yields
         ------
@@ -1074,7 +1083,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         if self.isdir():
             raise IsADirectoryError(f"Directory-like URI {self} cannot be fetched as local.")
-        local_src, is_temporary = self._as_local(multithreaded=multithreaded)
+        temp_dir = ResourcePath(tmpdir, forceDirectory=True) if tmpdir is not None else None
+        if temp_dir is not None and not temp_dir.isLocal:
+            raise ValueError(f"Temporary directory for as_local must be local resource not {temp_dir}")
+        local_src, is_temporary = self._as_local(multithreaded=multithreaded, tmpdir=temp_dir)
         local_uri = ResourcePath(local_src, isTemporary=is_temporary)
 
         try:
@@ -1100,8 +1112,9 @@ class ResourcePath:  # numpydoc ignore=PR02
         Parameters
         ----------
         prefix : `ResourcePath`, optional
-            Prefix to use. Without this the path will be formed as a local
-            file URI in a temporary directory. Ensuring that the prefix
+            Temporary directory to use (can be any scheme). Without this the
+            path will be formed as a local file URI in a temporary directory
+            created by `tempfile.mkdtemp`. Ensuring that the prefix
             location exists is the responsibility of the caller.
         suffix : `str`, optional
             A file suffix to be used. The ``.`` should be included in this
