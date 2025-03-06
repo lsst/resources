@@ -183,8 +183,9 @@ class FileResourcePath(ResourcePath):
             )
 
         # We do not have to special case FileResourcePath here because
-        # as_local handles that.
-        with src.as_local(multithreaded=multithreaded) as local_uri:
+        # as_local handles that. If remote download, download it to the
+        # destination directory to allow an atomic rename.
+        with src.as_local(multithreaded=multithreaded, tmpdir=self.dirname()) as local_uri:
             is_temporary = local_uri.isTemporary
             local_src = local_uri.ospath
 
