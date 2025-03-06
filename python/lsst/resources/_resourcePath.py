@@ -1054,7 +1054,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             effect if the URI scheme does not support parallel streams or
             if a global override has been applied. If `False` parallel
             streams will be disabled.
-        tmpdir : `ResourcePathExpression` or `None`, optional
+        tmpdir : `lsst.resources.ResourcePathExpression` or `None`, optional
             Explicit override of the temporary directory to use for remote
             downloads. This directory must be a local POSIX directory and
             must exist.
