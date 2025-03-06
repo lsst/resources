@@ -794,6 +794,19 @@ class GenericReadWriteTestCase(_GenericTestCase):
             with self.root_uri.as_local() as local_uri:
                 pass
 
+        if not src.isLocal:
+            # as_local tmpdir can not be a remote resource.
+            with self.assertRaises(ValueError):
+                with src.as_local(tmpdir=self.root_uri) as local_uri:
+                    pass
+
+            # tmpdir is ignored for local file.
+            with tempfile.TemporaryDirectory() as tmpdir:
+                temp_dir = ResourcePath(tmpdir, forceDirectory=True)
+                with src.as_local(tmpdir=temp_dir) as local_uri:
+                    self.assertEqual(local_uri.dirname(), temp_dir)
+                    self.assertTrue(local_uri.exists())
+
     def test_local_mtransfer(self) -> None:
         """Check that bulk transfer to/from local works."""
         # Create remote resources
