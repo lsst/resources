@@ -961,6 +961,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             A transaction object that can (depending on implementation)
             rollback transfers on error.  Not guaranteed to be implemented.
+            The transaction object must be thread safe.
         do_raise : `bool`, optional
             If `True` an `ExceptionGroup` will be raised containing any
             exceptions raised by the individual transfers. Else a dict
