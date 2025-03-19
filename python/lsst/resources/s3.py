@@ -164,6 +164,14 @@ class S3ResourcePath(ResourcePath):
 
         return use_threads
 
+    @contextlib.contextmanager
+    def _use_threads_temp_override(self, multithreaded: bool) -> Iterator:
+        """Temporarily override the value of use_threads."""
+        original = self.use_threads
+        self.use_threads = multithreaded
+        yield
+        self.use_threads = original
+
     @property
     def _transfer_config(self) -> TransferConfig:
         if self.use_threads is None:
@@ -345,8 +353,20 @@ class S3ResourcePath(ResourcePath):
 
         return s3, f"{self._bucket}/{self.relativeToPathRoot}"
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         """Download object from S3 and place in temporary directory.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
+        tmpdir : `ResourcePath` or `None`, optional
+            Explicit override of the temporary directory to use for remote
+            downloads.
 
         Returns
         -------
@@ -356,7 +376,8 @@ class S3ResourcePath(ResourcePath):
             Always returns `True`. This is always a temporary file.
         """
         with (
-            ResourcePath.temporary_uri(suffix=self.getExtension(), delete=False) as tmp_uri,
+            ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=False) as tmp_uri,
+            self._use_threads_temp_override(multithreaded),
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             progress = (
@@ -408,6 +429,7 @@ class S3ResourcePath(ResourcePath):
         transfer: str = "copy",
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         """Transfer the current resource to an S3 bucket.
 
@@ -422,6 +444,12 @@ class S3ResourcePath(ResourcePath):
             Allow an existing file to be overwritten. Defaults to `False`.
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             Currently unused.
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
         """
         # Fail early to prevent delays if remote resources are requested
         if transfer not in self.transferModes:
@@ -466,13 +494,16 @@ class S3ResourcePath(ResourcePath):
 
         else:
             # Use local file and upload it
-            with src.as_local() as local_uri:
+            with src.as_local(multithreaded=multithreaded) as local_uri:
                 progress = (
                     ProgressPercentage(local_uri, file_for_msg=src, msg="Uploading:")
                     if log.isEnabledFor(ProgressPercentage.log_level)
                     else None
                 )
-                with time_this(log, msg=timer_msg, args=timer_args):
+                with (
+                    time_this(log, msg=timer_msg, args=timer_args),
+                    self._use_threads_temp_override(multithreaded),
+                ):
                     self._upload_file(local_uri, progress)
 
         # This was an explicit move requested from a remote resource

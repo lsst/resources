@@ -98,6 +98,20 @@ def _timeout_from_environment(env_var: str, default_value: float) -> float:
     return timeout
 
 
+@functools.lru_cache
+def _calc_tmpdir_buffer_size(tmpdir: str) -> int:
+    """Compute the block size as 256 blocks of typical size
+    (i.e. 4096 bytes) or 10 times the file system block size,
+    whichever is higher.
+
+    This is a reasonable compromise between
+    using memory for buffering and the number of system calls
+    issued to read from or write to temporary files.
+    """
+    fsstats = os.statvfs(tmpdir)
+    return max(10 * fsstats.f_bsize, 256 * 4096)
+
+
 class HttpResourcePathConfig:
     """Configuration class to encapsulate the configurable items used by class
     HttpResourcePath.
@@ -381,8 +395,8 @@ class HttpResourcePathConfig:
         # whichever is higher. This is a reasonable compromise between
         # using memory for buffering and the number of system calls
         # issued to read from or write to temporary files.
-        fsstats = os.statvfs(tmpdir)
-        self._tmpdir_buffersize = (tmpdir, max(10 * fsstats.f_bsize, 256 * 4096))
+        bufsize = _calc_tmpdir_buffer_size(tmpdir)
+        self._tmpdir_buffersize = (tmpdir, bufsize)
 
         return self._tmpdir_buffersize
 
@@ -1160,6 +1174,7 @@ class HttpResourcePath(ResourcePath):
         transfer: str = "copy",
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         """Transfer the current resource to a Webdav repository.
 
@@ -1174,6 +1189,12 @@ class HttpResourcePath(ResourcePath):
             Whether overwriting the remote resource is allowed or not.
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             Currently unused.
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
         """
         # Fail early to prevent delays if remote resources are requested.
         if transfer not in self.transferModes:
@@ -1473,8 +1494,20 @@ class HttpResourcePath(ResourcePath):
         except json.JSONDecodeError:
             raise ValueError(f"could not deserialize response to POST request for URL {self}")
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         """Download object over HTTP and place in temporary directory.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
+        tmpdir : `ResourcePath` or `None`, optional
+            Explicit override of the temporary directory to use for remote
+            downloads.
 
         Returns
         -------
@@ -1493,9 +1526,14 @@ class HttpResourcePath(ResourcePath):
                     f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
                 )
 
-            tmpdir, buffer_size = self._config.tmpdir_buffersize
+            if tmpdir is None:
+                temp_dir, buffer_size = self._config.tmpdir_buffersize
+                tmpdir = ResourcePath(temp_dir, forceDirectory=True)
+            else:
+                buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
+
             with ResourcePath.temporary_uri(
-                suffix=self.getExtension(), prefix=ResourcePath(tmpdir, forceDirectory=True), delete=False
+                suffix=self.getExtension(), prefix=tmpdir, delete=False
             ) as tmp_uri:
                 expected_length = int(resp.headers.get("Content-Length", "-1"))
                 with time_this(

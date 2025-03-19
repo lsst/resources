@@ -20,4 +20,7 @@ nitpick_ignore_regex = [
 ]
 nitpick_ignore = [
     ("py:obj", "lsst.daf.butler.core.datastore.DatastoreTransaction"),
+    ("py:obj", "lsst.resources.ResourcePathExpression"),
+    ("py:class", "MTransferResult"),
+    ("py:obj", "MTransferResult"),
 ]

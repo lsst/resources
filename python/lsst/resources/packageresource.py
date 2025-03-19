@@ -29,7 +29,7 @@ if TYPE_CHECKING:
         AbstractFileSystem = type
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
-from ._resourcePath import ResourcePath
+from ._resourcePath import ResourcePath, ResourcePathExpression
 
 log = logging.getLogger(__name__)
 
@@ -85,14 +85,25 @@ class PackageResourcePath(ResourcePath):
             return fh.read(size)
 
     @contextlib.contextmanager
-    def as_local(self) -> Iterator[ResourcePath]:
+    def as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePathExpression | None = None
+    ) -> Iterator[ResourcePath]:
         """Return the location of the Python resource as local file.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            Unused.
+        tmpdir : `ResourcePathExpression` or `None`, optional
+            Unused.
 
         Yields
         ------
         local : `ResourcePath`
             This might be the original resource or a copy on the local file
             system.
+        multithreaded : `bool`, optional
+            Unused.
 
         Notes
         -----

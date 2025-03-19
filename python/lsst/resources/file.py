@@ -79,10 +79,17 @@ class FileResourcePath(ResourcePath):
         """Remove the resource."""
         os.remove(self.ospath)
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         """Return the local path of the file.
 
         This is an internal helper for ``as_local()``.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            Unused.
+        tmpdir : `ResourcePath` or `None`, optional
+            Unused.
 
         Returns
         -------
@@ -141,6 +148,7 @@ class FileResourcePath(ResourcePath):
         transfer: str,
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         """Transfer the current resource to a local file.
 
@@ -155,6 +163,8 @@ class FileResourcePath(ResourcePath):
             Allow an existing file to be overwritten. Defaults to `False`.
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             If a transaction is provided, undo actions will be registered.
+        multithreaded : `bool`, optional
+            Whether threads are allowed to be used or not.
         """
         # Fail early to prevent delays if remote resources are requested
         if transfer not in self.transferModes:
@@ -172,9 +182,53 @@ class FileResourcePath(ResourcePath):
                 transfer,
             )
 
+        # The output location should not exist unless overwrite=True.
+        # Rather than use `exists()`, use os.stat since we might need
+        # the full answer later.
+        dest_stat: os.stat_result | None
+        try:
+            # Do not read through links of the file itself.
+            dest_stat = os.lstat(self.ospath)
+        except FileNotFoundError:
+            dest_stat = None
+
+        # It is possible that the source URI and target URI refer
+        # to the same file. This can happen for a number of reasons
+        # (such as soft links in the path, or they really are the same).
+        # In that case log a message and return as if the transfer
+        # completed (it technically did). A temporary file download
+        # can't be the same so the test can be skipped.
+        if dest_stat and src.isLocal and not src.isTemporary:
+            # Be consistent and use lstat here (even though realpath
+            # has been called). It does not harm.
+            local_src_stat = os.lstat(src.ospath)
+            if dest_stat.st_ino == local_src_stat.st_ino and dest_stat.st_dev == local_src_stat.st_dev:
+                log.debug(
+                    "Destination URI %s is the same file as source URI %s, returning immediately."
+                    " No further action required.",
+                    self,
+                    src,
+                )
+                return
+
+        if not overwrite and dest_stat:
+            raise FileExistsError(
+                f"Destination path '{self}' already exists. Transfer from {src} cannot be completed."
+            )
+
+        # Make the destination path absolute (but don't follow links since
+        # that would possibly cause us to end up in the wrong place if the
+        # file existed already as a soft link)
+        newFullPath = os.path.abspath(self.ospath)
+        outputDir = os.path.dirname(newFullPath)
+
         # We do not have to special case FileResourcePath here because
-        # as_local handles that.
-        with src.as_local() as local_uri:
+        # as_local handles that. If remote download, download it to the
+        # destination directory to allow an atomic rename but only if that
+        # directory exists because we do not want to create a directory
+        # but then end up with the download failing.
+        tmpdir = outputDir if os.path.exists(outputDir) else None
+        with src.as_local(multithreaded=multithreaded, tmpdir=tmpdir) as local_uri:
             is_temporary = local_uri.isTemporary
             local_src = local_uri.ospath
 
@@ -228,45 +282,6 @@ class FileResourcePath(ResourcePath):
             if src != local_uri and is_temporary and transfer == "copy":
                 transfer = "move"
 
-            # The output location should not exist unless overwrite=True.
-            # Rather than use `exists()`, use os.stat since we might need
-            # the full answer later.
-            dest_stat: os.stat_result | None
-            try:
-                # Do not read through links of the file itself.
-                dest_stat = os.lstat(self.ospath)
-            except FileNotFoundError:
-                dest_stat = None
-
-            # It is possible that the source URI and target URI refer
-            # to the same file. This can happen for a number of reasons
-            # (such as soft links in the path, or they really are the same).
-            # In that case log a message and return as if the transfer
-            # completed (it technically did). A temporary file download
-            # can't be the same so the test can be skipped.
-            if dest_stat and not is_temporary:
-                # Be consistent and use lstat here (even though realpath
-                # has been called). It does not harm.
-                local_src_stat = os.lstat(local_src)
-                if dest_stat.st_ino == local_src_stat.st_ino and dest_stat.st_dev == local_src_stat.st_dev:
-                    log.debug(
-                        "Destination URI %s is the same file as source URI %s, returning immediately."
-                        " No further action required.",
-                        self,
-                        local_uri,
-                    )
-                    return
-
-            if not overwrite and dest_stat:
-                raise FileExistsError(
-                    f"Destination path '{self}' already exists. Transfer from {src} cannot be completed."
-                )
-
-            # Make the path absolute (but don't follow links since that
-            # would possibly cause us to end up in the wrong place if the
-            # file existed already as a soft link)
-            newFullPath = os.path.abspath(self.ospath)
-            outputDir = os.path.dirname(newFullPath)
             if not os.path.isdir(outputDir):
                 # Must create the directory -- this can not be rolled back
                 # since another transfer running concurrently may

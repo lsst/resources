@@ -19,12 +19,14 @@ import copy
 import io
 import locale
 import logging
+import multiprocessing
 import os
 import posixpath
 import re
 import shutil
 import tempfile
 import urllib.parse
+from functools import cache
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
 
@@ -36,7 +38,7 @@ except ImportError:
     AbstractFileSystem = type
 
 from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from .utils import ensure_directory_is_writeable
@@ -57,6 +59,45 @@ ESCAPED_HASH = urllib.parse.quote("#")
 # If greater than 10, be aware that this number has to be consistent
 # with connection pool sizing (for example in urllib3).
 MAX_WORKERS = 10
+
+
+class MTransferResult(NamedTuple):
+    """Report on a bulk transfer."""
+
+    success: bool
+    exception: Exception | None
+
+
+def _get_int_env_var(env_var: str) -> int | None:
+    int_value = None
+    env_value = os.getenv(env_var)
+    if env_value is not None:
+        with contextlib.suppress(TypeError):
+            int_value = int(env_value)
+    return int_value
+
+
+@cache
+def _get_num_workers() -> int:
+    f"""Calculate the number of workers to use.
+
+    Returns
+    -------
+    num : `int`
+        The number of workers to use. Will use the value of the
+        ``LSST_RESOURCES_NUM_WORKERS`` environment variable if set. Will fall
+        back to using the CPU count (plus 2) but capped at {MAX_WORKERS}.
+    """
+    num_workers: int | None = None
+    num_workers = _get_int_env_var("LSST_RESOURCES_NUM_WORKERS")
+    if num_workers is None:
+        # CPU_LIMIT is used on nublado.
+        cpu_limit = _get_int_env_var("CPU_LIMIT") or multiprocessing.cpu_count()
+        if cpu_limit is not None:
+            num_workers = cpu_limit + 2
+
+    # But don't ever return more than the maximum allowed.
+    return min([num_workers, MAX_WORKERS])
 
 
 class ResourcePath:  # numpydoc ignore=PR02
@@ -883,17 +924,86 @@ class ResourcePath:  # numpydoc ignore=PR02
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
-        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
-        future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers()) as exists_executor:
+            future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
-        results: dict[ResourcePath, bool] = {}
-        for future in concurrent.futures.as_completed(future_exists):
-            uri = future_exists[future]
-            try:
-                exists = future.result()
-            except Exception:
-                exists = False
-            results[uri] = exists
+            results: dict[ResourcePath, bool] = {}
+            for future in concurrent.futures.as_completed(future_exists):
+                uri = future_exists[future]
+                try:
+                    exists = future.result()
+                except Exception:
+                    exists = False
+                results[uri] = exists
+        return results
+
+    @classmethod
+    def mtransfer(
+        cls,
+        transfer: str,
+        from_to: Iterable[tuple[ResourcePath, ResourcePath]],
+        overwrite: bool = False,
+        transaction: TransactionProtocol | None = None,
+        do_raise: bool = True,
+    ) -> dict[ResourcePath, MTransferResult]:
+        """Transfer many files in bulk.
+
+        Parameters
+        ----------
+        transfer : `str`
+            Mode to use for transferring the resource. Generically there are
+            many standard options: copy, link, symlink, hardlink, relsymlink.
+            Not all URIs support all modes.
+        from_to : `list` [ `tuple` [ `ResourcePath`, `ResourcePath` ] ]
+            A sequence of the source URIs and the target URIs.
+        overwrite : `bool`, optional
+            Allow an existing file to be overwritten. Defaults to `False`.
+        transaction : `~lsst.resources.utils.TransactionProtocol`, optional
+            A transaction object that can (depending on implementation)
+            rollback transfers on error.  Not guaranteed to be implemented.
+            The transaction object must be thread safe.
+        do_raise : `bool`, optional
+            If `True` an `ExceptionGroup` will be raised containing any
+            exceptions raised by the individual transfers. Else a dict
+            reporting the status of each `ResourcePath` will be returned.
+
+        Returns
+        -------
+        copy_status : `dict` [ `ResourcePath`, `MTransferResult` ]
+            A dict of all the transfer attempts with a value indicating
+            whether the transfer succeeded for the target URI.
+        """
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers()) as transfer_executor:
+            future_transfers = {
+                transfer_executor.submit(
+                    to_uri.transfer_from,
+                    from_uri,
+                    transfer=transfer,
+                    overwrite=overwrite,
+                    transaction=transaction,
+                    multithreaded=False,
+                ): to_uri
+                for from_uri, to_uri in from_to
+            }
+            results: dict[ResourcePath, MTransferResult] = {}
+            failed = False
+            for future in concurrent.futures.as_completed(future_transfers):
+                to_uri = future_transfers[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    transferred = MTransferResult(False, e)
+                    failed = True
+                else:
+                    transferred = MTransferResult(True, None)
+                results[to_uri] = transferred
+
+        if do_raise and failed:
+            raise ExceptionGroup(
+                f"Errors transferring {len(results)} artifacts",
+                tuple(res.exception for res in results.values() if res.exception is not None),
+            )
+
         return results
 
     def remove(self) -> None:
@@ -923,10 +1033,22 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         return self
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         """Return the location of the (possibly remote) resource as local file.
 
         This is a helper function for `as_local` context manager.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
+        tmpdir : `ResourcePath` or `None`, optional
+            Explicit override of the temporary directory to use for remote
+            downloads.
 
         Returns
         -------
@@ -941,8 +1063,23 @@ class ResourcePath:  # numpydoc ignore=PR02
         raise NotImplementedError()
 
     @contextlib.contextmanager
-    def as_local(self) -> Iterator[ResourcePath]:
+    def as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePathExpression | None = None
+    ) -> Iterator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
+
+        Parameters
+        ----------
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
+        tmpdir : `lsst.resources.ResourcePathExpression` or `None`, optional
+            Explicit override of the temporary directory to use for remote
+            downloads. This directory must be a local POSIX directory and
+            must exist.
 
         Yields
         ------
@@ -968,7 +1105,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         if self.isdir():
             raise IsADirectoryError(f"Directory-like URI {self} cannot be fetched as local.")
-        local_src, is_temporary = self._as_local()
+        temp_dir = ResourcePath(tmpdir, forceDirectory=True) if tmpdir is not None else None
+        if temp_dir is not None and not temp_dir.isLocal:
+            raise ValueError(f"Temporary directory for as_local must be local resource not {temp_dir}")
+        local_src, is_temporary = self._as_local(multithreaded=multithreaded, tmpdir=temp_dir)
         local_uri = ResourcePath(local_src, isTemporary=is_temporary)
 
         try:
@@ -994,8 +1134,9 @@ class ResourcePath:  # numpydoc ignore=PR02
         Parameters
         ----------
         prefix : `ResourcePath`, optional
-            Prefix to use. Without this the path will be formed as a local
-            file URI in a temporary directory. Ensuring that the prefix
+            Temporary directory to use (can be any scheme). Without this the
+            path will be formed as a local file URI in a temporary directory
+            created by `tempfile.mkdtemp`. Ensuring that the prefix
             location exists is the responsibility of the caller.
         suffix : `str`, optional
             A file suffix to be used. The ``.`` should be included in this
@@ -1247,6 +1388,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         transfer: str,
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
+        multithreaded: bool = True,
     ) -> None:
         """Transfer to this URI from another.
 
@@ -1263,6 +1405,12 @@ class ResourcePath:  # numpydoc ignore=PR02
         transaction : `~lsst.resources.utils.TransactionProtocol`, optional
             A transaction object that can (depending on implementation)
             rollback transfers on error.  Not guaranteed to be implemented.
+        multithreaded : `bool`, optional
+            If `True` the transfer will be allowed to attempt to improve
+            throughput by using parallel download streams. This may of no
+            effect if the URI scheme does not support parallel streams or
+            if a global override has been applied. If `False` parallel
+            streams will be disabled.
 
         Notes
         -----

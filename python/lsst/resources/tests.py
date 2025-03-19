@@ -17,6 +17,7 @@ import os
 import pathlib
 import random
 import string
+import tempfile
 import unittest
 import urllib.parse
 import uuid
@@ -702,6 +703,37 @@ class GenericReadWriteTestCase(_GenericTestCase):
         with self.assertRaises(FileNotFoundError):
             dest.transfer_from(src, "auto")
 
+    def test_mtransfer(self) -> None:
+        n_files = 10
+        sources = [self.tmpdir.join(f"test{n}.txt") for n in range(n_files)]
+        destinations = [self.tmpdir.join(f"dest_test{n}.txt") for n in range(n_files)]
+
+        for i, src in enumerate(sources):
+            content = f"{i}\nContent is some content\nwith something to say\n\n"
+            src.write(content.encode())
+
+        results = ResourcePath.mtransfer("copy", zip(sources, destinations, strict=True))
+        self.assertTrue(all(res.success for res in results.values()))
+        self.assertTrue(all(dest.exists() for dest in results))
+
+        for i, dest in enumerate(destinations):
+            new_content = dest.read().decode()
+            self.assertTrue(new_content.startswith(f"{i}\n"))
+
+        # Overwrite should work.
+        results = ResourcePath.mtransfer("copy", zip(sources, destinations, strict=True), overwrite=True)
+
+        # Overwrite failure.
+        results = ResourcePath.mtransfer(
+            "copy", zip(sources, destinations, strict=True), overwrite=False, do_raise=False
+        )
+        self.assertFalse(all(res.success for res in results.values()))
+
+        with self.assertRaises(ExceptionGroup):
+            results = ResourcePath.mtransfer(
+                "copy", zip(sources, destinations, strict=True), overwrite=False, do_raise=True
+            )
+
     def test_local_transfer(self) -> None:
         """Test we can transfer to and from local file."""
         remote_src = self.tmpdir.join("src.json")
@@ -761,6 +793,48 @@ class GenericReadWriteTestCase(_GenericTestCase):
         with self.assertRaises(IsADirectoryError):
             with self.root_uri.as_local() as local_uri:
                 pass
+
+        if not src.isLocal:
+            # as_local tmpdir can not be a remote resource.
+            with self.assertRaises(ValueError):
+                with src.as_local(tmpdir=self.root_uri) as local_uri:
+                    pass
+
+            # tmpdir is ignored for local file.
+            with tempfile.TemporaryDirectory() as tmpdir:
+                temp_dir = ResourcePath(tmpdir, forceDirectory=True)
+                with src.as_local(tmpdir=temp_dir) as local_uri:
+                    self.assertEqual(local_uri.dirname(), temp_dir)
+                    self.assertTrue(local_uri.exists())
+
+    def test_local_mtransfer(self) -> None:
+        """Check that bulk transfer to/from local works."""
+        # Create remote resources
+        n_files = 10
+        sources = [self.tmpdir.join(f"test{n}.txt") for n in range(n_files)]
+
+        for i, src in enumerate(sources):
+            content = f"{i}\nContent is some content\nwith something to say\n\n"
+            src.write(content.encode())
+
+        # Potentially remote to local.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_dir = ResourcePath(tmpdir, forceDirectory=True)
+            destinations = [temp_dir.join(f"dest_test{n}.txt") for n in range(n_files)]
+
+            results = ResourcePath.mtransfer("copy", zip(sources, destinations, strict=True))
+            self.assertTrue(all(res.success for res in results.values()))
+            self.assertTrue(all(dest.exists() for dest in results))
+
+            # Overwrite should work.
+            results = ResourcePath.mtransfer("copy", zip(sources, destinations, strict=True), overwrite=True)
+
+            # Now reverse so local to potentially remote.
+            for src in sources:
+                src.remove()
+            results = ResourcePath.mtransfer("copy", zip(destinations, sources, strict=True), overwrite=False)
+            self.assertTrue(all(res.success for res in results.values()))
+            self.assertTrue(all(dest.exists() for dest in results))
 
     def test_walk(self) -> None:
         """Walk a directory hierarchy."""

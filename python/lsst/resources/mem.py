@@ -27,5 +27,5 @@ class InMemoryResourcePath(ResourcePath):
         """Test for existence and always return False."""
         return True
 
-    def _as_local(self) -> tuple[str, bool]:
+    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
         raise RuntimeError(f"Do not know how to retrieve data for URI '{self}'")
