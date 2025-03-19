@@ -924,17 +924,17 @@ class ResourcePath:  # numpydoc ignore=PR02
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
-        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers())
-        future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers()) as exists_executor:
+            future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
-        results: dict[ResourcePath, bool] = {}
-        for future in concurrent.futures.as_completed(future_exists):
-            uri = future_exists[future]
-            try:
-                exists = future.result()
-            except Exception:
-                exists = False
-            results[uri] = exists
+            results: dict[ResourcePath, bool] = {}
+            for future in concurrent.futures.as_completed(future_exists):
+                uri = future_exists[future]
+                try:
+                    exists = future.result()
+                except Exception:
+                    exists = False
+                results[uri] = exists
         return results
 
     @classmethod
@@ -972,30 +972,30 @@ class ResourcePath:  # numpydoc ignore=PR02
             A dict of all the transfer attempts with a value indicating
             whether the transfer succeeded for the target URI.
         """
-        exists_executor = concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers())
-        future_transfers = {
-            exists_executor.submit(
-                to_uri.transfer_from,
-                from_uri,
-                transfer=transfer,
-                overwrite=overwrite,
-                transaction=transaction,
-                multithreaded=False,
-            ): to_uri
-            for from_uri, to_uri in from_to
-        }
-        results: dict[ResourcePath, MTransferResult] = {}
-        failed = False
-        for future in concurrent.futures.as_completed(future_transfers):
-            to_uri = future_transfers[future]
-            try:
-                future.result()
-            except Exception as e:
-                transferred = MTransferResult(False, e)
-                failed = True
-            else:
-                transferred = MTransferResult(True, None)
-            results[to_uri] = transferred
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers()) as transfer_executor:
+            future_transfers = {
+                transfer_executor.submit(
+                    to_uri.transfer_from,
+                    from_uri,
+                    transfer=transfer,
+                    overwrite=overwrite,
+                    transaction=transaction,
+                    multithreaded=False,
+                ): to_uri
+                for from_uri, to_uri in from_to
+            }
+            results: dict[ResourcePath, MTransferResult] = {}
+            failed = False
+            for future in concurrent.futures.as_completed(future_transfers):
+                to_uri = future_transfers[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    transferred = MTransferResult(False, e)
+                    failed = True
+                else:
+                    transferred = MTransferResult(True, None)
+                results[to_uri] = transferred
 
         if do_raise and failed:
             raise ExceptionGroup(
