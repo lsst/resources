@@ -1,4 +1,4 @@
-lsst-utils  @ git+https://github.com/lsst/utils@main
+lsst-utils  @ git+https://github.com/lsst/utils@v29.0.x
 # optional
 backoff >= 1.10
 boto3 >= 1.13

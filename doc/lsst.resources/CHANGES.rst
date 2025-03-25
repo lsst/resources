@@ -1,3 +1,16 @@
+Resources v29.0.0 2025-03-25
+============================
+
+New Features
+------------
+
+- * Modified ``ResourcePath.join()`` to propagate fragments from the given path to the joined path.
+    This now means that if the ``ResourcePath`` constructor finds a fragment that fragment will be used.
+    Previously the fragment was dropped if a ``ResourcePath`` was given that had a fragment, or the fragment was treated as part of the filename if a plain string was given.
+    This change means that filenames can no longer include ``#`` characters.
+  * Added new ``ResourcePath.unquoted_fragment`` property to get the unquoted fragment. (`DM-46776 <https://rubinobs.atlassian.net/browse/DM-46776>`_)
+
+
 Resources v28.0.0 2024-11-20
 ============================
 
