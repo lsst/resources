@@ -1,5 +1,18 @@
-Resources v28.0.0 2024-11-20
-============================
+Resources v29.0.0 (2025-03-25)
+==============================
+
+New Features
+------------
+
+- * Modified ``ResourcePath.join()`` to propagate fragments from the given path to the joined path.
+    This now means that if the ``ResourcePath`` constructor finds a fragment that fragment will be used.
+    Previously the fragment was dropped if a ``ResourcePath`` was given that had a fragment, or the fragment was treated as part of the filename if a plain string was given.
+    This change means that filenames can no longer include ``#`` characters.
+  * Added new ``ResourcePath.unquoted_fragment`` property to get the unquoted fragment. (`DM-46776 <https://rubinobs.atlassian.net/browse/DM-46776>`_)
+
+
+Resources v28.0.0 (2024-11-20)
+==============================
 
 New Features
 ------------
@@ -23,8 +36,8 @@ Miscellaneous Changes of Minor Interest
 - ``S3ResourceHandle`` now correctly converts ``NoSuchKey`` exception to ``FileNotFoundError`` when a read is attempted. (`DM-45732 <https://rubinobs.atlassian.net/browse/DM-45732>`_)
 
 
-Resources 27.0.0 2024-05-28
-===========================
+Resources 27.0.0 (2024-05-28)
+=============================
 
 This release requires Python 3.11 or newer.
 
@@ -70,8 +83,8 @@ An API Removal or Deprecation
 - Deprecated ``clean_test_environment``, ``setAwsEnvCredentials``, and ``unsetAwsEnvCredentials`` from the ``s3utils`` submodule.  The new function ``clean_test_environment_for_s3`` replaces these. (`DM-41879 <https://rubinobs.atlassian.net/browse/DM-41879>`_)
 
 
-Resources v26.0.0 2023-09-22
-============================
+Resources v26.0.0 (2023-09-22)
+==============================
 
 This package now requires Python 3.10 and newer.
 
@@ -109,8 +122,8 @@ An API Removal or Deprecation
 - Dropped support for Python 3.8 and 3.9. (`DM-39791 <https://rubinobs.atlassian.net/browse/DM-39791>`_)
 
 
-Resources v25.0.0 2023-02-27
-============================
+Resources v25.0.0 (2023-02-27)
+==============================
 
 Miscellaneous Changes of Minor Interest
 ---------------------------------------
@@ -122,8 +135,8 @@ Miscellaneous Changes of Minor Interest
   This is needed when interacting with WebDAV storage systems which have a frontend redirecting to backend servers. (`DM-36799 <https://rubinobs.atlassian.net/browse/DM-36799>`_)
 
 
-Resources v24.0.0 2022-08-26
-============================
+Resources v24.0.0 (2022-08-26)
+==============================
 
 New Features
 ------------
