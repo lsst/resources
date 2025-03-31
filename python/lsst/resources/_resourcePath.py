@@ -337,6 +337,12 @@ class ResourcePath:  # numpydoc ignore=PR02
                 from .http import HttpResourcePath
 
                 subclass = HttpResourcePath
+            elif parsed.scheme in {"dav", "davs"}:
+                from .http import HttpResourcePath
+
+                subclass = HttpResourcePath
+                # Current implementation does not internally understand dav.
+                parsed = parsed._replace(scheme=parsed.scheme.replace("dav", "http"))
             elif parsed.scheme == "gs":
                 from .gs import GSResourcePath
 
