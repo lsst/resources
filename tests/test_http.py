@@ -902,12 +902,6 @@ class HttpReadWriteWebdavDAVTestCase(HttpReadWriteWebdavTestCase, unittest.TestC
 
     scheme = "dav"
 
-    def test_temporary(self):
-        """Skip this test for dav because the test checks scheme for the
-        temporary but at the moment dav is converted to https.
-        """
-        raise unittest.SkipTest("Currently dav is tested internally as http")
-
 
 class WebdavUtilsTestCase(unittest.TestCase):
     """Test for the Webdav related utilities."""

@@ -29,6 +29,15 @@ if TYPE_CHECKING:
     from ..http import HttpResourcePath
 
 
+# Prevent circular import by copying this code. Can be removed as soon
+# as separate dav implementation is implemented.
+def _dav_to_http(url: str) -> str:
+    """Convert dav scheme in URL to http scheme."""
+    if url.startswith("dav"):
+        url = "http" + url.removeprefix("dav")
+    return url
+
+
 class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     """HTTP-based specialization of `.BaseResourceHandle`.
 
@@ -159,7 +168,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             # return the result
             self._completeBuffer = io.BytesIO()
             with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
-                resp = self._session.get(self._url, stream=False, timeout=self._timeout)
+                resp = self._session.get(_dav_to_http(self._url), stream=False, timeout=self._timeout)
             if (code := resp.status_code) not in (requests.codes.ok, requests.codes.partial):
                 raise FileNotFoundError(f"Unable to read resource {self._url}; status code: {code}")
             self._completeBuffer.write(resp.content)
@@ -181,7 +190,9 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         with time_this(
             self._log, msg="Read from remote resource %s using headers %s", args=(self._url, headers)
         ):
-            resp = self._session.get(self._url, stream=False, timeout=self._timeout, headers=headers)
+            resp = self._session.get(
+                _dav_to_http(self._url), stream=False, timeout=self._timeout, headers=headers
+            )
 
         if resp.status_code == requests.codes.range_not_satisfiable:
             # Must have run off the end of the file. A standard file handle
