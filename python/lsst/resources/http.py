@@ -112,6 +112,13 @@ def _calc_tmpdir_buffer_size(tmpdir: str) -> int:
     return max(10 * fsstats.f_bsize, 256 * 4096)
 
 
+def _dav_to_http(url: str) -> str:
+    """Convert dav scheme in URL to http scheme."""
+    if url.startswith("dav"):
+        url = "http" + url.removeprefix("dav")
+    return url
+
+
 class HttpResourcePathConfig:
     """Configuration class to encapsulate the configurable items used by class
     HttpResourcePath.
@@ -441,7 +448,7 @@ def _get_dav_and_server_headers(path: ResourcePath | str) -> tuple[str | None, s
         config = HttpResourcePathConfig()
         with SessionStore(config=config).get(path) as session:
             resp = session.options(
-                str(path),
+                _dav_to_http(str(path)),
                 stream=False,
                 timeout=config.timeout,
             )
@@ -1130,7 +1137,7 @@ class HttpResourcePath(ResourcePath):
         stream = size > 0
         with self.data_session as session:
             with time_this(log, msg="GET %s", args=(self,)):
-                resp = session.get(self.geturl(), stream=stream, timeout=self._config.timeout)
+                resp = session.get(_dav_to_http(self.geturl()), stream=stream, timeout=self._config.timeout)
 
             if resp.status_code != requests.codes.ok:  # 200
                 raise FileNotFoundError(
@@ -1351,6 +1358,9 @@ class HttpResourcePath(ResourcePath):
             or not self.is_webdav_endpoint
             or self.server not in HttpResourcePath.SUPPORTED_URL_SIGNERS
         ):
+            if self.scheme.startswith("dav") and fsspec:
+                # Not webdav so convert to http.
+                return fsspec.url_to_fs(_dav_to_http(self.geturl()))
             return super().to_fsspec()
 
         if self.isdir():
@@ -1520,7 +1530,7 @@ class HttpResourcePath(ResourcePath):
         # to both the front end and back end servers are closed after the
         # download operation is finished.
         with self.data_session as session:
-            resp = session.get(self.geturl(), stream=True, timeout=self._config.timeout)
+            resp = session.get(_dav_to_http(self.geturl()), stream=True, timeout=self._config.timeout)
             if resp.status_code != requests.codes.ok:
                 raise FileNotFoundError(
                     f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
@@ -1633,7 +1643,7 @@ class HttpResourcePath(ResourcePath):
             for _ in range(max_redirects := 5):
                 resp = session.request(
                     method,
-                    url,
+                    _dav_to_http(url),
                     data=body,
                     headers=headers,
                     stream=False,
@@ -1791,7 +1801,7 @@ class HttpResourcePath(ResourcePath):
         src : `HttpResourcePath`
             The source of the contents to move to `self`.
         """
-        headers = {"Destination": self.geturl()}
+        headers = {"Destination": _dav_to_http(self.geturl())}
         resp = self._send_webdav_request(method, url=src.geturl(), headers=headers, session=self.data_session)
         if resp.status_code in (requests.codes.created, requests.codes.no_content):
             return
@@ -1898,7 +1908,7 @@ class HttpResourcePath(ResourcePath):
         if self._config.send_expect_on_put or self.server == "dcache":
             headers["Expect"] = "100-continue"
 
-        url = self.geturl()
+        url = _dav_to_http(self.geturl())
 
         # Use the session as a context manager to ensure the underlying
         # connections are closed after finishing uploading the data.
