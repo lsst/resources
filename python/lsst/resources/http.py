@@ -608,7 +608,7 @@ class SessionStore:
     def _make_session(self, rpath: ResourcePath) -> requests.Session:
         """Make a new session configured from values from the environment."""
         session = requests.Session()
-        root_uri = str(rpath.root_uri())
+        root_uri = _dav_to_http(str(rpath.root_uri()))
         log.debug("Creating new HTTP session for endpoint %s ...", root_uri)
         retries = Retry(
             # Total number of retries to allow. Takes precedence over other
@@ -668,8 +668,9 @@ class SessionStore:
         # from request to request. Systematically persisting connections to
         # those servers may exhaust their capabilities when there are thousands
         # of simultaneous clients.
+        scheme = _dav_to_http(rpath.scheme)
         session.mount(
-            f"{rpath.scheme}://",
+            f"{scheme}://",
             HTTPAdapter(
                 pool_connections=self._num_pools,
                 pool_maxsize=0,
