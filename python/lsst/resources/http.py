@@ -26,7 +26,6 @@ import random
 import re
 import ssl
 import stat
-import tempfile
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
@@ -60,6 +59,7 @@ from lsst.utils.timer import time_this
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle, parse_content_range_header
 from ._resourcePath import ResourcePath
+from .utils import get_tempdir
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -384,18 +384,7 @@ class HttpResourcePathConfig:
         if self._tmpdir_buffersize is not None:
             return self._tmpdir_buffersize
 
-        # Use the value of environment variables 'LSST_RESOURCES_TMPDIR' or
-        # 'TMPDIR', if defined. Otherwise use the system temporary directory,
-        # with a last-resort fallback to the current working directory if
-        # nothing else is available.
-        tmpdir = None
-        for dir in (os.getenv(v) for v in ("LSST_RESOURCES_TMPDIR", "TMPDIR")):
-            if dir and os.path.isdir(dir):
-                tmpdir = dir
-                break
-
-        if tmpdir is None:
-            tmpdir = tempfile.gettempdir()
+        tmpdir = get_tempdir()
 
         # Compute the block size as 256 blocks of typical size
         # (i.e. 4096 bytes) or 10 times the file system block size,

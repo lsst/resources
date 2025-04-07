@@ -23,8 +23,6 @@ import multiprocessing
 import os
 import posixpath
 import re
-import shutil
-import tempfile
 import urllib.parse
 from functools import cache
 from pathlib import Path, PurePath, PurePosixPath
@@ -41,7 +39,7 @@ from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
-from .utils import ensure_directory_is_writeable
+from .utils import get_tempdir
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -1140,35 +1138,23 @@ class ResourcePath:  # numpydoc ignore=PR02
         prefix : `ResourcePath`, optional
             Temporary directory to use (can be any scheme). Without this the
             path will be formed as a local file URI in a temporary directory
-            created by `tempfile.mkdtemp`. Ensuring that the prefix
-            location exists is the responsibility of the caller.
+            obtained from `lsst.resources.utils.get_tempdir`. Ensuring that the
+            prefix location exists is the responsibility of the caller.
         suffix : `str`, optional
             A file suffix to be used. The ``.`` should be included in this
             suffix.
         delete : `bool`, optional
             By default the resource will be deleted when the context manager
             is exited. Setting this flag to `False` will leave the resource
-            alone. `False` will also retain any directories that may have
-            been created.
+            alone.
 
         Yields
         ------
         uri : `ResourcePath`
             The temporary URI. Will be removed when the context is completed.
         """
-        use_tempdir = False
         if prefix is None:
-            directory = tempfile.mkdtemp()
-            # If the user has set a umask that restricts the owner-write bit,
-            # the directory returned from mkdtemp may not initially be
-            # writeable by us
-            ensure_directory_is_writeable(directory)
-
-            prefix = ResourcePath(directory, forceDirectory=True, isTemporary=True)
-            # Record that we need to delete this directory. Can not rely
-            # on isTemporary flag since an external prefix may have that
-            # set as well.
-            use_tempdir = True
+            prefix = ResourcePath(get_tempdir(), forceDirectory=True)
 
         # Need to create a randomized file name. For consistency do not
         # use mkstemp for local and something else for remote. Additionally
@@ -1187,13 +1173,10 @@ class ResourcePath:  # numpydoc ignore=PR02
             yield temporary_uri
         finally:
             if delete:
-                if use_tempdir:
-                    shutil.rmtree(prefix.ospath, ignore_errors=True)
-                else:
-                    with contextlib.suppress(FileNotFoundError):
-                        # It's okay if this does not work because the user
-                        # removed the file.
-                        temporary_uri.remove()
+                with contextlib.suppress(FileNotFoundError):
+                    # It's okay if this does not work because the user
+                    # removed the file.
+                    temporary_uri.remove()
 
     def read(self, size: int = -1) -> bytes:
         """Open the resource and return the contents in bytes.
