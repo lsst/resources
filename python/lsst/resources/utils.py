@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-__all__ = ("NoTransaction", "TransactionProtocol", "os2posix", "posix2os")
+__all__ = ("NoTransaction", "TransactionProtocol", "get_tempdir", "os2posix", "posix2os")
 
 import contextlib
 import logging
@@ -21,6 +21,7 @@ import shutil
 import stat
 import tempfile
 from collections.abc import Callable, Iterator
+from functools import cache
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, Protocol
 
@@ -91,6 +92,35 @@ def posix2os(posix: PurePath | str) -> str:
         paths.append("")
 
     return os.path.join(*paths)
+
+
+@cache
+def get_tempdir() -> str:
+    """Get POSIX path to temporary directory.
+
+    Returns
+    -------
+    tmpdir : `str`
+        Path to the default temporary directory location.
+
+    Notes
+    -----
+    Uses the value of environment variables ``LSST_RESOURCES_TMPDIR`` or
+    ``TMPDIR``, if defined. Otherwise use the system temporary directory,
+    with a last-resort fallback to the current working directory if
+    nothing else is available.
+    """
+    tmpdir = None
+    # $TMPDIR is also checked with getttempdir() below.
+    for dir in (os.getenv(v) for v in ("LSST_RESOURCES_TMPDIR", "TMPDIR")):
+        if dir and os.path.isdir(dir):
+            tmpdir = dir
+            break
+
+    if tmpdir is None:
+        tmpdir = tempfile.gettempdir()
+
+    return tmpdir
 
 
 class NoTransaction:
