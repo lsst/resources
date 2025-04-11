@@ -15,6 +15,7 @@ __all__ = ("NoTransaction", "TransactionProtocol", "get_tempdir", "os2posix", "p
 
 import contextlib
 import logging
+import multiprocessing
 import os
 import posixpath
 import shutil
@@ -32,6 +33,11 @@ IS_POSIX = os.sep == posixpath.sep
 # can fail in some situations so in the default case assume that
 # posix means posix and only determine explicitly in the non-posix case.
 OS_ROOT_PATH = posixpath.sep if IS_POSIX else Path().resolve().root
+
+# Maximum number of worker threads for parallelized operations.
+# If greater than 10, be aware that this number has to be consistent
+# with connection pool sizing (for example in urllib3).
+MAX_WORKERS = 10
 
 log = logging.getLogger(__name__)
 
@@ -226,3 +232,40 @@ def ensure_directory_is_writeable(directory_path: str | bytes) -> None:
     desired_mode = current_mode | stat.S_IWUSR | stat.S_IXUSR
     if current_mode != desired_mode:
         os.chmod(directory_path, desired_mode)
+
+
+def _get_int_env_var(env_var: str) -> int | None:
+    int_value = None
+    env_value = os.getenv(env_var)
+    if env_value is not None:
+        with contextlib.suppress(TypeError):
+            int_value = int(env_value)
+    return int_value
+
+
+@cache
+def _get_num_workers() -> int:
+    f"""Calculate the number of workers to use.
+
+    Returns
+    -------
+    num : `int`
+        The number of workers to use. Will use the value of the
+        ``LSST_RESOURCES_NUM_WORKERS`` environment variable if set. Will fall
+        back to using the CPU count (plus 2) but capped at {MAX_WORKERS}.
+    """
+    num_workers: int | None = None
+    num_workers = _get_int_env_var("LSST_RESOURCES_NUM_WORKERS")
+
+    # If someone is explicitly specifying a number, let them use that number.
+    if num_workers is not None:
+        return num_workers
+
+    if num_workers is None:
+        # CPU_LIMIT is used on nublado.
+        cpu_limit = _get_int_env_var("CPU_LIMIT") or multiprocessing.cpu_count()
+        if cpu_limit is not None:
+            num_workers = cpu_limit + 2
+
+    # But don't ever return more than the maximum allowed.
+    return min([num_workers, MAX_WORKERS])
