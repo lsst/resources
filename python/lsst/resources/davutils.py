@@ -1449,9 +1449,6 @@ class DavClient:
             "Destination": destination_url,
             "Overwrite": "T" if overwrite else "F",
         }
-
-        print(f"sending COPY request {destination_url} to {destination_url}")
-
         resp = self._request("COPY", source_url, headers=headers)
         if resp.status not in (HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
             raise ValueError(
