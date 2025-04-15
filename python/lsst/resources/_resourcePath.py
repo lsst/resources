@@ -25,6 +25,7 @@ import re
 import urllib.parse
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
+from typing import TypeAlias
 
 try:
     import fsspec
@@ -57,6 +58,74 @@ class MTransferResult(NamedTuple):
 
     success: bool
     exception: Exception | None
+
+
+_EXECUTOR_TYPE: TypeAlias = type[
+    concurrent.futures.ThreadPoolExecutor | concurrent.futures.ProcessPoolExecutor
+]
+
+# Cache value for executor class so as not to issue warning multiple
+# times but still allow tests to override the value.
+_POOL_EXECUTOR_CLASS: _EXECUTOR_TYPE | None = None
+
+
+def _get_executor_class() -> _EXECUTOR_TYPE:
+    """Return the executor class used for parallelized execution.
+
+    Returns
+    -------
+    cls : `concurrent.futures.Executor`
+        The ``Executor`` class. Default is
+        `concurrent.futures.ProcessPoolExecutor`. Can be set explicitly by
+        setting the ``$LSST_RESOURCES_EXECUTOR`` environment variable to
+        "thread" or "process". Returns "process" pool if the value of the
+        variable is not recognized.
+    """
+    global _POOL_EXECUTOR_CLASS
+
+    if _POOL_EXECUTOR_CLASS is not None:
+        return _POOL_EXECUTOR_CLASS
+
+    external = os.getenv("LSST_RESOURCES_EXECUTOR", "process")
+    if not external:
+        external = "process"
+    pool_exe_class: _EXECUTOR_TYPE
+    match external:
+        case "process":
+            pool_exe_class = concurrent.futures.ProcessPoolExecutor
+        case "threads":
+            pool_exe_class = concurrent.futures.ThreadPoolExecutor
+        case _:
+            log.warning(
+                "Unrecognized value of '%s' for LSST_RESOURCES_EXECUTOR env var. Using 'process'", external
+            )
+            pool_exe_class = concurrent.futures.ProcessPoolExecutor
+    _POOL_EXECUTOR_CLASS = pool_exe_class
+    return pool_exe_class
+
+
+@contextlib.contextmanager
+def _patch_environ(new_values: dict[str, str]) -> Iterator[None]:
+    """Patch os.environ temporarily using the supplied values.
+
+    Parameters
+    ----------
+    new_values : `dict` [ `str`, `str` ]
+        New values to be stored in the environment.
+    """
+    old_values: dict[str, str] = {}
+    for k, v in new_values.items():
+        if k in os.environ:
+            old_values[k] = os.environ[k]
+        os.environ[k] = v
+
+    try:
+        yield
+    finally:
+        for k in new_values:
+            del os.environ[k]
+            if k in old_values:
+                os.environ[k] = old_values[k]
 
 
 class ResourcePath:  # numpydoc ignore=PR02
@@ -887,7 +956,37 @@ class ResourcePath:  # numpydoc ignore=PR02
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
-        with concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers()) as exists_executor:
+        pool_executor_class = _get_executor_class()
+        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
+            # Patch the environment to make it think there is only one worker
+            # for each subprocess.
+            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
+                return cls._mexists_pool(pool_executor_class, uris)
+        else:
+            return cls._mexists_pool(pool_executor_class, uris)
+
+    @classmethod
+    def _mexists_pool(
+        cls, pool_executor_class: _EXECUTOR_TYPE, uris: Iterable[ResourcePath]
+    ) -> dict[ResourcePath, bool]:
+        """Check for existence of multiple URIs at once using specified pool
+        executor.
+
+        Implementation helper method for `_mexists`.
+
+        Parameters
+        ----------
+        pool_executor_class : `type` [ `concurrent.futures.Executor` ]
+            Type of executor pool to use.
+        uris : iterable of `ResourcePath`
+            The URIs to test.
+
+        Returns
+        -------
+        existence : `dict` of [`ResourcePath`, `bool`]
+            Mapping of original URI to boolean indicating existence.
+        """
+        with pool_executor_class(max_workers=_get_num_workers()) as exists_executor:
             future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
             results: dict[ResourcePath, bool] = {}
@@ -936,7 +1035,66 @@ class ResourcePath:  # numpydoc ignore=PR02
             A dict of all the transfer attempts with a value indicating
             whether the transfer succeeded for the target URI.
         """
-        with concurrent.futures.ThreadPoolExecutor(max_workers=_get_num_workers()) as transfer_executor:
+        pool_executor_class = _get_executor_class()
+        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
+            # Patch the environment to make it think there is only one worker
+            # for each subprocess.
+            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
+                return cls._mtransfer(
+                    pool_executor_class,
+                    transfer,
+                    from_to,
+                    overwrite=overwrite,
+                    transaction=transaction,
+                    do_raise=do_raise,
+                )
+        return cls._mtransfer(
+            pool_executor_class,
+            transfer,
+            from_to,
+            overwrite=overwrite,
+            transaction=transaction,
+            do_raise=do_raise,
+        )
+
+    @classmethod
+    def _mtransfer(
+        cls,
+        pool_executor_class: _EXECUTOR_TYPE,
+        transfer: str,
+        from_to: Iterable[tuple[ResourcePath, ResourcePath]],
+        overwrite: bool = False,
+        transaction: TransactionProtocol | None = None,
+        do_raise: bool = True,
+    ) -> dict[ResourcePath, MTransferResult]:
+        """Transfer many files in bulk.
+
+        Parameters
+        ----------
+        transfer : `str`
+            Mode to use for transferring the resource. Generically there are
+            many standard options: copy, link, symlink, hardlink, relsymlink.
+            Not all URIs support all modes.
+        from_to : `list` [ `tuple` [ `ResourcePath`, `ResourcePath` ] ]
+            A sequence of the source URIs and the target URIs.
+        overwrite : `bool`, optional
+            Allow an existing file to be overwritten. Defaults to `False`.
+        transaction : `~lsst.resources.utils.TransactionProtocol`, optional
+            A transaction object that can (depending on implementation)
+            rollback transfers on error.  Not guaranteed to be implemented.
+            The transaction object must be thread safe.
+        do_raise : `bool`, optional
+            If `True` an `ExceptionGroup` will be raised containing any
+            exceptions raised by the individual transfers. Else a dict
+            reporting the status of each `ResourcePath` will be returned.
+
+        Returns
+        -------
+        copy_status : `dict` [ `ResourcePath`, `MTransferResult` ]
+            A dict of all the transfer attempts with a value indicating
+            whether the transfer succeeded for the target URI.
+        """
+        with pool_executor_class(max_workers=_get_num_workers()) as transfer_executor:
             future_transfers = {
                 transfer_executor.submit(
                     to_uri.transfer_from,

@@ -251,6 +251,33 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
     def test_fsspec(self) -> None:
         raise unittest.SkipTest("fsspec s3fs incompatible with moto")
 
+    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
+    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "threads"})
+    def test_mexists(self) -> None:
+        """Test mexists with override executor pool.
+
+        moto does not work with process pool.
+        """
+        super().test_mexists()
+
+    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
+    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "threads"})
+    def test_mtransfer(self) -> None:
+        """Test mtransfer with override executor pool.
+
+        moto does not work with process pool.
+        """
+        super().test_mtransfer()
+
+    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
+    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "threads"})
+    def test_local_mtransfer(self) -> None:
+        """Test local mtransfer with override executor pool.
+
+        moto does not work with process pool.
+        """
+        super().test_local_mtransfer()
+
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
 class S3ReadWriteTestCase(S3ReadWriteTestCaseBase, unittest.TestCase):
