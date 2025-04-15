@@ -587,7 +587,7 @@ class SessionStore:
         Note that "https://www.example.org" and "https://www.example.org:12345"
         will have different sessions since the port number is not identical.
         """
-        root_uri = str(rpath.root_uri())
+        root_uri = _dav_to_http(str(rpath.root_uri()))
         if root_uri not in self._sessions:
             # We don't have yet a session for this endpoint: create a new one.
             self._sessions[root_uri] = self._make_session(rpath)
