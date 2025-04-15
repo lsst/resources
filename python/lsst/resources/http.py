@@ -59,7 +59,7 @@ from lsst.utils.timer import time_this
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle, parse_content_range_header
 from ._resourcePath import ResourcePath
-from .utils import get_tempdir
+from .utils import _get_num_workers, get_tempdir
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -165,14 +165,14 @@ class HttpResourcePathConfig:
         if self._front_end_connections is not None:
             return self._front_end_connections
 
+        default_pool_size = max(_get_num_workers(), self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
+
         try:
             self._front_end_connections = int(
-                os.environ.get(
-                    "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
-                )
+                os.environ.get("LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS", default_pool_size)
             )
         except ValueError:
-            self._front_end_connections = self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS
+            self._front_end_connections = default_pool_size
 
         return self._front_end_connections
 
@@ -182,14 +182,14 @@ class HttpResourcePathConfig:
         if self._back_end_connections is not None:
             return self._back_end_connections
 
+        default_pool_size = max(_get_num_workers(), self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
+
         try:
             self._back_end_connections = int(
-                os.environ.get(
-                    "LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
-                )
+                os.environ.get("LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS", default_pool_size)
             )
         except ValueError:
-            self._back_end_connections = self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
+            self._back_end_connections = default_pool_size
 
         return self._back_end_connections
 
@@ -587,7 +587,7 @@ class SessionStore:
         Note that "https://www.example.org" and "https://www.example.org:12345"
         will have different sessions since the port number is not identical.
         """
-        root_uri = str(rpath.root_uri())
+        root_uri = _dav_to_http(str(rpath.root_uri()))
         if root_uri not in self._sessions:
             # We don't have yet a session for this endpoint: create a new one.
             self._sessions[root_uri] = self._make_session(rpath)
