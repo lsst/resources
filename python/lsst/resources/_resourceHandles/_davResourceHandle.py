@@ -185,7 +185,7 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         if self._eof or len(output) == 0:
             return 0
 
-        # If this file's size is small than the buffer size configured for
+        # If this file's size is smaller than the buffer size configured for
         # this URI's client, download the entire file in one request and cache
         # its content. This avoids multiple roundtrips to the server
         # for retrieving small chunks.
@@ -205,7 +205,6 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         # I/O buffer to reduce memory allocations.
         if self._buffer is None:
             self._buffer = io.BytesIO()
-
 
         start = self._current_position
         end = min(self._stat.size, start + len(output))

@@ -128,13 +128,14 @@ class DavGlobals:
     module.
     """
 
-    # Client pool used by all DavResourcePath instances.
-    client_pool: DavClientPool | None = None
-
-    # Configuration used by all DavResourcePath instances.
-    config: DavResourcePathConfig | None = None
-
     def __init__(self) -> None:
+        # Client pool used by all DavResourcePath instances.
+        # Use Any as type annotation to keep mypy happy.
+        self._client_pool: Any = None
+
+        # Configuration used by all DavResourcePath instances.
+        self._config: Any = None
+
         self._reset()
 
     def _reset(self) -> None:
@@ -156,17 +157,23 @@ class DavGlobals:
 
         # Initialize the singleton instance of the webdav client pool. This is
         # a thread-safe singleton shared by all instances of DavResourcePath.
-        if DavGlobals.client_pool is not None:
-            DavGlobals.client_pool._destroy()
+        if self._client_pool is not None:
+            self._client_pool._destroy()
 
-        DavGlobals.client_pool = DavClientPool(config_pool)
+        self._client_pool = DavClientPool(config_pool)
 
         # Initialize the singleton instance of the configuration shared
         # all DavResourcePath objects.
-        if DavGlobals.config is not None:
-            DavGlobals.config._destroy()
+        if self._config is not None:
+            self._config._destroy()
 
-        DavGlobals.config = DavResourcePathConfig()
+        self._config = DavResourcePathConfig()
+
+    def client_pool(self) -> DavClientPool:
+        return self._client_pool
+
+    def config(self) -> DavResourcePathConfig:
+        return self._config
 
 
 # Convenience object to encapsulate all global objects needed by this module.
@@ -188,12 +195,11 @@ class DavResourcePath(ResourcePath):
         # uses "http" or "https" as scheme instead of "dav" or "davs".
         self._internal_url: str = normalize_url(self.geturl())
 
-        # Retrieve the client this path must use to interact with the server
-        # from the global client pool.
-        self._client: DavClient = dav_globals.client_pool.get_client_for_url(self._internal_url)
+        # WebDAV client this path must use to interact with the server.
+        self._dav_client: DavClient | None = None
 
         # Retrieve the configuration shared by all instances of this class.
-        self._config: DavResourcePathConfig = dav_globals.config
+        self._config: DavResourcePathConfig = dav_globals.config()
 
         # Cached attributes of this file
         self._cached_metadata: DavFileMetadata | None = None
@@ -210,13 +216,27 @@ class DavResourcePath(ResourcePath):
 
         This function ensures that the path of the URI is normalized.
         """
-        # Call the superclass' _fixupPathUri
+        # Call the superclass' _fixupPathUri.
         parsed, dirLike = super()._fixupPathUri(parsed, forceDirectory=forceDirectory)
+
+        # Clean the URL's path and ensure dir-like paths end by "/".
         path = normalize_path(parsed.path)
         if dirLike and path != "/":
             path += "/"
 
         return parsed._replace(path=path), dirLike
+
+    @property
+    def _client(self) -> DavClient:
+        """Return the webDAV client for this resource."""
+        # If we already have a client, use it.
+        if self._dav_client is not None:
+            return self._dav_client
+
+        # Retrieve the client this resource must use to interact with the
+        # server from the global client pool.
+        self._dav_client = dav_globals.client_pool().get_client_for_url(self._internal_url)
+        return self._dav_client
 
     def _stat(self, refresh: bool = False) -> DavFileMetadata:
         """Retrieve metadata about this resource.
@@ -308,7 +328,7 @@ class DavResourcePath(ResourcePath):
         """
         # A GET request on a dCache directory returns the contents of the
         # directory in HTML, to be visualized with a browser. This means
-        # that we need to check firs that this resource is not a directory.
+        # that we need to check first that this resource is not a directory.
         #
         # Since isdir() only checks that the URL of the resource ends in "/"
         # without actually asking the server, this check is not robust.
@@ -379,16 +399,16 @@ class DavResourcePath(ResourcePath):
         temporary : `bool`
             Always returns `True`. This is always a temporary file.
         """
-        # TODO: can we avoid this checking and instead attempt to download
-        # the file. If download fails then we can raise here.
-
+        # We need to ensure that this resource is actually a file. dCache
+        # responds with a HTML-formatted content to a HTTP GET request to a
+        # directory, which is not what we want.
         stat = self._stat()
         if not stat.is_file:
             raise FileNotFoundError(f"No file found at {self}")
 
         if tmpdir is None:
-            temp_dir, buffer_size = self._config.tmpdir_buffersize
-            tmpdir = ResourcePath(temp_dir, forceDirectory=True)
+            local_dir, buffer_size = self._config.tmpdir_buffersize
+            tmpdir = ResourcePath(local_dir, forceDirectory=True)
         else:
             buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
 
@@ -422,7 +442,7 @@ class DavResourcePath(ResourcePath):
         self._invalidate_metatada_cache()
 
     @override
-    def remove(self, recursive=False) -> None:
+    def remove(self) -> None:
         """Remove the resource.
 
         If the resource is a directory, it must be empty otherwise this
@@ -435,24 +455,42 @@ class DavResourcePath(ResourcePath):
         if self.isdir():
             entries = self._client.read_dir(self._internal_url)
             if len(entries) > 0:
-                if recursive:
-                    return self._remove_dir()
-                else:
-                    raise IsADirectoryError(f"removing non-empty directory {self} is not supported")
+                raise IsADirectoryError(f"directory {self} is not empty")
 
-        # This resource is a file or an empty directory, we can remove it.
+        # This resource is a either file or an empty directory, we can remove
+        # it.
         self._client.delete(self._internal_url)
         self._invalidate_metatada_cache()
 
-    def _remove_dir(self) -> None:
-        """Forcibly remove a non-empty directory and all its contents."""
+    def remove_dir(self, recursive: bool = False) -> None:
+        """Remove a directory if empty.
+
+        Parameters
+        ----------
+        recursive: `bool`
+            If `True` recursively remove all files and directories under this
+            directory.
+
+        Notes
+        -----
+            This method is not present in the superclass.
+        """
+        if not self.isdir():
+            raise NotADirectoryError(f"{self} is not a directory")
+
         for root, subdirs, files in self.walk():
+            if not recursive and (len(subdirs) > 0 or len(files) > 0):
+                raise IsADirectoryError(f"directory {self} is not empty and recursive argument is False")
+
             for file in files:
                 # TODO: this removal of files can be multi-threaded
                 root.join(file).remove()
-            for dir in subdirs:
-                root.join(dir, forceDirectory=True).remove(recursive=True)
-            root.remove()
+
+            for subdir in subdirs:
+                DavResourcePath(root.join(subdir, forceDirectory=True)).remove_dir(recursive=recursive)
+
+        # Remove empty top directory
+        self.remove()
 
     @override
     def transfer_from(
@@ -638,7 +676,7 @@ class DavResourcePath(ResourcePath):
         # Retrieve the entries in this directory
         entries = self._client.read_dir(self._internal_url)
         files = [e.name for e in entries if e.is_file]
-        dirs = [e.name for e in entries if e.is_dir]
+        subdirs = [e.name for e in entries if e.is_dir]
 
         # Filter files
         if isinstance(file_filter, str):
@@ -647,13 +685,13 @@ class DavResourcePath(ResourcePath):
         if file_filter is not None:
             files = [f for f in files if file_filter.search(f)]
 
-        if not dirs and not files:
+        if not subdirs and not files:
             return
         else:
-            yield type(self)(self, forceAbsolute=False, forceDirectory=True), dirs, files
+            yield type(self)(self, forceAbsolute=False, forceDirectory=True), subdirs, files
 
-        for dir in dirs:
-            new_uri = self.join(dir, forceDirectory=True)
+        for subdir in subdirs:
+            new_uri = self.join(subdir, forceDirectory=True)
             yield from new_uri.walk(file_filter)
 
     @override
@@ -719,7 +757,7 @@ class DavResourcePath(ResourcePath):
         if self.isdir():
             raise OSError(f"open is not implemented for directory {self}")
 
-        if mode in ("rb", "r") and self._client.accepts_range(self._internal_url):
+        if mode in ("rb", "r") and self._client.accepts_ranges(self._internal_url):
             stat: DavFileMetadata = self._stat(refresh=True)
             if not stat.exists:
                 raise FileNotFoundError(f"No such file {self}")
@@ -740,12 +778,23 @@ class DavResourcePath(ResourcePath):
 
 
 class DavFileSystem(AbstractFileSystem):
+    """Minimal fsspec-compatible read-only file system which contains a single
+    file.
+
+    Parameters
+    ----------
+    uri : `DavResourcePath`
+        URI of the single resource contained in the file system.
+
+    path : `str`
+        Path within the file system of the file.
+    """
+
     def __init__(self, uri: DavResourcePath, path: str):
         self._uri: DavResourcePath = uri
         self._path: str = path
-        self.protocol: str = self._uri.scheme
 
-    def info(self, path: str, **kwargs) -> dict[str, Any]:
+    def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         if path != self._path:
             raise FileNotFoundError(path)
 
@@ -755,7 +804,7 @@ class DavFileSystem(AbstractFileSystem):
             "type": "file",
         }
 
-    def ls(self, path: str, detail: bool = True, **kwargs) -> list[str] | list[dict[str, str]]:
+    def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[str] | list[dict[str, str]]:
         if path != self._path:
             raise FileNotFoundError(path)
 
@@ -779,7 +828,7 @@ class DavFileSystem(AbstractFileSystem):
     def isdir(self, path: str) -> bool:
         return False
 
-    def exists(self, path: str, **kwargs):
+    def exists(self, path: str, **kwargs: Any) -> bool:
         return path == self._path
 
     def open(
@@ -787,11 +836,11 @@ class DavFileSystem(AbstractFileSystem):
         path: str,
         mode: str = "rb",
         encoding: str | None = None,
-        block_size=None,
-        cache_options=None,
-        compression=None,
-        **kwargs,
-    ):
+        block_size: int | None = None,
+        cache_options: dict[Any, Any] | None = None,
+        compression: str | None = None,
+        **kwargs: Any,
+    ) -> ResourceHandleProtocol[Any]:
         if path != self._path:
             raise FileNotFoundError(path)
 
@@ -802,34 +851,55 @@ class DavFileSystem(AbstractFileSystem):
     def fsid(self) -> Any:
         raise NotImplementedError
 
-    def mkdir(self, path: str, create_parents=True, **kwargs) -> None:
+    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         raise NotImplementedError
 
-    def makedirs(self, path: str, exist_ok=False) -> None:
+    def makedirs(self, path: str, exist_ok: bool = False) -> None:
         raise NotImplementedError
 
     def rmdir(self, path: str) -> None:
         raise NotImplementedError
 
-    def walk(self, path: str, maxdepth=None, topdown=True, on_error="omit", **kwargs) -> None:
+    def walk(
+        self,
+        path: str,
+        maxdepth: int | None = None,
+        topdown: bool = True,
+        on_error: str = "omit",
+        **kwargs: Any,
+    ) -> None:
         raise NotImplementedError
 
-    def find(self, path: str, maxdepth=None, withdirs=False, detail=False, **kwargs) -> None:
+    def find(
+        self,
+        path: str,
+        maxdepth: int | None = None,
+        withdirs: bool = False,
+        detail: bool = False,
+        **kwargs: Any,
+    ) -> None:
         raise NotImplementedError
 
-    def du(self, path: str, total=True, maxdepth=None, withdirs=False, **kwargs) -> None:
+    def du(
+        self,
+        path: str,
+        total: bool = True,
+        maxdepth: int | None = None,
+        withdirs: bool = False,
+        **kwargs: Any,
+    ) -> None:
         raise NotImplementedError
 
-    def glob(self, path: str, maxdepth=None, **kwargs) -> None:
+    def glob(self, path: str, maxdepth: int | None = None, **kwargs: Any) -> None:
         raise NotImplementedError
 
     def rm_file(self, path: str) -> None:
         raise NotImplementedError
 
-    def rm(self, path: str, recursive=False, maxdepth=None) -> None:
+    def rm(self, path: str, recursive: bool = False, maxdepth: int | None = None) -> None:
         raise NotImplementedError
 
-    def touch(self, path: str, truncate=True, **kwargs) -> None:
+    def touch(self, path: str, truncate: bool = True, **kwargs: Any) -> None:
         raise NotImplementedError
 
     def ukey(self, path: str) -> None:

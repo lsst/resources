@@ -99,6 +99,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     scheme = "dav"
     local_files_to_remove: list[str] = []
+    MEGABYTE: int = 1024 * 1024
 
     @classmethod
     def setUpClass(cls):
@@ -164,7 +165,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     def tearDown(self):
         if self.tmpdir:
-            self.tmpdir.remove(recursive=True)
+            self.tmpdir.remove_dir(recursive=True)
 
         super().tearDown()
 
@@ -324,7 +325,6 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         upload_digest = self._compute_digest(data)
         download_digest = self._compute_digest(downloaded_data)
         self.assertEqual(upload_digest, download_digest)
-        os.remove(local_file)
 
     def test_dav_transfer_from(self):
         # Transfer from local file via "copy", with and without overwrite
@@ -398,12 +398,11 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Upload a multi-megabyte file and ensure a partial read succeeds
         # without caching the entire file.
-        MEGABYTE: int = 1024 * 1024
-        data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * MEGABYTE)
+        data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE)
         self.assertIsNone(remote_file.write(data, overwrite=True))
         file_size: int = remote_file.size()
-        file_offset: int = random.randint(MEGABYTE, file_size)
-        bytes_to_read: int = random.randint(MEGABYTE // 2, MEGABYTE)
+        file_offset: int = random.randint(self.MEGABYTE, file_size)
+        bytes_to_read: int = random.randint(self.MEGABYTE // 2, self.MEGABYTE)
         with remote_file.open("rb") as handle:
             data.seek(file_offset)
             handle.seek(file_offset)
@@ -413,7 +412,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Test readinto()
         with remote_file.open("rb") as handle:
-            buffer = bytearray(random.randint(MEGABYTE, 2 * MEGABYTE))
+            buffer = bytearray(random.randint(self.MEGABYTE, 2 * self.MEGABYTE))
             offset = random.randint(file_size // 3, file_size // 2)
 
             # Check the returned read count is as expected
@@ -424,6 +423,20 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             # Check the contents of the returned buffer is as expected
             handle.seek(offset)
             self.assertTrue(handle.read(count) == buffer)
+
+    def test_dav_repeated_write(self):
+        data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE)
+        remote_file = self.tmpdir.join(self._get_file_name())
+
+        # Consecutive writes to the same file must succeed. It was noticed
+        # that XRootD server sometimes fail this operation with an error
+        # like:
+        #
+        #    status 423 [Output file /path/to/file is already opened by
+        #    1 writer; open denied.]
+        self.assertIsNone(remote_file.write(data, overwrite=True))
+        self.assertIsNone(remote_file.write(data, overwrite=True))
+        self.assertIsNone(remote_file.write(data, overwrite=True))
 
     def test_dav_remove(self):
         # Deletion of an existing remote file must succeed
@@ -462,7 +475,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertTrue(subdir.exists())
             self.assertTrue(subdir.isdir())
 
-        top.remove(recursive=True)
+        top.remove_dir(recursive=True)
         self.assertFalse(top.exists())
 
     def test_dav_to_fsspec(self):
@@ -543,9 +556,6 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         for method in file_not_found_methods:
             with self.assertRaises(FileNotFoundError):
                 method(path="xxx")
-
-        # Clean up
-        os.remove(local_file)
 
     def test_dav_parquet_read(self):
         # Check we can read a parquet file via to_fsspec()
@@ -817,7 +827,7 @@ class DavResourcePathConfigTestCase(unittest.TestCase):
         # TMPDIR are not initialized, the temporary directory is retrieved
         # from the system.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            config: DavResourcePathConfig = dav_globals.config
+            config: DavResourcePathConfig = dav_globals.config()
             tmpdir, _ = config.tmpdir_buffersize
             self.assertEqual(tmpdir, tempfile.gettempdir())
 
@@ -825,7 +835,7 @@ class DavResourcePathConfigTestCase(unittest.TestCase):
         # Ensure that environment variable LSST_RESOURCES_TMPDIR is inspected
         # when initializing the global instance of DavResourcePathConfig.
         with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_TMPDIR": "/tmp"}, clear=True):
-            config: DavResourcePathConfig = dav_globals.config
+            config: DavResourcePathConfig = dav_globals.config()
             tmpdir, _ = config.tmpdir_buffersize
             self.assertEqual(tmpdir, os.getenv("LSST_RESOURCES_TMPDIR"))
 
@@ -833,7 +843,7 @@ class DavResourcePathConfigTestCase(unittest.TestCase):
         # Ensure that environment variable TMPDIR is inspected when
         # initializing the global instance of DavResourcePathConfig.
         with unittest.mock.patch.dict(os.environ, {"TMPDIR": "/tmp"}, clear=True):
-            config: DavResourcePathConfig = dav_globals.config
+            config: DavResourcePathConfig = dav_globals.config()
             tmpdir, _ = config.tmpdir_buffersize
             self.assertEqual(tmpdir, os.getenv("TMPDIR"))
 
@@ -894,6 +904,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
   buffer_size: 5
   enable_fsspec: false
   collect_memory_usage: false
+  request_checksum: "md5"
 - base_url: "davs://host2.example.org:4321/"
   persistent_connections_frontent: 1
   persistent_connections_backend: 2
@@ -918,6 +929,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
             self.assertEqual(config.trusted_authorities, "/etc/grid-security/certificates")
             self.assertFalse(config.enable_fsspec)
             self.assertFalse(config.collect_memory_usage)
+            self.assertEqual(config.request_checksum, "md5")
 
             # Tests for base URL 'davs://host2.example.org:4321/'
             config = config_pool.get_config_for_url("davs://host2.example.org:4321")
