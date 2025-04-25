@@ -168,7 +168,9 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
             # return the result
             self._completeBuffer = io.BytesIO()
             with time_this(self._log, msg="Read from remote resource %s", args=(self._url,)):
-                resp = self._session.get(_dav_to_http(self._url), stream=False, timeout=self._timeout)
+                with self._session as session:
+                    resp = session.get(_dav_to_http(self._url), stream=False, timeout=self._timeout)
+
             if (code := resp.status_code) not in (requests.codes.ok, requests.codes.partial):
                 raise FileNotFoundError(f"Unable to read resource {self._url}; status code: {code}")
             self._completeBuffer.write(resp.content)
@@ -190,9 +192,10 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         with time_this(
             self._log, msg="Read from remote resource %s using headers %s", args=(self._url, headers)
         ):
-            resp = self._session.get(
-                _dav_to_http(self._url), stream=False, timeout=self._timeout, headers=headers
-            )
+            with self._session as session:
+                resp = session.get(
+                    _dav_to_http(self._url), stream=False, timeout=self._timeout, headers=headers
+                )
 
         if resp.status_code == requests.codes.range_not_satisfiable:
             # Must have run off the end of the file. A standard file handle
