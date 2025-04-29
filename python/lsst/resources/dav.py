@@ -136,6 +136,7 @@ class DavGlobals:
         # Configuration used by all DavResourcePath instances.
         self._config: Any = None
 
+        # (Re)Initialize the objects above.
         self._reset()
 
     def _reset(self) -> None:
@@ -170,9 +171,13 @@ class DavGlobals:
         self._config = DavResourcePathConfig()
 
     def client_pool(self) -> DavClientPool:
+        """Return the pool of reusable webDAV clients."""
         return self._client_pool
 
     def config(self) -> DavResourcePathConfig:
+        """Return the configuration settings for all `DavResourcePath`
+        objects.
+        """
         return self._config
 
 
@@ -267,8 +272,8 @@ class DavResourcePath(ResourcePath):
     def _invalidate_metatada_cache(self) -> None:
         """Invalidate cached metadata for this resource.
 
-        This method is intended to be explicitly invoked when another method
-        modify the contents of this resource (e.g. write, remove,
+        This method is intended to be explicitly invoked when a method
+        modifies the content of this resource (e.g. write, remove,
         transfer_from).
         """
         self._cached_metadata = None
@@ -315,6 +320,10 @@ class DavResourcePath(ResourcePath):
             raise FileNotFoundError(f"No file or directory found at {self}")
 
         return stat.size
+
+    def info(self) -> dict[str, Any]:
+        """Return metadata details about this resource."""
+        return self._client.info(self._internal_url, name=str(self))
 
     @override
     def read(self, size: int = -1) -> bytes:
@@ -483,7 +492,6 @@ class DavResourcePath(ResourcePath):
                 raise IsADirectoryError(f"directory {self} is not empty and recursive argument is False")
 
             for file in files:
-                # TODO: this removal of files can be multi-threaded
                 root.join(file).remove()
 
             for subdir in subdirs:

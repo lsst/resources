@@ -22,8 +22,9 @@ import tempfile
 import time
 import unittest
 from collections.abc import Callable
+from datetime import datetime
 from threading import Thread
-from typing import cast
+from typing import Any, cast
 from zipfile import ZipFile, ZipInfo
 
 try:
@@ -166,6 +167,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     def tearDown(self):
         if self.tmpdir:
             self.tmpdir.remove_dir(recursive=True)
+            pass
 
         super().tearDown()
 
@@ -673,6 +675,56 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertEqual(member_size, local_file_size)
             self.assertEqual(member_digest, local_file_digest)
 
+    def test_dav_info(self):
+        def check_metadata_fields(metadata: dict[str, Any]):
+            for field in ("name", "size", "type", "last_modified", "checksums"):
+                self.assertTrue(field in metadata)
+
+        # Retrieve and check metadata details about an non-existing object
+        subdir = self.tmpdir.join("inexistent", forceDirectory=True)
+        metadata = subdir.info()
+        check_metadata_fields(metadata)
+        self.assertEqual(metadata["size"], None)
+        self.assertEqual(metadata["type"], None)
+        self.assertEqual(len(metadata["checksums"]), 0)
+        self.assertEqual(metadata["last_modified"], datetime.min)
+
+        # Retrieve and check metadata details about an existing directory
+        subdir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
+        self.assertIsNone(subdir.mkdir())
+        self.assertTrue(subdir.exists())
+        metadata = subdir.info()
+        check_metadata_fields(metadata)
+
+        self.assertEqual(metadata["size"], 0)
+        self.assertEqual(metadata["type"], "directory")
+        self.assertEqual(len(metadata["checksums"]), 0)
+        self.assertEqual(metadata["last_modified"], subdir._stat().last_modified)
+
+        # Retrieve and check metadata details about existing file
+        local_file, local_file_size = self._generate_file()
+        with open(local_file, "rb") as file:
+            content = file.read()
+            md5_checksum = self._compute_digest(content, algorithm="md5")
+            adler32_checksum = self._compute_digest(content, algorithm="adler32")
+
+        remote_file = self.tmpdir.join("example.data")
+        with open(local_file, mode="rb") as file:
+            self.assertIsNone(remote_file.write(file, overwrite=True))
+            self.assertEqual(os.stat(local_file).st_size, remote_file.size())
+
+        metadata = remote_file.info()
+        check_metadata_fields(metadata)
+        self.assertEqual(metadata["size"], local_file_size)
+        self.assertEqual(metadata["type"], "file")
+        self.assertEqual(metadata["last_modified"], remote_file._stat().last_modified)
+
+        checksums = metadata["checksums"]
+        if "md5" in checksums:
+            self.assertEqual(checksums["md5"], md5_checksum)
+        if "adler32" in checksums:
+            self.assertEqual(checksums["adler32"], adler32_checksum)
+
     @classmethod
     def _get_port_number(cls) -> int:
         """Return a port number the webDAV server can use to listen to."""
@@ -788,11 +840,19 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         return path
 
     @classmethod
-    def _compute_digest(cls, data: bytes) -> str:
-        """Compute a SHA256 hash of data."""
-        m = hashlib.sha256()
-        m.update(data)
-        return m.hexdigest()
+    def _compute_digest(cls, data: bytes, algorithm: str = "sha256") -> str:
+        """Compute a hash of data."""
+        match algorithm:
+            case "sha256" | "md5":
+                m = hashlib.new(algorithm)
+                m.update(data)
+                return m.hexdigest().lower()
+            case "adler32":
+                import zlib
+
+                return f"{zlib.adler32(data):08x}"
+            case _:
+                raise ValueError(f"unsupported checksum algorithm {algorithm}")
 
     @classmethod
     def _is_server_running(cls, port: int) -> bool:

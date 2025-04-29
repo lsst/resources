@@ -133,6 +133,9 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         return self._current_position >= self._stat.size
 
     def _download_to_cache(self) -> io.BytesIO:
+        """Download the entire content of the remote resource to an internal
+        memory buffer.
+        """
         if self._cache is None:
             self._cache = io.BytesIO()
             self._cache.write(self._uri.read())

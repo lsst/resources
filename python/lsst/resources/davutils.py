@@ -9,6 +9,7 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import base64
 import enum
 import io
 import json
@@ -22,7 +23,7 @@ import time
 import xml.etree.ElementTree as eTree
 from datetime import datetime
 from http import HTTPStatus
-from typing import BinaryIO, override
+from typing import Any, BinaryIO, override
 
 try:
     import fsspec
@@ -39,7 +40,8 @@ from urllib3.util import Retry, Timeout, Url, parse_url
 
 from lsst.utils.timer import time_this
 
-log = logging.getLogger(__name__)
+# Use the same logger than `dav.py`.
+log = logging.getLogger(f"{__name__.replace(".davutils", ".dav")=}")
 
 
 def normalize_path(path: str | None) -> str:
@@ -629,7 +631,7 @@ class DavClient:
         # server typically responds to directly without redirecting (e.g.
         # OPTIONS, HEAD, etc.)
         #
-        # Connections in this pool are generally left open by the client but475
+        # Connections in this pool are generally left open by the client but
         # the front-end server may choose to close them in some specific
         # situations (e.g. PUT request with "Expect: 100-continue" header).
         self._frontend = PoolManager(
@@ -979,7 +981,7 @@ class DavClient:
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
-    def _head(self, url: str) -> HTTPResponse:
+    def _head(self, url: str, headers: dict[str, str] = {}) -> HTTPResponse:
         """Send a HTTP HEAD request and return the response.
 
         Parameters
@@ -991,7 +993,7 @@ class DavClient:
             If the target URL is not found, raise an exception. Otherwise
             just return the response.
         """
-        resp = self._request("HEAD", url)
+        resp = self._request("HEAD", url, headers=headers)
         match resp.status:
             case HTTPStatus.OK:
                 return resp
@@ -1065,6 +1067,86 @@ class DavClient:
                     f"""Unexpected response to HTTP PROPFIND request to {resp.geturl()}: status """
                     f"""{resp.status} {resp.reason}"""
                 )
+
+    def info(self, url: str, name: str | None = None) -> dict[str, Any]:
+        """Return the details about the file or directory at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        name : `str`
+            Name of the object to be included in the returned value. If None,
+            the `url` is used as name.
+
+        Returns
+        -------
+        result: `dict``
+
+            For an existing file, the returned value has the form:
+
+            {
+               "name": name,
+               "size": 1234,
+               "type": "file",
+               "last_modified":
+                    datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
+               "checksums": {
+                  "adler32": "0fc5f83f",
+                  "md5": "1f57339acdec099c6c0a41f8e3d5fcd0",
+               }
+            }
+
+            For an existing directory, the returned value has the form:
+
+            {
+                "name": name,
+                "size": 0,
+                "type": "directory",
+                "last_modified":
+                    datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
+                "checksums": {},
+            }
+
+            For an inexisting file or directory, the returned value has the
+            form:
+
+            {
+                "name": name,
+                "size": None,
+                "type": None,
+                "last_modified":
+                    datetime.datetime(1, 1, 1, 0, 0),
+                "checksums": {},
+            }
+
+        Notes
+        -----
+        The format of the returned directory is inspired and compatible with
+        `fsspec`.
+
+        The size of existing directories is always zero. The `checksums``
+        dictionary may be empty if the storage endpoint does not compute
+        and store the checksum of the files it stores.
+        """
+        result: dict[str, Any] = {
+            "name": name if name is not None else url,
+            "type": None,
+            "size": None,
+            "last_modified": datetime.min,
+            "checksums": {},
+        }
+        metadata = self.stat(url)
+        if not metadata.exists:
+            return result
+
+        if metadata.is_dir:
+            result.update({"type": "directory", "size": 0})
+        else:
+            result.update({"type": "file", "size": metadata.size, "checksums": metadata.checksums})
+
+        result.update({"last_modified": metadata.last_modified})
+        return result
 
     def read_dir(self, url: str) -> list["DavFileMetadata"]:
         """Return the properties of the files or directories contained in
@@ -1753,6 +1835,11 @@ class DavClientDCache(DavClientURLSigner):
         # may be kept open for future reuse if the maximum number of
         # connections for the backend pool is not reached.
         try:
+            # Explicitly ask the backend server to close the connection after
+            # serving this request.
+            if preload_content:
+                headers.update({"Connection": "close"})
+
             url = redirect_location
             resp = self._request(
                 "GET",
@@ -1810,9 +1897,11 @@ class DavClientDCache(DavClientURLSigner):
         #
         # Note that we use the backend pool manager for PUT requests, since
         # the dCache webDAV door closes the connection when redirecting a
-        # PUT request to the backend. We want to reuse the connections to the
-        # door as much as possible so that metadata operations are faster.
-        # All metadata operations use the frontend pool manager.
+        # PUT request to the backend.
+        #
+        # We want to reuse the connections to the door as much as possible so
+        # that metadata operations are faster; all metadata operations use the
+        # frontend pool manager.
         headers = {"Content-Length": "0", "Expect": "100-continue"}
         resp = self._request("PUT", url, headers=headers, redirect=False, pool_manager=self._backend)
         if redirect_location := resp.get_redirect_location():
@@ -1827,8 +1916,10 @@ class DavClientDCache(DavClientURLSigner):
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
-        # We were redirected to a backed server. Upload the file contents to
-        # its final destination.
+        # We were redirected to a backend server. Upload the file contents to
+        # its final destination. Explicitly ask the server to close this
+        # network connection after serving this PUT request to release
+        # the associated dCache mover.
 
         # Ask the server to compute and record a checksum of the uploaded
         # file contents, for later integrity checks. Since we don't compute
@@ -1843,9 +1934,9 @@ class DavClientDCache(DavClientURLSigner):
         #
         # In addition, note that not all servers implement this RFC so
         # the checksum reqquest may be ignored by the server.
-        headers = {}
+        headers = {"Connection": "close"}
         if (checksum := self._config.request_checksum) is not None:
-            headers = {"Want-Digest": checksum}
+            headers.update({"Want-Digest": checksum})
 
         try:
             resp = self._request(
@@ -2073,6 +2164,26 @@ class DavClientXrootD(DavClientURLSigner):
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
+    @override
+    def info(self, url: str, name: str | None = None) -> dict[str, Any]:
+        # XRootD does not include checksums in the response to PROPFIND
+        # requqest. We need to send a specific HEAD request to retrieve
+        # the ADLER32 checksum.
+        #
+        # If found, the checksum is included in the response header "Digest",
+        # which is of the form:
+        #
+        #    Digest: adler32=0e4709f2
+        result = super().info(url, name)
+        if result["type"] == "file":
+            headers: dict[str, str] = {"Want-Digest": "adler32"}
+            resp = self._head(url=url, headers=headers)
+            if (digest := resp.headers.get("Digest")) is not None:
+                value = digest.split("=")[1]
+                result["checksums"].update({"adler32": value})
+
+        return result
+
 
 class DavFileMetadata:
     """Container for attributes of interest of a webDAV file or directory."""
@@ -2239,12 +2350,20 @@ class DavProperty:
     def _parse_checksums(self, checksums: str | None) -> dict[str, str]:
         # checksums argument is of the form
         #    md5=MyS/wljSzI9WYiyrsuyoxw==,adler32=23b104f2
-        result = {}
+        result: dict[str, str] = {}
         if checksums is not None:
             for checksum in checksums.split(","):
                 if (pos := checksum.find("=")) != -1:
-                    name, value = checksum[:pos].lower(), checksum[pos + 1 :].lower()
-                    result[name] = value
+                    algorithm, value = checksum[:pos].lower(), checksum[pos + 1 :]
+                    match algorithm:
+                        case "md5":
+                            # dCache documentation about how it encodes the
+                            # MD5 checksum:
+                            #
+                            # https://www.dcache.org/manuals/UserGuide-10.2/webdav.shtml#checksums
+                            result[algorithm] = bytes.hex(base64.standard_b64decode(value))
+                        case _:
+                            result[algorithm] = value
 
         return result
 
