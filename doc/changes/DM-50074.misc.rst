@@ -1,0 +1,6 @@
+It is now possible to control how bulk APIs such as ``mexists()`` and ``mtransfer()`` work.
+Added ``$LSST_RESOURCES_NUM_WORKERS`` environment variable to specify how many workers should be used.
+The default is derived from the number of CPUs but capped at 10.
+Also the ``mexists()`` method has an explicit parameter to allow the number of workers to be specified.
+Added ``$LSST_RESOURCES_EXECUTOR`` to specify how the jobs should be executed.
+The default is ``threads`` (which is the same as used previously) but on Linux more performance may be achievable by setting this environment variable to ``process``.
