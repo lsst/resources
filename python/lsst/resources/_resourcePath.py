@@ -76,9 +76,9 @@ def _get_executor_class() -> _EXECUTOR_TYPE:
     -------
     cls : `concurrent.futures.Executor`
         The ``Executor`` class. Default is
-        `concurrent.futures.ProcessPoolExecutor`. Can be set explicitly by
+        `concurrent.futures.ThreadPoolExecutor`. Can be set explicitly by
         setting the ``$LSST_RESOURCES_EXECUTOR`` environment variable to
-        "thread" or "process". Returns "process" pool if the value of the
+        "thread" or "process". Returns "thread" pool if the value of the
         variable is not recognized.
     """
     global _POOL_EXECUTOR_CLASS
@@ -86,22 +86,23 @@ def _get_executor_class() -> _EXECUTOR_TYPE:
     if _POOL_EXECUTOR_CLASS is not None:
         return _POOL_EXECUTOR_CLASS
 
-    external = os.getenv("LSST_RESOURCES_EXECUTOR", "process")
+    pool_executor_classes = {
+        "threads": concurrent.futures.ThreadPoolExecutor,
+        "process": concurrent.futures.ProcessPoolExecutor,
+    }
+    default_executor = "threads"
+    external = os.getenv("LSST_RESOURCES_EXECUTOR", default_executor)
     if not external:
-        external = "process"
-    pool_exe_class: _EXECUTOR_TYPE
-    match external:
-        case "process":
-            pool_exe_class = concurrent.futures.ProcessPoolExecutor
-        case "threads":
-            pool_exe_class = concurrent.futures.ThreadPoolExecutor
-        case _:
-            log.warning(
-                "Unrecognized value of '%s' for LSST_RESOURCES_EXECUTOR env var. Using 'process'", external
-            )
-            pool_exe_class = concurrent.futures.ProcessPoolExecutor
-    _POOL_EXECUTOR_CLASS = pool_exe_class
-    return pool_exe_class
+        external = default_executor
+    if external not in pool_executor_classes:
+        log.warning(
+            "Unrecognized value of '%s' for LSST_RESOURCES_EXECUTOR env var. Using '%s'",
+            external,
+            default_executor,
+        )
+        external = default_executor
+    _POOL_EXECUTOR_CLASS = pool_executor_classes[external]
+    return _POOL_EXECUTOR_CLASS
 
 
 @contextlib.contextmanager
