@@ -1027,6 +1027,8 @@ class GenericReadWriteTestCase(_GenericTestCase):
         expected_files = {
             "dir1/a.yaml",
             "dir1/b.yaml",
+            "dir1/c.yaml",
+            "dir1/d.yaml",
             "dir2/e.yaml",
         }
         expected_uris = {root.join(f) for f in expected_files}
@@ -1035,7 +1037,8 @@ class GenericReadWriteTestCase(_GenericTestCase):
             self.assertTrue(uri.exists())
         expected_uris.add(file)
 
-        multi = ResourcePath.mexists(expected_uris)
+        # Force to run with fewer workers than there are files.
+        multi = ResourcePath.mexists(expected_uris, num_workers=3)
 
         for uri, is_there in multi.items():
             if uri == file:

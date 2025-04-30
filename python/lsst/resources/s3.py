@@ -220,7 +220,9 @@ class S3ResourcePath(ResourcePath):
         return bucket
 
     @classmethod
-    def _mexists(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, bool]:
+    def _mexists(
+        cls, uris: Iterable[ResourcePath], *, num_workers: int | None = None
+    ) -> dict[ResourcePath, bool]:
         # Force client to be created for each profile before creating threads.
         profiles = set[str | None]()
         for path in uris:
@@ -230,7 +232,7 @@ class S3ResourcePath(ResourcePath):
         for profile in profiles:
             getS3Client(profile)
 
-        return super()._mexists(uris)
+        return super()._mexists(uris, num_workers=num_workers)
 
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
     def exists(self) -> bool:

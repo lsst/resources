@@ -912,13 +912,20 @@ class ResourcePath:  # numpydoc ignore=PR02
         raise NotImplementedError()
 
     @classmethod
-    def mexists(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, bool]:
+    def mexists(
+        cls, uris: Iterable[ResourcePath], *, num_workers: int | None = None
+    ) -> dict[ResourcePath, bool]:
         """Check for existence of multiple URIs at once.
 
         Parameters
         ----------
         uris : iterable of `ResourcePath`
             The URIs to test.
+        num_workers : `int` or `None`, optional
+            The number of parallel workers to use when checking for existence
+            If `None`, the default value will be taken from the environment.
+            If this number is higher than the default and a thread pool is
+            used, there may not be enough cached connections available.
 
         Returns
         -------
@@ -936,20 +943,26 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         existence: dict[ResourcePath, bool] = {}
         for uri_class in grouped:
-            existence.update(uri_class._mexists(grouped[uri_class]))
+            existence.update(uri_class._mexists(grouped[uri_class], num_workers=num_workers))
 
         return existence
 
     @classmethod
-    def _mexists(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, bool]:
+    def _mexists(
+        cls, uris: Iterable[ResourcePath], *, num_workers: int | None = None
+    ) -> dict[ResourcePath, bool]:
         """Check for existence of multiple URIs at once.
 
         Implementation helper method for `mexists`.
+
 
         Parameters
         ----------
         uris : iterable of `ResourcePath`
             The URIs to test.
+        num_workers : `int` or `None`, optional
+            The number of parallel workers to use when checking for existence
+            If `None`, the default value will be taken from the environment.
 
         Returns
         -------
@@ -963,11 +976,15 @@ class ResourcePath:  # numpydoc ignore=PR02
             with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
                 return cls._mexists_pool(pool_executor_class, uris)
         else:
-            return cls._mexists_pool(pool_executor_class, uris)
+            return cls._mexists_pool(pool_executor_class, uris, num_workers=num_workers)
 
     @classmethod
     def _mexists_pool(
-        cls, pool_executor_class: _EXECUTOR_TYPE, uris: Iterable[ResourcePath]
+        cls,
+        pool_executor_class: _EXECUTOR_TYPE,
+        uris: Iterable[ResourcePath],
+        *,
+        num_workers: int | None = None,
     ) -> dict[ResourcePath, bool]:
         """Check for existence of multiple URIs at once using specified pool
         executor.
@@ -980,13 +997,17 @@ class ResourcePath:  # numpydoc ignore=PR02
             Type of executor pool to use.
         uris : iterable of `ResourcePath`
             The URIs to test.
+        num_workers : `int` or `None`, optional
+            The number of parallel workers to use when checking for existence
+            If `None`, the default value will be taken from the environment.
 
         Returns
         -------
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
-        with pool_executor_class(max_workers=_get_num_workers()) as exists_executor:
+        max_workers = num_workers if num_workers is not None else _get_num_workers()
+        with pool_executor_class(max_workers=max_workers) as exists_executor:
             future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
             results: dict[ResourcePath, bool] = {}
