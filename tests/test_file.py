@@ -226,6 +226,24 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 mode = os.stat(dir).st_mode
                 self.assertEqual(mode & TEST_UMASK, 0o0300, f"Permissions incorrect for {dir}: {mode:o}")
 
+    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
+    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "process"})
+    def test_mexists_process(self) -> None:
+        """Test mexists with override executor pool.
+
+        Force test with process pool.
+        """
+        super().test_mexists()
+
+    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
+    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "process"})
+    def test_mtransfer_process(self) -> None:
+        """Test transfer with override executor pool.
+
+        Force test with process pool.
+        """
+        super().test_mtransfer()
+
 
 @contextlib.contextmanager
 def _override_umask(temp_umask):

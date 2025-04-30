@@ -48,7 +48,7 @@ from lsst.resources.http import (
     _is_protected,
 )
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
-from lsst.resources.utils import makeTestTempDir, removeTestTempDir
+from lsst.resources.utils import _get_num_workers, makeTestTempDir, removeTestTempDir
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -717,10 +717,10 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
 
     def test_front_end_connections(self):
         # Ensure that when the number of front end connections is not specified
-        # the default is stored in the config.
+        # the default comes from the number of workers..
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             config = HttpResourcePathConfig()
-            self.assertEqual(config.front_end_connections, config.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
+            self.assertEqual(config.front_end_connections, _get_num_workers())
 
         # Ensure that when the number of front end connections is specified
         # it is stored in the config.
@@ -733,10 +733,10 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
 
     def test_back_end_connections(self):
         # Ensure that when the number of back end connections is not specified
-        # the default is stored in the config.
+        # the default comes from the number of workers.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             config = HttpResourcePathConfig()
-            self.assertEqual(config.back_end_connections, config.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS)
+            self.assertEqual(config.back_end_connections, _get_num_workers())
 
         # Ensure that when the number of back end connections is specified
         # it is stored in the config.

@@ -53,6 +53,7 @@ except ImportError:
 
 from ._resourcePath import ResourcePath
 from .location import Location
+from .utils import _get_num_workers
 
 # https://pypi.org/project/backoff/
 try:
@@ -246,7 +247,11 @@ def _s3_disable_bucket_validation(client: boto3.client) -> None:
 @functools.lru_cache
 def _get_s3_client(endpoint_config: _EndpointConfig, skip_validation: bool) -> boto3.client:
     # Helper function to cache the client for this endpoint
-    config = botocore.config.Config(read_timeout=180, retries={"mode": "adaptive", "max_attempts": 10})
+    config = botocore.config.Config(
+        read_timeout=180,
+        max_pool_connections=_get_num_workers(),
+        retries={"mode": "adaptive", "max_attempts": 10},
+    )
 
     session = boto3.Session(profile_name=endpoint_config.profile)
 
