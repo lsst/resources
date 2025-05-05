@@ -1045,3 +1045,12 @@ class GenericReadWriteTestCase(_GenericTestCase):
                 self.assertFalse(is_there)
             else:
                 self.assertTrue(is_there)
+
+        # Clean up. Unfortunately POSIX raises a FileNotFoundError but
+        # S3 boto does not complain if there is no key.
+        ResourcePath.mremove(expected_uris, do_raise=False)
+
+        # Check they were really removed.
+        multi = ResourcePath.mexists(expected_uris, num_workers=3)
+        for uri, is_there in multi.items():
+            self.assertFalse(is_there)

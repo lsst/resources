@@ -23,6 +23,7 @@ import os
 import posixpath
 import re
 import urllib.parse
+from collections import defaultdict
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
 from typing import TypeAlias
@@ -53,8 +54,8 @@ ESCAPES_RE = re.compile(r"%[A-F0-9]{2}")
 ESCAPED_HASH = urllib.parse.quote("#")
 
 
-class MTransferResult(NamedTuple):
-    """Report on a bulk transfer."""
+class MBulkResult(NamedTuple):
+    """Report on a bulk operation."""
 
     success: bool
     exception: Exception | None
@@ -913,6 +914,14 @@ class ResourcePath:  # numpydoc ignore=PR02
         raise NotImplementedError()
 
     @classmethod
+    def _group_uris(cls, uris: Iterable[ResourcePath]) -> dict[type[ResourcePath], list[ResourcePath]]:
+        """Group URIs by class/scheme."""
+        grouped: dict[type, list[ResourcePath]] = defaultdict(list)
+        for uri in uris:
+            grouped[uri.__class__].append(uri)
+        return grouped
+
+    @classmethod
     def mexists(
         cls, uris: Iterable[ResourcePath], *, num_workers: int | None = None
     ) -> dict[ResourcePath, bool]:
@@ -933,18 +942,9 @@ class ResourcePath:  # numpydoc ignore=PR02
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
-        # Group by scheme to allow a subclass to be able to use
-        # specialized implementations.
-        grouped: dict[type, list[ResourcePath]] = {}
-        for uri in uris:
-            uri_class = uri.__class__
-            if uri_class not in grouped:
-                grouped[uri_class] = []
-            grouped[uri_class].append(uri)
-
         existence: dict[ResourcePath, bool] = {}
-        for uri_class in grouped:
-            existence.update(uri_class._mexists(grouped[uri_class], num_workers=num_workers))
+        for uri_class, group in cls._group_uris(uris).items():
+            existence.update(uri_class._mexists(group, num_workers=num_workers))
 
         return existence
 
@@ -1029,7 +1029,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
         do_raise: bool = True,
-    ) -> dict[ResourcePath, MTransferResult]:
+    ) -> dict[ResourcePath, MBulkResult]:
         """Transfer many files in bulk.
 
         Parameters
@@ -1048,14 +1048,16 @@ class ResourcePath:  # numpydoc ignore=PR02
             The transaction object must be thread safe.
         do_raise : `bool`, optional
             If `True` an `ExceptionGroup` will be raised containing any
-            exceptions raised by the individual transfers. Else a dict
-            reporting the status of each `ResourcePath` will be returned.
+            exceptions raised by the individual transfers. If `False`, or if
+            there were no exceptions, a dict reporting the status of each
+            `ResourcePath` will be returned.
 
         Returns
         -------
-        copy_status : `dict` [ `ResourcePath`, `MTransferResult` ]
+        copy_status : `dict` [ `ResourcePath`, `MBulkResult` ]
             A dict of all the transfer attempts with a value indicating
-            whether the transfer succeeded for the target URI.
+            whether the transfer succeeded for the target URI. If ``do_raise``
+            is `True`, this will only be returned if there are no errors.
         """
         pool_executor_class = _get_executor_class()
         if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
@@ -1088,7 +1090,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         overwrite: bool = False,
         transaction: TransactionProtocol | None = None,
         do_raise: bool = True,
-    ) -> dict[ResourcePath, MTransferResult]:
+    ) -> dict[ResourcePath, MBulkResult]:
         """Transfer many files in bulk.
 
         Parameters
@@ -1112,7 +1114,7 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Returns
         -------
-        copy_status : `dict` [ `ResourcePath`, `MTransferResult` ]
+        copy_status : `dict` [ `ResourcePath`, `MBulkResult` ]
             A dict of all the transfer attempts with a value indicating
             whether the transfer succeeded for the target URI.
         """
@@ -1128,17 +1130,17 @@ class ResourcePath:  # numpydoc ignore=PR02
                 ): to_uri
                 for from_uri, to_uri in from_to
             }
-            results: dict[ResourcePath, MTransferResult] = {}
+            results: dict[ResourcePath, MBulkResult] = {}
             failed = False
             for future in concurrent.futures.as_completed(future_transfers):
                 to_uri = future_transfers[future]
                 try:
                     future.result()
                 except Exception as e:
-                    transferred = MTransferResult(False, e)
+                    transferred = MBulkResult(False, e)
                     failed = True
                 else:
-                    transferred = MTransferResult(True, None)
+                    transferred = MBulkResult(True, None)
                 results[to_uri] = transferred
 
         if do_raise and failed:
@@ -1152,6 +1154,81 @@ class ResourcePath:  # numpydoc ignore=PR02
     def remove(self) -> None:
         """Remove the resource."""
         raise NotImplementedError()
+
+    @classmethod
+    def mremove(
+        cls, uris: Iterable[ResourcePath], *, do_raise: bool = True
+    ) -> dict[ResourcePath, MBulkResult]:
+        """Remove multiple URIs at once.
+
+        Parameters
+        ----------
+        uris : iterable of `ResourcePath`
+            URIs to remove.
+        do_raise : `bool`, optional
+            If `True` an `ExceptionGroup` will be raised containing any
+            exceptions raised by the individual transfers. If `False`, or if
+            there were no exceptions, a dict reporting the status of each
+            `ResourcePath` will be returned.
+
+        Returns
+        -------
+        results : `dict` [ `ResourcePath`, `MBulkResult` ]
+            Dictionary mapping each URI to a result object indicating whether
+            the removal succeeded or resulted in an exception. If ``do_raise``
+            is `True` this will only be returned if everything succeeded.
+        """
+        # Group URIs by scheme since some URI schemes support native bulk
+        # APIs.
+        results: dict[ResourcePath, MBulkResult] = {}
+        for uri_class, group in cls._group_uris(uris).items():
+            results.update(uri_class._mremove(group))
+        if do_raise:
+            failed = any(not r.success for r in results.values())
+            if failed:
+                s = "s" if len(results) != 1 else ""
+                raise ExceptionGroup(
+                    f"Error{s} removing {len(results)} artifact{s}",
+                    tuple(res.exception for res in results.values() if res.exception is not None),
+                )
+
+        return results
+
+    @classmethod
+    def _mremove(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, MBulkResult]:
+        """Remove multiple URIs using futures."""
+        pool_executor_class = _get_executor_class()
+        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
+            # Patch the environment to make it think there is only one worker
+            # for each subprocess.
+            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
+                return cls._mremove_pool(pool_executor_class, uris)
+        else:
+            return cls._mremove_pool(pool_executor_class, uris)
+
+    @classmethod
+    def _mremove_pool(
+        cls,
+        pool_executor_class: _EXECUTOR_TYPE,
+        uris: Iterable[ResourcePath],
+        *,
+        num_workers: int | None = None,
+    ) -> dict[ResourcePath, MBulkResult]:
+        """Remove URIs using a futures pool."""
+        max_workers = num_workers if num_workers is not None else _get_num_workers()
+        results: dict[ResourcePath, MBulkResult] = {}
+        with pool_executor_class(max_workers=max_workers) as remove_executor:
+            future_remove = {remove_executor.submit(uri.remove): uri for uri in uris}
+            for future in concurrent.futures.as_completed(future_remove):
+                try:
+                    future.result()
+                except Exception as e:
+                    removed = MBulkResult(False, e)
+                else:
+                    removed = MBulkResult(True, None)
+                uri = future_remove[future]
+                results[uri] = removed
+        return results
 
     def isabs(self) -> bool:
         """Indicate that the resource is fully specified.

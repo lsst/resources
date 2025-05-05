@@ -20,17 +20,19 @@ import os
 import re
 import sys
 import threading
+from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from functools import cache, cached_property
 from typing import IO, TYPE_CHECKING, cast
 
 from botocore.exceptions import ClientError
 
+from lsst.utils.iteration import chunk_iterable
 from lsst.utils.timer import time_this
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
-from ._resourcePath import ResourcePath
+from ._resourcePath import MBulkResult, ResourcePath
 from .s3utils import (
     _get_s3_connection_parameters,
     _s3_disable_bucket_validation,
@@ -233,6 +235,55 @@ class S3ResourcePath(ResourcePath):
             getS3Client(profile)
 
         return super()._mexists(uris, num_workers=num_workers)
+
+    @classmethod
+    def _mremove(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, MBulkResult]:
+        # Delete multiple objects in one API call.
+        # Must group by profile and bucket.
+        grouped_uris: dict[tuple[str | None, str], list[S3ResourcePath]] = defaultdict(list)
+        for uri in uris:
+            uri = cast(S3ResourcePath, uri)
+            grouped_uris[uri._profile, uri._bucket].append(uri)
+
+        results: dict[ResourcePath, MBulkResult] = {}
+        for related_uris in grouped_uris.values():
+            # The client and bucket are the same for each of the remaining
+            # URIs.
+            first_uri = related_uris[0]
+            # API requires no more than 1000 per call.
+            for chunk in chunk_iterable(related_uris, chunk_size=1_000):
+                key_to_uri: dict[str, ResourcePath] = {}
+                keys: list[dict[str, str]] = []
+                for uri in chunk:
+                    key = uri.relativeToPathRoot
+                    key_to_uri[key] = uri
+                    keys.append({"Key": key})
+                    # Default to assuming everything worked.
+                    results[uri] = MBulkResult(True, None)
+                errored = cls._delete_related_objects(first_uri.client, first_uri._bucket, keys)
+
+                # Update with error information.
+                for key, bulk_result in errored.items():
+                    results[key_to_uri[key]] = bulk_result
+
+        return results
+
+    @classmethod
+    @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
+    def _delete_related_objects(
+        cls, client: boto3.client, bucket: str, keys: list[dict[str, str]]
+    ) -> dict[str, MBulkResult]:
+        # Delete multiple objects from the same bucket, allowing for backoff
+        # retry.
+        response = client.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
+        # Use Quiet mode so we assume everything worked unless told otherwise.
+        # Only returning errors -- indexed by Key name.
+        errors: dict[str, MBulkResult] = {}
+        for errored_key in response.get("Errors", []):
+            errors[errored_key["Key"]] = MBulkResult(
+                False, ClientError({"Error": errored_key}, f"delete_objects: {errored_key['Key']}")
+            )
+        return errors
 
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
     def exists(self) -> bool:
