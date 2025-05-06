@@ -17,10 +17,9 @@ intersphinx_mapping["fsspec"] = ("https://filesystem-spec.readthedocs.io/en/late
 nitpick_ignore_regex = [
     ("py:(class|obj)", ".*ResourceHandle.U$"),
     ("py:(class|obj)", "re.Pattern"),
+    ("py:(class|obj)", ".*MBulkResult$"),
+    ("py:(class|obj)", ".*ResourcePathExpression$"),
 ]
 nitpick_ignore = [
     ("py:obj", "lsst.daf.butler.core.datastore.DatastoreTransaction"),
-    ("py:obj", "lsst.resources.ResourcePathExpression"),
-    ("py:class", "MTransferResult"),
-    ("py:obj", "MTransferResult"),
 ]
