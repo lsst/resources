@@ -1,0 +1,2 @@
+Added new bulk removal API: ``ResourcePath.mremove()``.
+This can be 10 times faster than calling ``remove()`` in a loop.
