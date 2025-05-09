@@ -179,38 +179,12 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         return self._buffer.getvalue()[0:count]
 
     def readinto(self, output: bytearray) -> int:
-        """Read up to len(output) bytes into output and return the number of
-        bytes read.
+        """Read up to `len(output)` bytes into `output` and return the number
+        of bytes read.
         """
         if self._eof or len(output) == 0:
             return 0
 
-        # If this file's size is smaller than the buffer size configured for
-        # this URI's client, download the entire file in one request and cache
-        # its content. This avoids multiple roundtrips to the server
-        # for retrieving small chunks.
-        if self._stat.size <= self._uri._client._config.buffer_size:
-            self._download_to_cache()
-
-        # This is a partial read. If we have already cached the whole file
-        # content use the cache to fill the output buffer.
-        if self._cache is not None:
-            start = self._current_position
-            end = self._current_position = min(self._stat.size, start + len(output))
-            self._cache.seek(start)
-            output[:] = self._cache.getvalue()[start:end]
-            return end - start - 1
-
-        # We need to make a partial read from the server. Reuse our internal
-        # I/O buffer to reduce memory allocations.
-        if self._buffer is None:
-            self._buffer = io.BytesIO()
-
-        start = self._current_position
-        end = min(self._stat.size, start + len(output))
-        self._buffer.seek(0)
-        self._buffer.write(self._uri.read_range(start=start, end=end - 1))
-        count = self._buffer.tell()
-        output[:] = self._buffer.getvalue()[0:count]
-        self._current_position += count
-        return count
+        data = self.read(len(output))
+        output[:] = data
+        return len(data)

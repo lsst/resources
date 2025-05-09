@@ -20,7 +20,6 @@ import io
 import logging
 import os
 import re
-import tempfile
 import threading
 import urllib
 from collections.abc import Iterator
@@ -44,6 +43,7 @@ from .davutils import (
     normalize_path,
     normalize_url,
 )
+from .utils import get_tempdir
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -97,18 +97,11 @@ class DavResourcePathConfig:
         if self._tmpdir_buffersize is not None:
             return self._tmpdir_buffersize
 
-        # Use the value of environment variables 'LSST_RESOURCES_TMPDIR' or
-        # 'TMPDIR', if defined. Otherwise use the system temporary directory.
-        tmpdir = tempfile.gettempdir()
-        for dir in (os.getenv(v) for v in ("LSST_RESOURCES_TMPDIR", "TMPDIR")):
-            if dir and os.path.isdir(dir):
-                tmpdir = dir
-                break
-
-        # Retrieve and cache the blocksize for the selected temporary
+        # Retrieve and cache the path and the blocksize for the temporary
         # directory if no other thread has done that in the meantime.
         with DavResourcePathConfig._lock:
             if self._tmpdir_buffersize is None:
+                tmpdir = get_tempdir()
                 bufsize = _calc_tmpdir_buffer_size(tmpdir)
                 self._tmpdir_buffersize = (tmpdir, bufsize)
 
@@ -146,15 +139,8 @@ class DavGlobals:
         This method is a helper for reinitializing globals in tests.
         """
         # Initialize the singleton instance of the webdav endpoint
-        # configuration pool. Look for a configuration filename in the
-        # environment variables and file paths listed below.
-        # Order is important: the first file found is loaded. If no file is
-        # found sensible defaults are chosen.
-        config_pool: DavConfigPool = DavConfigPool(
-            [
-                "LSST_RESOURCES_WEBDAV_CONFIG",
-            ]
-        )
+        # configuration pool.
+        config_pool: DavConfigPool = DavConfigPool("LSST_RESOURCES_WEBDAV_CONFIG")
 
         # Initialize the singleton instance of the webdav client pool. This is
         # a thread-safe singleton shared by all instances of DavResourcePath.
@@ -262,7 +248,7 @@ class DavResourcePath(ResourcePath):
         remove(), etc.
         """
         # Caching metadata is a compromise because each roundtrip is
-        # realatively expensive and is fragile if this same resource is
+        # relatively expensive and is fragile if this same resource is
         # modified by a different thread or by a different process.
         if refresh or self._cached_metadata is None:
             self._cached_metadata = self._client.stat(self._internal_url)
@@ -305,7 +291,9 @@ class DavResourcePath(ResourcePath):
 
     def exists(self) -> bool:
         """Check that this resource exists."""
-        return self._stat().exists
+        # Force checking for existence against the server for all the
+        # external calls to this method.
+        return self._stat(refresh=True).exists
 
     def size(self) -> int:
         """Return the size of the remote resource in bytes."""
@@ -346,6 +334,11 @@ class DavResourcePath(ResourcePath):
         stat = self._stat()
         if stat.is_dir:
             raise ValueError(f"method read() is not implemented for directory {self}")
+        elif not stat.exists:
+            raise FileNotFoundError(f"no file found at {self}")
+        elif stat.size == 0:
+            # This is an empty file.
+            return b""
 
         if size > 0:
             end_range = min(stat.size, size) - 1
@@ -358,7 +351,7 @@ class DavResourcePath(ResourcePath):
         start: int,
         end: int | None = None,
         check_exists: bool = False,
-        headers: dict[str, str] = {"Accept-Encoding": "identity"},
+        headers: dict[str, str] | None = None,
     ) -> bytes:
         """Read the specified range of the resource and return the bytes read.
 
@@ -376,9 +369,17 @@ class DavResourcePath(ResourcePath):
         headers : `dict[str, str]`, optional
             Headers to include in the partial GET request.
         """
-        if check_exists and not self._stat().is_file:
-            raise FileNotFoundError(f"No file found at {self}")
+        if check_exists:
+            stat = self._stat()
+            if not stat.is_file:
+                raise FileNotFoundError(f"No file found at {self}")
 
+            if stat.size == 0:
+                # This is an empty file.
+                return b""
+
+        headers = {} if headers is None else dict(headers)
+        headers.update({"Accept-Encoding": "identity"})
         return self._client.read_range(self._internal_url, start=start, end=end, headers=headers)
 
     def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
@@ -529,13 +530,14 @@ class DavResourcePath(ResourcePath):
 
         # Existence checks cost time so do not call this unless we know
         # that debugging is enabled.
+        destination_exists = self.exists()
         if log.isEnabledFor(logging.DEBUG):
             log.debug(
                 "Transferring %s [exists: %s] -> %s [exists: %s] (transfer=%s)",
                 src,
                 src.exists(),
                 self,
-                self.exists(),
+                destination_exists,
                 transfer,
             )
 
@@ -548,7 +550,7 @@ class DavResourcePath(ResourcePath):
             )
             return
 
-        if not overwrite and self.exists():
+        if not overwrite and destination_exists:
             raise FileExistsError(f"Destination path {self} already exists.")
 
         if transfer == "auto":
@@ -588,15 +590,6 @@ class DavResourcePath(ResourcePath):
                 self.write(data=f)
 
         self._invalidate_metatada_cache()
-
-    def _copy_to(self, destination: DavResourcePath, overwrite: bool = False) -> None:
-        """Copy the file at this resource to `destination`."""
-        if self.isdir():
-            raise ValueError(f"Copy is not supported for directory {self}")
-
-        # Create the destination's parent directory
-        destination.parent().mkdir()
-        self._client.copy(self._internal_url, destination._internal_url, overwrite)
 
     def _copy_from(self, source: DavResourcePath, overwrite: bool = False) -> None:
         """Copy the contents of `source` to this resource. `source` must
@@ -669,7 +662,7 @@ class DavResourcePath(ResourcePath):
             raise ValueError("Can not walk a non-directory URI")
 
         # We must return no entries for non-existent directories.
-        if not self.exists():
+        if not self._stat().exists:
             return
 
         # Retrieve the entries in this directory

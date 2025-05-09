@@ -9,12 +9,15 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+from __future__ import annotations
+
 import base64
 import enum
 import io
 import json
 import logging
 import os
+import posixpath
 import random
 import re
 import stat
@@ -62,7 +65,7 @@ def normalize_path(path: str | None) -> str:
     url : `str`
         Normalized URL, e.g. '/path/normalize'
     """
-    return "/" if not path else "/" + os.path.normpath(path).lstrip("/")
+    return "/" if not path else "/" + posixpath.normpath(path).lstrip("/")
 
 
 def normalize_url(url: str, preserve_scheme: bool = False, preserve_path: bool = True) -> str:
@@ -366,7 +369,7 @@ class DavConfigPool:
     _instance = None
     _lock = threading.Lock()
 
-    def __new__(cls, filenames: list[str] = []) -> "DavConfigPool":
+    def __new__(cls, filename: str | None = None) -> DavConfigPool:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -374,36 +377,42 @@ class DavConfigPool:
 
         return cls._instance
 
-    def __init__(self, filenames: list[str] = []) -> None:
+    def __init__(self, filename: str | None = None) -> None:
         # Create a default configuration. This configuration is
-        # used when URLs don't match any of the other endpoints configuration.
+        # used when a URL doest not match any of the endpoints in the
+        # configuration.
         self._default_config: DavConfig = DavConfig()
 
         # The key of this dictionary is the URL of the webDAV endpoint,
         # e.g. "davs://host.example.org:1234/"
         self._configs: dict[str, DavConfig] = {}
 
-        # Inspect the list of provided filenames. Load the configuration
-        # from the first existent file.
-        for filename in filenames:
-            # filename can be an environment variable or a path
-            # which itself can include environment variables or "~".
-            filename = os.getenv(filename, os.path.expandvars(filename))
+        # Load the configuration from the file we have been provided with,
+        # if any.
+        if filename is None:
+            return
+
+        # filename can be the name of an environment variable or a path.
+        # A path can include environment variables
+        # (e.g. "$HOME/path/to/config.yaml") or "~"
+        # (e.g. "~/path/to/config.yaml")
+        if (filename := os.getenv(filename)) is not None:
+            # Expand environment variables and '~' in the file name, if any.
+            filename = os.path.expandvars(filename)
             filename = os.path.expanduser(filename)
-            if os.path.exists(filename):
-                with open(filename) as file:
-                    for config_item in yaml.safe_load(file):
-                        config = DavConfig(config_item)
-                        if config.base_url in self._configs:
-                            # We already have a configuration for the same
-                            # endpoint. That is likely a human error in
-                            # the configuration file.
-                            raise ValueError(
-                                f"""configuration file {filename} contains two configurations for """
-                                f"""endpoint {config_item["base_url"]}"""
-                            )
-                        else:
-                            self._configs[config.base_url] = config
+            with open(filename) as file:
+                for config_item in yaml.safe_load(file):
+                    config = DavConfig(config_item)
+                    if config.base_url not in self._configs:
+                        self._configs[config.base_url] = config
+                    else:
+                        # We already have a configuration for the same
+                        # endpoint. That is likely a human error in
+                        # the configuration file.
+                        raise ValueError(
+                            f"""configuration file {filename} contains two configurations for """
+                            f"""endpoint {config.base_url}"""
+                        )
 
     def get_config_for_url(self, url: str) -> DavConfig:
         """Return the configuration to use a webDAV client when interacting
@@ -505,7 +514,7 @@ class DavClientPool:
     _instance = None
     _lock = threading.Lock()
 
-    def __new__(cls, config_pool: DavConfigPool) -> "DavClientPool":
+    def __new__(cls, config_pool: DavConfigPool) -> DavClientPool:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -521,7 +530,7 @@ class DavClientPool:
         # DavClient to interact with that endpoint.
         self._clients: dict[str, DavClient] = {}
 
-    def get_client_for_url(self, url: str) -> "DavClient":
+    def get_client_for_url(self, url: str) -> DavClient:
         """Return a client for interacting with the endpoint where `url`
         is hosted.
 
@@ -548,7 +557,7 @@ class DavClientPool:
 
         return self._clients[url]
 
-    def _make_client(self, url: str, config: DavConfig) -> "DavClient":
+    def _make_client(self, url: str, config: DavConfig) -> DavClient:
         """Make a webDAV client for interacting with the server at `url`."""
         # Check the server implements webDAV protocol and retrieve its
         # identity so that we can build a client for that specific
@@ -782,7 +791,7 @@ class DavClient:
         self,
         method: str,
         url: str,
-        headers: dict[str, str] = {},
+        headers: dict[str, str] | None = None,
         body: BinaryIO | bytes | str | None = None,
         pool_manager: PoolManager | None = None,
         preload_content: bool = True,
@@ -820,6 +829,7 @@ class DavClient:
         # If this client is configured to use a bearer token for
         # authentication, ensure we only set the token to requests over secure
         # HTTP to avoid leaking the token.
+        headers = {} if headers is None else dict(headers)
         if self._authorizer is not None and url.startswith("https://"):
             self._authorizer.set_authorization(headers)
 
@@ -850,7 +860,9 @@ class DavClient:
 
         return resp
 
-    def _get(self, url: str, headers: dict = {}, preload_content: bool = True) -> HTTPResponse:
+    def _get(
+        self, url: str, headers: dict[str, str] | None = None, preload_content: bool = True
+    ) -> HTTPResponse:
         """Send a HTTP GET request.
 
         Parameters
@@ -872,6 +884,7 @@ class DavClient:
         """
         # Send the GET request to the frontend servers. We handle redirections
         # ourselves.
+        headers = {} if headers is None else dict(headers)
         resp = self._request("GET", url, headers=headers, preload_content=preload_content, redirect=False)
         if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
             return resp
@@ -924,11 +937,10 @@ class DavClient:
         data: `BinaryIO` or `bytes`
             Request body.
         """
-        # Send a PUT request with empty body to the dCache frontend server to
-        # get redirected to the backend.
-        #
-        # Details:
-        # https://www.dcache.org/manuals/UserGuide-10.2/webdav.shtml#redirection
+        # Send a PUT request with empty body and handle redirection. This
+        # is useful if the server redirects us; since we cannot rewind the
+        # data we are uploading, we don't start uploading data until we
+        # connect to the server that will actually serve our request.
         headers = {"Content-Length": "0"}
         resp = self._request("PUT", url, headers=headers, redirect=False)
         if redirect_location := resp.get_redirect_location():
@@ -943,7 +955,7 @@ class DavClient:
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
-        # We were redirected to a backed server. Upload the file contents to
+        # We may have been redirectred. Upload the file contents to
         # its final destination.
 
         # Ask the server to compute and record a checksum of the uploaded
@@ -981,7 +993,7 @@ class DavClient:
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
-    def _head(self, url: str, headers: dict[str, str] = {}) -> HTTPResponse:
+    def _head(self, url: str, headers: dict[str, str] | None = None) -> HTTPResponse:
         """Send a HTTP HEAD request and return the response.
 
         Parameters
@@ -993,6 +1005,7 @@ class DavClient:
             If the target URL is not found, raise an exception. Otherwise
             just return the response.
         """
+        headers = {} if headers is None else dict(headers)
         resp = self._request("HEAD", url, headers=headers)
         match resp.status:
             case HTTPStatus.OK:
@@ -1039,7 +1052,7 @@ class DavClient:
                 f"Unexpected response to PROPFIND {resp.geturl()}: status {resp.status} {resp.reason}"
             )
 
-    def stat(self, url: str) -> "DavFileMetadata":
+    def stat(self, url: str) -> DavFileMetadata:
         """Return the properties of file or directory located at `url`.
 
         Parameters
@@ -1148,7 +1161,7 @@ class DavClient:
         result.update({"last_modified": metadata.last_modified})
         return result
 
-    def read_dir(self, url: str) -> list["DavFileMetadata"]:
+    def read_dir(self, url: str) -> list[DavFileMetadata]:
         """Return the properties of the files or directories contained in
         directory located at `url`.
 
@@ -1161,7 +1174,7 @@ class DavClient:
 
         Returns
         -------
-        result: `list["DavResourceMetadata"]`
+        result: `list[DavResourceMetadata]`
             List of details of each file or directory within `url`.
         """
         resp = self._propfind(url, depth="1")
@@ -1212,7 +1225,9 @@ class DavClient:
         """
         return self._get(url).data
 
-    def read_range(self, url: str, start: int, end: int | None, headers: dict[str, str] = {}) -> bytes:
+    def read_range(
+        self, url: str, start: int, end: int | None, headers: dict[str, str] | None = None
+    ) -> bytes:
         """Download partial content of file located at `url`.
 
         Parameters
@@ -1238,6 +1253,7 @@ class DavClient:
         a directory. This is important because some webDAV servers respond
         with an HTML document when asked for reading a directory.
         """
+        headers = {} if headers is None else dict(headers)
         if end is None:
             headers.update({"Range": f"bytes={start}-"})
         else:
@@ -1270,40 +1286,41 @@ class DavClient:
         The caller must ensure that the resource at `url` is a file, not
         a directory.
         """
-        content_length = 0
-        resp = self._get(url, preload_content=False)
+        try:
+            resp = self._get(url, preload_content=False)
 
-        # If we were asked to close the connection to the server, disable
-        # auto close so that we can explicitly close the connection.
-        # By default, urrlib3 releases the connection and keeps it open
-        # for later reuse when it consumes the response body.
-        if close_connection:
-            resp.auto_close = False
+            # If we were asked to close the connection to the server, disable
+            # auto close so that we can explicitly close the connection.
+            # By default, urrlib3 releases the connection and keeps it open
+            # for later reuse when it consumes the response body.
+            if close_connection:
+                resp.auto_close = False
 
-        with open(filename, "wb", buffering=chunk_size) as file:
-            for chunk in resp.stream(chunk_size):
-                file.write(chunk)
-                content_length += len(chunk)
+            content_length = 0
+            with open(filename, "wb", buffering=chunk_size) as file:
+                for chunk in resp.stream(chunk_size):
+                    file.write(chunk)
+                    content_length += len(chunk)
 
-        # Close this connection
-        if close_connection:
-            resp.close()
+            # Check that the expected and actual content lengths match. Perform
+            # this check only when the content of the file was not encoded by
+            # the server.
+            expected_length: int = int(resp.headers.get("Content-Length", -1))
+            if (
+                "Content-Encoding" not in resp.headers
+                and expected_length != -1
+                and expected_length != content_length
+            ):
+                raise ValueError(
+                    f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                    f"expecting {expected_length} and got {content_length} bytes"
+                )
 
-        # Check that the expected and actual content lengths match. Perform
-        # this check only when the content of the file was not encoded by
-        # the server.
-        expected_length: int = int(resp.headers.get("Content-Length", -1))
-        if (
-            "Content-Encoding" not in resp.headers
-            and expected_length != -1
-            and expected_length != content_length
-        ):
-            raise ValueError(
-                f"Size of downloaded file does not match value in Content-Length header for {self}: "
-                f"expecting {expected_length} and got {content_length} bytes"
-            )
-
-        return content_length
+            return content_length
+        finally:
+            # Close this connection
+            if close_connection:
+                resp.close()
 
     def write(self, url: str, data: BinaryIO | bytes) -> None:
         """Create or rewrite a remote file at `url` with `data` as its
@@ -1333,7 +1350,7 @@ class DavClient:
         Parameters
         ----------
         url : `str`
-            Target URL.
+            Target URL
 
         Returns
         -------
@@ -1789,7 +1806,9 @@ class DavClientDCache(DavClientURLSigner):
 
         return super()._propfind(url=url, body=body, depth=depth)
 
-    def _get(self, url: str, headers: dict = {}, preload_content: bool = True) -> HTTPResponse:
+    def _get(
+        self, url: str, headers: dict[str, str] | None = None, preload_content: bool = True
+    ) -> HTTPResponse:
         """Send a HTTP GET request to a dCache webDAV server.
 
         Parameters
@@ -1811,6 +1830,7 @@ class DavClientDCache(DavClientURLSigner):
         """
         # Send the GET request to the frontend servers. We handle
         # redirections ourselves.
+        headers = {} if headers is None else dict(headers)
         resp = self._request("GET", url, headers=headers, preload_content=preload_content, redirect=False)
         if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
             return resp
@@ -1915,7 +1935,7 @@ class DavClientDCache(DavClientURLSigner):
         # network connection after serving this PUT request to release
         # the associated dCache mover.
 
-        # Ask the server to compute and record a checksum of the uploaded
+        # Ask dCache to compute and record a checksum of the uploaded
         # file contents, for later integrity checks. Since we don't compute
         # the digest ourselves while uploading the data, we cannot control
         # after the request is complete that the data we uploaded is
@@ -1925,9 +1945,6 @@ class DavClientDCache(DavClientURLSigner):
         # See RFC-3230 for details and
         # https://www.iana.org/assignments/http-dig-alg/http-dig-alg.xhtml
         # for the list of supported digest algorithhms.
-        #
-        # In addition, note that not all servers implement this RFC so
-        # the checksum reqquest may be ignored by the server.
         headers = {"Connection": "close"}
         if (checksum := self._config.request_checksum) is not None:
             headers.update({"Want-Digest": checksum})
@@ -1991,7 +2008,9 @@ class DavClientXrootD(DavClientURLSigner):
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
         super().__init__(url=url, config=config, accepts_ranges=accepts_ranges)
 
-    def _get(self, url: str, headers: dict = {}, preload_content: bool = True) -> HTTPResponse:
+    def _get(
+        self, url: str, headers: dict[str, str] | None = None, preload_content: bool = True
+    ) -> HTTPResponse:
         """Send a HTTP GET request to a XrootD webDAV server.
 
         Parameters
@@ -2012,6 +2031,7 @@ class DavClientXrootD(DavClientURLSigner):
             Response to the GET request as received from the server.
         """
         # Send the GET request to the frontend servers and follow redirection.
+        headers = {} if headers is None else dict(headers)
         resp = self._request("GET", url, headers=headers, preload_content=preload_content, redirect=False)
         if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
             return resp
@@ -2187,7 +2207,7 @@ class DavFileMetadata:
         size: int = -1,
         is_dir: bool = False,
         last_modified: datetime = datetime.min,
-        checksums: dict[str, str] = {},
+        checksums: dict[str, str] | None = None,
     ):
         self._url: str = base_url if not href else base_url.rstrip("/") + href
         self._href: str = href
@@ -2196,10 +2216,10 @@ class DavFileMetadata:
         self._size: int = size
         self._is_dir: bool = is_dir
         self._last_modified: datetime = last_modified
-        self._checksums: dict[str, str] = checksums
+        self._checksums: dict[str, str] = {} if checksums is None else dict(checksums)
 
     @staticmethod
-    def from_property(base_url: str, property: "DavProperty") -> "DavFileMetadata":
+    def from_property(base_url: str, property: DavProperty) -> DavFileMetadata:
         """Create an instance from the values in `property`."""
         return DavFileMetadata(
             base_url=base_url,
@@ -2209,7 +2229,7 @@ class DavFileMetadata:
             size=property.size,
             is_dir=property.is_dir,
             last_modified=property.last_modified,
-            checksums=property.checksums,
+            checksums=dict(property.checksums),
         )
 
     def __str__(self) -> str:

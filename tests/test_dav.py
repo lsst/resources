@@ -54,7 +54,7 @@ from lsst.resources.davutils import (
     TokenAuthorizer,
 )
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
-from lsst.resources.utils import makeTestTempDir, removeTestTempDir
+from lsst.resources.utils import get_tempdir, makeTestTempDir, removeTestTempDir
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -880,30 +880,15 @@ class DavResourcePathConfigTestCase(unittest.TestCase):
         if self.tmpdir and self.tmpdir.isLocal:
             removeTestTempDir(self.tmpdir.ospath)
 
+        # Reinitialize globals.
+        dav_globals._reset()
+
     def test_dav_tmpdir_buffersize_default(self):
-        # Ensure that if environment variables LSST_RESOURCES_TMPDIR and
-        # TMPDIR are not initialized, the temporary directory is retrieved
-        # from the system.
-        with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            config: DavResourcePathConfig = dav_globals.config()
-            tmpdir, _ = config.tmpdir_buffersize
-            self.assertEqual(tmpdir, tempfile.gettempdir())
-
-    def test_dav_tmpdir_buffersize_lsst(self):
-        # Ensure that environment variable LSST_RESOURCES_TMPDIR is inspected
-        # when initializing the global instance of DavResourcePathConfig.
-        with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_TMPDIR": "/tmp"}, clear=True):
-            config: DavResourcePathConfig = dav_globals.config()
-            tmpdir, _ = config.tmpdir_buffersize
-            self.assertEqual(tmpdir, os.getenv("LSST_RESOURCES_TMPDIR"))
-
-    def test_dav_tmpdir_buffersize_tmpdir(self):
-        # Ensure that environment variable TMPDIR is inspected when
-        # initializing the global instance of DavResourcePathConfig.
-        with unittest.mock.patch.dict(os.environ, {"TMPDIR": "/tmp"}, clear=True):
-            config: DavResourcePathConfig = dav_globals.config()
-            tmpdir, _ = config.tmpdir_buffersize
-            self.assertEqual(tmpdir, os.getenv("TMPDIR"))
+        # Ensure that the configuration is initialized with the temporary
+        # directory extracted from the environment.
+        config: DavResourcePathConfig = dav_globals.config()
+        tmpdir, _ = config.tmpdir_buffersize
+        self.assertEqual(tmpdir, get_tempdir())
 
 
 class DavConfigPoolTestCase(unittest.TestCase):
@@ -945,6 +930,13 @@ class DavConfigPoolTestCase(unittest.TestCase):
                 config.persistent_connections_backend, DavConfig.DEFAULT_PERSISTENT_CONNECTIONS_BACKEND
             )
 
+    def test_dav_configuration_file_does_not_exist(self):
+        # Ensure an exception is raised if the configuration file pointed to
+        # by the environment variable does not exist.
+        with unittest.mock.patch.dict(os.environ, {"MY_VAR": "/does/not/exist"}, clear=True):
+            with self.assertRaises(FileNotFoundError):
+                DavConfigPool("MY_VAR")
+
     def test_dav_configuration_file(self):
         """Ensure the specified configuration file is used."""
         config_contents: str = r"""
@@ -972,11 +964,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
 
         config_file = self._create_config(config_contents)
         with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_WEBDAV_CONFIG": config_file}, clear=True):
-            config_pool: DavConfigPool = DavConfigPool(
-                [
-                    "LSST_RESOURCES_WEBDAV_CONFIG",
-                ]
-            )
+            config_pool: DavConfigPool = DavConfigPool("LSST_RESOURCES_WEBDAV_CONFIG")
 
             # Tests for base URL 'davs://host1.example.org:1234'
             config = config_pool.get_config_for_url("davs://host1.example.org:1234/any/path")
@@ -1012,11 +1000,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
         config_file = self._create_config(config_contents)
         with unittest.mock.patch.dict(os.environ, {"MY_VAR": config_file}, clear=True):
             with self.assertRaises(ValueError):
-                DavConfigPool(
-                    [
-                        "MY_VAR",
-                    ]
-                )
+                DavConfigPool("MY_VAR")
 
     def _create_config(self, config: str) -> str:
         with tempfile.NamedTemporaryFile(mode="wt", dir=self.tmpdir, delete=False) as f:
