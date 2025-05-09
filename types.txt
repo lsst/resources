@@ -2,4 +2,5 @@ types-Deprecated
 types-requests
 types-setuptools
 types-urllib3
+types-PyYAML
 git+https://github.com/lsst/utils@main#egg=lsst-utils

@@ -897,12 +897,6 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
             self.assertEqual(key, client_cert)
 
 
-class HttpReadWriteWebdavDAVTestCase(HttpReadWriteWebdavTestCase, unittest.TestCase):
-    """Test with a real webDAV server, as opposed to mocking responses."""
-
-    scheme = "dav"
-
-
 class WebdavUtilsTestCase(unittest.TestCase):
     """Test for the Webdav related utilities."""
 
