@@ -29,6 +29,7 @@ Configuration
 
 .. toctree::
    s3.rst
+   dav.rst
 
 .. _lsst.resources-pyapi:
 
