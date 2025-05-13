@@ -251,6 +251,7 @@ class S3ResourcePath(ResourcePath):
             # URIs.
             first_uri = related_uris[0]
             # API requires no more than 1000 per call.
+            chunk_num = 0
             for chunk in chunk_iterable(related_uris, chunk_size=1_000):
                 key_to_uri: dict[str, ResourcePath] = {}
                 keys: list[dict[str, str]] = []
@@ -260,7 +261,13 @@ class S3ResourcePath(ResourcePath):
                     keys.append({"Key": key})
                     # Default to assuming everything worked.
                     results[uri] = MBulkResult(True, None)
-                errored = cls._delete_related_objects(first_uri.client, first_uri._bucket, keys)
+                chunk_num += 1
+                with time_this(
+                    log,
+                    msg="Bulk delete; chunk number %d; %d dataset%s",
+                    args=(chunk_num, len(chunk), "s" if len(chunk) != 1 else ""),
+                ):
+                    errored = cls._delete_related_objects(first_uri.client, first_uri._bucket, keys)
 
                 # Update with error information.
                 for key, bulk_result in errored.items():
