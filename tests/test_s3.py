@@ -55,6 +55,8 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
 
     scheme = "s3"
     s3_endpoint_url: str | None = None
+    # S3 batches in 1000 files so need more than that.
+    n_mremove_files: int = 1015
 
     def setUp(self):
         self.enterContext(clean_test_environment_for_s3())
