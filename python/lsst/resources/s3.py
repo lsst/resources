@@ -13,6 +13,7 @@ from __future__ import annotations
 
 __all__ = ("S3ResourcePath",)
 
+import concurrent.futures
 import contextlib
 import io
 import logging
@@ -32,7 +33,7 @@ from lsst.utils.timer import time_this
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
-from ._resourcePath import MBulkResult, ResourcePath
+from ._resourcePath import _EXECUTOR_TYPE, MBulkResult, ResourcePath, _get_executor_class, _patch_environ
 from .s3utils import (
     _get_s3_connection_parameters,
     _s3_disable_bucket_validation,
@@ -46,6 +47,7 @@ from .s3utils import (
     s3CheckFileExists,
     translate_client_error,
 )
+from .utils import _get_num_workers
 
 try:
     from boto3.s3.transfer import TransferConfig  # type: ignore
@@ -247,33 +249,95 @@ class S3ResourcePath(ResourcePath):
 
         results: dict[ResourcePath, MBulkResult] = {}
         for related_uris in grouped_uris.values():
-            # The client and bucket are the same for each of the remaining
-            # URIs.
-            first_uri = related_uris[0]
             # API requires no more than 1000 per call.
             chunk_num = 0
+            chunks: list[tuple[ResourcePath, ...]] = []
+            key_to_uri: dict[str, ResourcePath] = {}
             for chunk in chunk_iterable(related_uris, chunk_size=1_000):
-                key_to_uri: dict[str, ResourcePath] = {}
-                keys: list[dict[str, str]] = []
                 for uri in chunk:
                     key = uri.relativeToPathRoot
                     key_to_uri[key] = uri
-                    keys.append({"Key": key})
                     # Default to assuming everything worked.
                     results[uri] = MBulkResult(True, None)
                 chunk_num += 1
-                with time_this(
-                    log,
-                    msg="Bulk delete; chunk number %d; %d dataset%s",
-                    args=(chunk_num, len(chunk), "s" if len(chunk) != 1 else ""),
-                ):
-                    errored = cls._delete_related_objects(first_uri.client, first_uri._bucket, keys)
+                chunks.append(chunk)
 
-                # Update with error information.
-                for key, bulk_result in errored.items():
-                    results[key_to_uri[key]] = bulk_result
+            # Bulk remove.
+            with time_this(
+                log,
+                msg="Bulk delete; %d chunk%s; totalling %d dataset%s",
+                args=(
+                    len(chunks),
+                    "s" if len(chunks) != 1 else "",
+                    len(related_uris),
+                    "s" if len(related_uris) != 1 else "",
+                ),
+            ):
+                errored = cls._mremove_select(chunks)
+
+            # Update with error information.
+            results.update(errored)
 
         return results
+
+    @classmethod
+    def _mremove_select(cls, chunks: list[tuple[ResourcePath, ...]]) -> dict[ResourcePath, MBulkResult]:
+        if len(chunks) == 1:
+            # Do the removal directly without futures.
+            return cls._delete_objects_wrapper(chunks[0])
+        pool_executor_class = _get_executor_class()
+        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
+            # Patch the environment to make it think there is only one worker
+            # for each subprocess.
+            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
+                return cls._mremove_with_pool(pool_executor_class, chunks)
+        else:
+            return cls._mremove_with_pool(pool_executor_class, chunks)
+
+    @classmethod
+    def _mremove_with_pool(
+        cls,
+        pool_executor_class: _EXECUTOR_TYPE,
+        chunks: list[tuple[ResourcePath, ...]],
+        *,
+        num_workers: int | None = None,
+    ) -> dict[ResourcePath, MBulkResult]:
+        # Different name because different API to base class.
+        # No need to make more workers than we have chunks.
+        max_workers = num_workers if num_workers is not None else min(len(chunks), _get_num_workers())
+        results: dict[ResourcePath, MBulkResult] = {}
+        with pool_executor_class(max_workers=max_workers) as remove_executor:
+            future_remove = {
+                remove_executor.submit(cls._delete_objects_wrapper, chunk): i
+                for i, chunk in enumerate(chunks)
+            }
+            for future in concurrent.futures.as_completed(future_remove):
+                try:
+                    results.update(future.result())
+                except Exception as e:
+                    # The chunk utterly failed.
+                    chunk = chunks[future_remove[future]]
+                    for uri in chunk:
+                        results[uri] = MBulkResult(False, e)
+        return results
+
+    @classmethod
+    def _delete_objects_wrapper(cls, uris: tuple[ResourcePath, ...]) -> dict[ResourcePath, MBulkResult]:
+        """Convert URIs to keys and call low-level API."""
+        if not uris:
+            return {}
+        keys: list[dict[str, str]] = []
+        key_to_uri: dict[str, ResourcePath] = {}
+        for uri in uris:
+            key = uri.relativeToPathRoot
+            key_to_uri[key] = uri
+            keys.append({"Key": key})
+
+        first_uri = cast(S3ResourcePath, uris[0])
+        results = cls._delete_related_objects(first_uri.client, first_uri._bucket, keys)
+
+        # Remap error object keys to uris.
+        return {key_to_uri[key]: result for key, result in results.items()}
 
     @classmethod
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)

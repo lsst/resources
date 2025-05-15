@@ -557,6 +557,10 @@ class GenericReadWriteTestCase(_GenericTestCase):
 
     transfer_modes: tuple[str, ...] = ("copy", "move")
     testdir: str | None = None
+    # Number of files to use for mremove() testing to ensure difference code
+    # paths are hit. Do not want to generically use many files for schemes
+    # where it makes no difference.
+    n_mremove_files: int = 15
 
     def setUp(self) -> None:
         if self.scheme is None:
@@ -1023,19 +1027,14 @@ class GenericReadWriteTestCase(_GenericTestCase):
         # A file that is not there.
         file = root.join("config/basic/butler.yaml")
 
-        # Create some files.
-        expected_files = {
-            "dir1/a.yaml",
-            "dir1/b.yaml",
-            "dir1/c.yaml",
-            "dir1/d.yaml",
-            "dir2/e.yaml",
-        }
-        expected_uris = {root.join(f) for f in expected_files}
+        # Create some files. Most schemes the code paths do not change for 10
+        # vs 1000 files but in some schemes it does.
+        expected_files = [f"dir1/f{n}.yaml" for n in range(self.n_mremove_files)]
+        expected_uris = [root.join(f) for f in expected_files]
         for uri in expected_uris:
             uri.write(b"")
             self.assertTrue(uri.exists())
-        expected_uris.add(file)
+        expected_uris.append(file)
 
         # Force to run with fewer workers than there are files.
         multi = ResourcePath.mexists(expected_uris, num_workers=3)
@@ -1054,3 +1053,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         multi = ResourcePath.mexists(expected_uris, num_workers=3)
         for uri, is_there in multi.items():
             self.assertFalse(is_there)
+
+        # Clean up a subset of files that are already gone, but this can
+        # trigger a different code path.
+        ResourcePath.mremove(expected_uris[:5], do_raise=False)
