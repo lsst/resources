@@ -1,4 +1,0 @@
-* Added ``ResourcePath.mtransfer()`` for doing multiple transfers in parallel.
-  The number of workers can be controlled using the ``$LSST_RESOURCES_NUM_WORKERS`` environment variable.
-* ``transfer_from`` and ``as_local`` now have an additional parameter that can control whether implicit multithreading should be used for a single download.
-* ``as_local`` has a new parameter that can be used to explicitly specify the local download location. This can be used for ``transfer_from`` to allow the file to be downloaded to the local destination directory immediately.

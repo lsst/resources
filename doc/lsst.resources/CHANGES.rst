@@ -1,3 +1,34 @@
+Resources v29.1.0 (2025-06-13)
+==============================
+
+Miscellaneous Changes of Minor Interest
+---------------------------------------
+
+New Features
+------------
+
+- * Added ``ResourcePath.mtransfer()`` for doing multiple transfers in parallel.
+    The number of workers can be controlled using the ``$LSST_RESOURCES_NUM_WORKERS`` environment variable.
+  * ``transfer_from`` and ``as_local`` now have an additional parameter that can control whether implicit multithreading should be used for a single download.
+  * ``as_local`` has a new parameter that can be used to explicitly specify the local download location.
+    This can be used for ``transfer_from`` to allow the file to be downloaded to the local destination directory immediately. (`DM-31824 <https://rubinobs.atlassian.net/browse/DM-31824>`_)
+- Added specialized support for schemes ``davs://`` and ``dav://`` hosted by storage endpoints implementing WebDAV protocol as described in `RFC-4918 HTTP Extensions for Web Distributed Authoring and Versioning (WebDAV) <http://www.webdav.org/specs/rfc4918.html>`_. (`DM-49784 <https://rubinobs.atlassian.net/browse/DM-49784>`_)
+- Added new bulk removal API: ``ResourcePath.mremove()``.
+  This can be 10 times faster than calling ``remove()`` in a loop. (`DM-50724 <https://rubinobs.atlassian.net/browse/DM-50724>`_)
+
+
+Miscellaneous Changes of Minor Interest
+---------------------------------------
+
+- It is now possible to control how bulk APIs such as ``mexists()`` and ``mtransfer()`` work.
+  Added ``$LSST_RESOURCES_NUM_WORKERS`` environment variable to specify how many workers should be used.
+  The default is derived from the number of CPUs but capped at 10.
+  Also the ``mexists()`` method has an explicit parameter to allow the number of workers to be specified.
+  Added ``$LSST_RESOURCES_EXECUTOR`` to specify how the jobs should be executed.
+  The default is ``threads`` (which is the same as used previously) but on Linux more performance may be achievable by setting this environment variable to ``process``. (`DM-50074 <https://rubinobs.atlassian.net/browse/DM-50074>`_)
+- * Fixed problem with multiple ``flush()`` calls with S3 resource handle for small chunks.
+  * Fixed bug in File resource handle where ``flush()`` was mistakenly calling ``close()``. (`DM-51087 <https://rubinobs.atlassian.net/browse/DM-51087>`_)
+
 Resources v29.0.0 (2025-03-25)
 ==============================
 
