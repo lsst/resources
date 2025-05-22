@@ -1,3 +1,0 @@
-Added specialized support for schemes ``davs://`` and ``dav://`` hosted by storage endpoints implementing
-WebDAV protocol as described in
-`RFC-4918 HTTP Extensions for Web Distributed Authoring and Versioning (WebDAV) <http://www.webdav.org/specs/rfc4918.html>`_.
