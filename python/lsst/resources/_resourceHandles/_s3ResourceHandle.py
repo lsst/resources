@@ -168,21 +168,21 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         # written to.
         s3_min_bits = 5 * 1024 * 1024  # S3 flush threshold is 5 Mib.
         if (
-            (self.tell() - (self._last_flush_position or 0)) < s3_min_bits
-            and self._closed != CloseStatus.CLOSING
-            and not self._warned
-        ):
-            amount = s3_min_bits / (1024 * 1024)
-            warnings.warn(
-                f"S3 does not support flushing objects less than {amount} Mib, skipping",
-                stacklevel=find_outside_stacklevel(
-                    "lsst.resources",
-                    "backoff",
-                    "contextlib",
-                    allow_modules={"lsst.resources.tests"},
-                ),
-            )
+            self.tell() - (self._last_flush_position or 0)
+        ) < s3_min_bits and self._closed != CloseStatus.CLOSING:
+            if not self._warned:
+                amount = s3_min_bits / (1024 * 1024)
+                warnings.warn(
+                    f"S3 does not support flushing objects less than {amount} Mib, skipping",
+                    stacklevel=find_outside_stacklevel(
+                        "lsst.resources",
+                        "backoff",
+                        "contextlib",
+                        allow_modules={"lsst.resources.tests"},
+                    ),
+                )
             self._warned = True
+            # Return until the buffer is big enough.
             return
         # nothing to write, don't create an empty upload
         if self.tell() == 0:
