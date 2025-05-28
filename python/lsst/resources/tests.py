@@ -61,18 +61,18 @@ def _check_open(
     """
     text_content = "abcdefghijklmnopqrstuvwxyz🙂"
     bytes_content = uuid.uuid4().bytes
-    content_by_mode_suffix = {
+    content_by_mode_suffix: dict[str, str | bytes] = {
         "": text_content,
         "t": text_content,
         "b": bytes_content,
     }
-    empty_content_by_mode_suffix = {
+    empty_content_by_mode_suffix: dict[str, str | bytes] = {
         "": "",
         "t": "",
         "b": b"",
     }
     # To appease mypy
-    double_content_by_mode_suffix = {
+    double_content_by_mode_suffix: dict[str, str | bytes] = {
         "": text_content + text_content,
         "t": text_content + text_content,
         "b": bytes_content + bytes_content,
