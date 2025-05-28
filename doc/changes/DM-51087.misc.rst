@@ -1,0 +1,2 @@
+* Fixed problem with multiple ``flush()`` calls with S3 resource handle for small chunks.
+* Fixed bug in File resource handle where ``flush()`` was mistakenly calling ``close()``.
