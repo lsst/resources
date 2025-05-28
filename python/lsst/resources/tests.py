@@ -143,6 +143,16 @@ def _check_open(
             content_read = read_buffer.read()
             test_case.assertEqual(len(content_read), 0, f"Read: {content_read!r}, expected empty.")
 
+        # Write multiple chunks with flushing to ensure that any handles that
+        # cache without flushing work properly.
+        n = 3
+        with uri.open("w" + mode_suffix, **kwargs) as write_buffer:
+            for _ in range(n):
+                write_buffer.write(content)
+                write_buffer.flush()
+        with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
+            test_case.assertEqual(read_buffer.read(), content * n)
+
         # Write two copies of the content, overwriting the single copy there.
         with uri.open("w" + mode_suffix, **kwargs) as write_buffer:
             write_buffer.write(double_content)
