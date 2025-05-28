@@ -14,14 +14,12 @@ from __future__ import annotations
 __all__ = ("S3ResourceHandle",)
 
 import logging
-import warnings
 from collections.abc import Iterable, Mapping
 from io import SEEK_CUR, SEEK_END, SEEK_SET, BytesIO, UnsupportedOperation
 from typing import TYPE_CHECKING
 
 from botocore.exceptions import ClientError
 
-from lsst.utils.introspection import find_outside_stacklevel
 from lsst.utils.timer import time_this
 
 from ..s3utils import all_retryable_errors, backoff, max_retry_time, translate_client_error
@@ -170,18 +168,6 @@ class S3ResourceHandle(BaseResourceHandle[bytes]):
         if (
             self.tell() - (self._last_flush_position or 0)
         ) < s3_min_bits and self._closed != CloseStatus.CLOSING:
-            if not self._warned:
-                amount = s3_min_bits / (1024 * 1024)
-                warnings.warn(
-                    f"S3 does not support flushing objects less than {amount} Mib, skipping",
-                    stacklevel=find_outside_stacklevel(
-                        "lsst.resources",
-                        "backoff",
-                        "contextlib",
-                        allow_modules={"lsst.resources.tests"},
-                    ),
-                )
-            self._warned = True
             # Return until the buffer is big enough.
             return
         # nothing to write, don't create an empty upload
