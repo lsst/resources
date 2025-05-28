@@ -61,18 +61,18 @@ def _check_open(
     """
     text_content = "abcdefghijklmnopqrstuvwxyz🙂"
     bytes_content = uuid.uuid4().bytes
-    content_by_mode_suffix = {
+    content_by_mode_suffix: dict[str, str | bytes] = {
         "": text_content,
         "t": text_content,
         "b": bytes_content,
     }
-    empty_content_by_mode_suffix = {
+    empty_content_by_mode_suffix: dict[str, str | bytes] = {
         "": "",
         "t": "",
         "b": b"",
     }
     # To appease mypy
-    double_content_by_mode_suffix = {
+    double_content_by_mode_suffix: dict[str, str | bytes] = {
         "": text_content + text_content,
         "t": text_content + text_content,
         "b": bytes_content + bytes_content,
@@ -142,6 +142,16 @@ def _check_open(
             test_case.assertEqual(read_buffer.tell(), 1024)
             content_read = read_buffer.read()
             test_case.assertEqual(len(content_read), 0, f"Read: {content_read!r}, expected empty.")
+
+        # Write multiple chunks with flushing to ensure that any handles that
+        # cache without flushing work properly.
+        n = 3
+        with uri.open("w" + mode_suffix, **kwargs) as write_buffer:
+            for _ in range(n):
+                write_buffer.write(content)
+                write_buffer.flush()
+        with uri.open("r" + mode_suffix, **kwargs) as read_buffer:
+            test_case.assertEqual(read_buffer.read(), content * n)
 
         # Write two copies of the content, overwriting the single copy there.
         with uri.open("w" + mode_suffix, **kwargs) as write_buffer:
