@@ -79,7 +79,7 @@ class FileResourceHandle(BaseResourceHandle[U]):
         return self._fileHandle.fileno()
 
     def flush(self) -> None:
-        self._fileHandle.close()
+        self._fileHandle.flush()
 
     @property
     def isatty(self) -> bool:
