@@ -542,7 +542,7 @@ class S3ResourcePath(ResourcePath):
         try:
             self.client.copy_object(CopySource=copy_source, Bucket=self._bucket, Key=self.relativeToPathRoot)
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
-            raise FileNotFoundError("No such resource to transfer: {self}") from err
+            raise FileNotFoundError(f"No such resource to transfer: {self}") from err
         except ClientError as err:
             translate_client_error(err, self)
             raise
