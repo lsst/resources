@@ -95,6 +95,7 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         self.assertEqual(str(path), "http://test.example/something.txt")
         self.assertEqual(path._extra_headers, {"Authorization": "Bearer my-token"})
 
+        # Make sure that headers are added to requests.
         responses.add(
             responses.GET,
             url,
@@ -103,9 +104,18 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         )
         self.assertEqual(path.read(), b"test")
 
+        # Extra headers should be preserved through pickle, to ensure that
+        # `mtransfer` and similar methods work in multi-process mode.
         dump = pickle.dumps(path)
         restored = pickle.loads(dump)
         self.assertEqual(restored._extra_headers, {"Authorization": "Bearer my-token"})
+
+        # Extra headers should be preserved when making a modified copy of the
+        # ResourcePath using replace() or the ResourcePath constructor.
+        replacement = path.replace(forceDirectory=True)
+        self.assertEqual(replacement._extra_headers, {"Authorization": "Bearer my-token"})
+        copy = ResourcePath(path, forceDirectory=True)
+        self.assertEqual(copy._extra_headers, {"Authorization": "Bearer my-token"})
 
 
 class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):

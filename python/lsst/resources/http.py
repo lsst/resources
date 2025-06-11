@@ -2028,6 +2028,10 @@ class HttpResourcePath(ResourcePath):
             with super()._openImpl(mode, encoding=encoding) as http_handle:
                 yield http_handle
 
+    def _copy_extra_attributes(self, original_uri: ResourcePath) -> None:
+        assert isinstance(original_uri, HttpResourcePath)
+        self._extra_headers = original_uri._extra_headers
+
 
 def _dump_response(resp: requests.Response) -> None:
     """Log the contents of a HTTP or webDAV request and its response.

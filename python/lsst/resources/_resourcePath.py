@@ -649,9 +649,11 @@ class ResourcePath:  # numpydoc ignore=PR02
         # Disallow a change in scheme
         if "scheme" in kwargs:
             raise ValueError(f"Can not use replace() method to change URI scheme for {self}")
-        return self.__class__(
+        result = self.__class__(
             self._uri._replace(**kwargs), forceDirectory=forceDirectory, isTemporary=isTemporary
         )
+        result._copy_extra_attributes(self)
+        return result
 
     def updatedFile(self, newfile: str) -> ResourcePath:
         """Return new URI with an updated final component of the path.
@@ -1902,6 +1904,12 @@ class ResourcePath:  # numpydoc ignore=PR02
             HTTP URL signed for PUT.
         """
         raise NotImplementedError(f"URL signing is not supported for '{self.scheme}'")
+
+    def _copy_extra_attributes(self, original_uri: ResourcePath) -> None:
+        # May be overridden by subclasses to transfer attributes when a
+        # ResourcePath is constructed using the "clone" version of the
+        # ResourcePath constructor by passing in a ResourcePath object.
+        pass
 
 
 ResourcePathExpression = str | urllib.parse.ParseResult | ResourcePath | Path
