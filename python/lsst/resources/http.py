@@ -759,6 +759,42 @@ class HttpResourcePath(ResourcePath):
         a HTTP URL. The value of the variable is not inspected.
     """
 
+    @staticmethod
+    def create_http_resource_path(
+        path: str, *, extra_headers: dict[str, str] | None = None
+    ) -> HttpResourcePath:
+        """Create an instance of `HttpResourcePath` with additional
+        HTTP-specific configuration.
+
+        Parameters
+        ----------
+        path : `str`
+            HTTP URL to be wrapped in a `ResourcePath` instance.
+        extra_headers : `dict` [ `str`, `str` ], optional
+            Additional headers that will be sent with every HTTP request made
+            by this `ResourcePath`.  These override any headers that may be
+            generated internally by `HttpResourcePath` (e.g. authentication
+            headers).
+
+        Return
+        ------
+        instance : `ResourcePath`
+            Newly-created `HttpResourcePath` instance.
+
+        Notes
+        -----
+        Most users should use the `ResourcePath` constructor, instead.
+        """
+        # Make sure we instantiate ResourcePath using a string to guarantee we
+        # get a new ResourcePath.  If we accidentally provided a ResourcePath
+        # instance instead, the ResourcePath constructor sometimes returns
+        # the original object and we would be modifying an object that is
+        # supposed to be immutable.
+        instance = ResourcePath(str(path))
+        assert isinstance(instance, HttpResourcePath)
+        instance._extra_headers = extra_headers
+        return instance
+
     # WebDAV servers known to be able to sign URLs. The values are lowercased
     # server identifiers retrieved from the 'Server' header included in
     # the response to a HTTP OPTIONS request.
@@ -805,39 +841,48 @@ class HttpResourcePath(ResourcePath):
     # and is shared by all instances of this class.
     _tcp_connector: TCPConnector | None = None
 
+    # Additional headers added to every request.
+    _extra_headers: dict[str, str] | None = None
+
     @property
-    def metadata_session(self) -> requests.Session:
+    def metadata_session(self) -> _SessionWrapper:
         """Client session to send requests which do not require upload or
         download of data, i.e. mostly metadata requests.
         """
+        session = None
         if hasattr(self, "_metadata_session"):
             if HttpResourcePath._pid == os.getpid():
-                return self._metadata_session
+                session = self._metadata_session
             else:
                 # The metadata session we have in cache was likely created by
                 # a parent process. Discard all the sessions in that store.
                 self._metadata_session_store.clear()
 
         # Retrieve a new metadata session.
-        HttpResourcePath._pid = os.getpid()
-        self._metadata_session: requests.Session = self._metadata_session_store.get(self)
-        return self._metadata_session
+        if session is None:
+            HttpResourcePath._pid = os.getpid()
+            session = self._metadata_session_store.get(self)
+            self._metadata_session: requests.Session = session
+        return _SessionWrapper(session, extra_headers=self._extra_headers)
 
     @property
-    def data_session(self) -> requests.Session:
+    def data_session(self) -> _SessionWrapper:
         """Client session for uploading and downloading data."""
+        session = None
         if hasattr(self, "_data_session"):
             if HttpResourcePath._pid == os.getpid():
-                return self._data_session
+                session = self._data_session
             else:
                 # The data session we have in cache was likely created by
                 # a parent process. Discard all the sessions in that store.
                 self._data_session_store.clear()
 
         # Retrieve a new data session.
-        HttpResourcePath._pid = os.getpid()
-        self._data_session: requests.Session = self._data_session_store.get(self)
-        return self._data_session
+        if session is None:
+            HttpResourcePath._pid = os.getpid()
+            session = self._data_session_store.get(self)
+            self._data_session: requests.Session = session
+        return _SessionWrapper(session, extra_headers=self._extra_headers)
 
     def _clear_sessions(self) -> None:
         """Close the socket connections that are still open.
@@ -1562,7 +1607,7 @@ class HttpResourcePath(ResourcePath):
         url: str | None = None,
         headers: dict[str, str] | None = None,
         body: str | None = None,
-        session: requests.Session | None = None,
+        session: _SessionWrapper | None = None,
         timeout: tuple[float, float] | None = None,
     ) -> requests.Response:
         """Send a webDAV request and correctly handle redirects.
@@ -2193,3 +2238,95 @@ class DavProperty:
     @property
     def href(self) -> str:
         return self._href
+
+
+class _SessionWrapper(contextlib.AbstractContextManager):
+    """Wraps a `requests.Session` to allow header values to be injected with
+    all requests.
+
+    Notes
+    -----
+    `requests.Session` already has a feature for setting headers globally, but
+    our session objects are global and authorization headers can vary for each
+    HttpResourcePath instance.
+    """
+
+    def __init__(self, session: requests.Session, *, extra_headers: dict[str, str] | None) -> None:
+        self._session = session
+        self._extra_headers = extra_headers
+
+    def __enter__(self) -> _SessionWrapper:
+        self._session.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Any,
+        exc_value: Any,
+        traceback: Any,
+    ) -> None:
+        return self._session.__exit__(exc_type, exc_value, traceback)
+
+    def get(
+        self,
+        url: str,
+        *,
+        timeout: tuple[float, float],
+        allow_redirects: bool = True,
+        stream: bool,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return self._session.get(
+            url,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            stream=stream,
+            headers=self._augment_headers(headers),
+        )
+
+    def head(
+        self,
+        url: str,
+        *,
+        timeout: tuple[float, float],
+        allow_redirects: bool,
+        stream: bool,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return self._session.head(
+            url,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            stream=stream,
+            headers=self._augment_headers(headers),
+        )
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: str | bytes | BinaryIO | None,
+        timeout: tuple[float, float],
+        allow_redirects: bool,
+        stream: bool,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return self._session.request(
+            method,
+            url,
+            data=data,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            stream=stream,
+            headers=self._augment_headers(headers),
+        )
+
+    def _augment_headers(self, headers: dict[str, str] | None) -> dict[str, str]:
+        if headers is None:
+            headers = {}
+
+        if self._extra_headers is not None:
+            headers = headers | self._extra_headers
+
+        return headers
