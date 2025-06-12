@@ -12,6 +12,7 @@
 import hashlib
 import io
 import os.path
+import pickle
 import random
 import shutil
 import socket
@@ -20,6 +21,7 @@ import string
 import tempfile
 import time
 import unittest
+import unittest.mock
 import warnings
 from collections.abc import Callable
 from threading import Thread
@@ -33,6 +35,7 @@ except ImportError:
 
 import requests
 import responses
+import responses.matchers
 
 import lsst.resources
 from lsst.resources import ResourcePath
@@ -81,6 +84,38 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
             ResourcePath("http://user:password@server.com:3000/some/path;parameters").root_uri(),
             ResourcePath("http://user:password@server.com:3000/"),
         )
+
+    @responses.activate
+    def test_extra_headers(self):
+        url = "http://test.example/something.txt"
+        path = HttpResourcePath.create_http_resource_path(
+            url, extra_headers={"Authorization": "Bearer my-token"}
+        )
+
+        self.assertEqual(str(path), "http://test.example/something.txt")
+        self.assertEqual(path._extra_headers, {"Authorization": "Bearer my-token"})
+
+        # Make sure that headers are added to requests.
+        responses.add(
+            responses.GET,
+            url,
+            b"test",
+            match=[responses.matchers.header_matcher({"Authorization": "Bearer my-token"})],
+        )
+        self.assertEqual(path.read(), b"test")
+
+        # Extra headers should be preserved through pickle, to ensure that
+        # `mtransfer` and similar methods work in multi-process mode.
+        dump = pickle.dumps(path)
+        restored = pickle.loads(dump)
+        self.assertEqual(restored._extra_headers, {"Authorization": "Bearer my-token"})
+
+        # Extra headers should be preserved when making a modified copy of the
+        # ResourcePath using replace() or the ResourcePath constructor.
+        replacement = path.replace(forceDirectory=True)
+        self.assertEqual(replacement._extra_headers, {"Authorization": "Bearer my-token"})
+        copy = ResourcePath(path, forceDirectory=True)
+        self.assertEqual(copy._extra_headers, {"Authorization": "Bearer my-token"})
 
 
 class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
