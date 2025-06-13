@@ -609,10 +609,10 @@ class S3ResourcePath(ResourcePath):
         timer_msg = "Transfer from %s to %s"
         timer_args = (src, self)
 
-        if isinstance(src, type(self)):
-            # Looks like an S3 remote uri so we can use direct copy
-            # note that boto3.resource.meta.copy is cleverer than the low
-            # level copy_object
+        if isinstance(src, type(self)) and self.client == src.client:
+            # Looks like an S3 remote uri so we can use direct copy.
+            # This only works if the source and destination are using the same
+            # S3 endpoint and profile.
             with time_this(log, msg=timer_msg, args=timer_args):
                 self._copy_from(src)
 

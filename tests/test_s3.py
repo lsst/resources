@@ -351,6 +351,17 @@ class S3WithProfileReadWriteTestCase(S3ReadWriteTestCaseBase, unittest.TestCase)
         self.assertEqual(path2._bucket, "ceph:bucket2")
         self.assertIsNone(path2._profile)
 
+    def test_transfer_from_different_endpoints(self):
+        # Create a bucket using a different endpoint (the default endpoint.)
+        boto3.resource("s3").create_bucket(Bucket="source-bucket")
+        source_path = ResourcePath("s3://source-bucket/file.txt")
+        source_path.write(b"123")
+        target_path = ResourcePath(f"s3://{self.netloc}/target.txt")
+        # Transfer from default endpoint to custom endpoint with custom
+        # profile.
+        target_path.transfer_from(source_path)
+        self.assertEqual(target_path.read(), b"123")
+
 
 if __name__ == "__main__":
     unittest.main()
