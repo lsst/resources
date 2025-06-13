@@ -1,1 +1,0 @@
-Added support for ``dav`` URI schemes as aliases for HTTP.
