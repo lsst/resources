@@ -172,7 +172,21 @@ dav_globals: DavGlobals = DavGlobals()
 
 
 class DavResourcePath(ResourcePath):
-    """WebDAV resource."""
+    """WebDAV resource.
+
+    Parameters
+    ----------
+    uri : `ResourcePathExpression`
+        URI to store in object.
+    root : `str` or `ResourcePath` or `None`, optional
+        Root for relative URIs. Not used in this constructor.
+    forceAbsolute : `bool`
+        Whether to force absolute URI. A WebDAV URI is always absolute.
+    forceDirectory : `bool` or `None`, optional
+        Whether this URI represents a directory.
+    isTemporary : `bool` or `None`, optional
+        Whether this URI represents a temporary resource.
+    """
 
     def __init__(
         self,
@@ -470,7 +484,7 @@ class DavResourcePath(ResourcePath):
 
         Parameters
         ----------
-        recursive: `bool`
+        recursive : `bool`
             If `True` recursively remove all files and directories under this
             directory.
 
