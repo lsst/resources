@@ -1255,7 +1255,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         return self
 
-    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
+    @contextlib.contextmanager
+    def _as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
+    ) -> Iterator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
 
         This is a helper function for `as_local` context manager.
@@ -1274,13 +1277,9 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Returns
         -------
-        path : `str`
-            If this is a remote resource, it will be a copy of the resource
-            on the local file system, probably in a temporary directory.
-            For a local resource this should be the actual path to the
-            resource.
-        is_temporary : `bool`
-            Indicates if the local path is a temporary file or not.
+        local_uri : `ResourcePath`
+            A URI to a local POSIX file. This can either be the same resource
+            or a local downloaded copy of the resource.
         """
         raise NotImplementedError()
 
@@ -1330,18 +1329,8 @@ class ResourcePath:  # numpydoc ignore=PR02
         temp_dir = ResourcePath(tmpdir, forceDirectory=True) if tmpdir is not None else None
         if temp_dir is not None and not temp_dir.isLocal:
             raise ValueError(f"Temporary directory for as_local must be local resource not {temp_dir}")
-        local_src, is_temporary = self._as_local(multithreaded=multithreaded, tmpdir=temp_dir)
-        local_uri = ResourcePath(local_src, isTemporary=is_temporary)
-
-        try:
+        with self._as_local(multithreaded=multithreaded, tmpdir=temp_dir) as local_uri:
             yield local_uri
-        finally:
-            # The caller might have relocated the temporary file.
-            # Do not ever delete if the temporary matches self
-            # (since it may have been that a temporary file was made local
-            # but already was local).
-            if self != local_uri and is_temporary and local_uri.exists():
-                local_uri.remove()
 
     @classmethod
     @contextlib.contextmanager

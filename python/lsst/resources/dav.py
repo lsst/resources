@@ -396,7 +396,10 @@ class DavResourcePath(ResourcePath):
         headers.update({"Accept-Encoding": "identity"})
         return self._client.read_range(self._internal_url, start=start, end=end, headers=headers)
 
-    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
+    @contextlib.contextmanager
+    def _as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
+    ) -> Iterator[ResourcePath]:
         """Download object and place in temporary directory.
 
         Parameters
@@ -413,10 +416,9 @@ class DavResourcePath(ResourcePath):
 
         Returns
         -------
-        path : `str`
-            Path to local temporary file.
-        temporary : `bool`
-            Always returns `True`. This is always a temporary file.
+        local_uri : `ResourcePath`
+            A URI to a local POSIX file corresponding to a local temporary
+            downloaded copy of the resource.
         """
         # We need to ensure that this resource is actually a file. dCache
         # responds with a HTML-formatted content to a HTTP GET request to a
@@ -431,9 +433,9 @@ class DavResourcePath(ResourcePath):
         else:
             buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
 
-        with ResourcePath.temporary_uri(suffix=self.getExtension(), prefix=tmpdir, delete=False) as tmp_uri:
+        with ResourcePath.temporary_uri(suffix=self.getExtension(), prefix=tmpdir, delete=True) as tmp_uri:
             self._client.download(self._internal_url, tmp_uri.ospath, buffer_size)
-            return tmp_uri.ospath, True
+            yield tmp_uri
 
     def write(self, data: BinaryIO | bytes, overwrite: bool = True) -> None:
         """Write the supplied bytes to the new resource.

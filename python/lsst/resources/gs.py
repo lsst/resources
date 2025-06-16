@@ -202,17 +202,20 @@ class GSResourcePath(ResourcePath):
         # Should this method do anything at all?
         self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
 
-    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
+    @contextlib.contextmanager
+    def _as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
+    ) -> Iterator[ResourcePath]:
         with (
-            ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=False) as tmp_uri,
+            ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=True) as tmp_uri,
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
             try:
                 with tmp_uri.open("wb") as tmpFile:
                     self.blob.download_to_file(tmpFile, retry=_RETRY_POLICY)
+                yield tmp_uri
             except NotFound as e:
                 raise FileNotFoundError(f"No such resource: {self}") from e
-        return tmp_uri.ospath, True
 
     def transfer_from(
         self,

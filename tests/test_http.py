@@ -315,12 +315,12 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
         remote_file = self.tmpdir.join(self._get_file_name())
         self.assertIsNone(remote_file.write(data=contents, overwrite=True))
 
-        local_path, is_temp = remote_file._as_local()
-        self.assertTrue(is_temp)
-        self.assertTrue(os.path.exists(local_path))
-        self.assertTrue(os.stat(local_path).st_size, len(contents))
-        self.assertEqual(ResourcePath(local_path).read(), contents)
-        os.remove(local_path)
+        with remote_file._as_local() as local_uri:
+            self.assertTrue(local_uri.isTemporary)
+            self.assertTrue(os.path.exists(local_uri.ospath))
+            self.assertTrue(os.stat(local_uri.ospath).st_size, len(contents))
+            self.assertEqual(local_uri.read(), contents)
+        self.assertFalse(local_uri.exists())
 
     def test_dav_size(self):
         # Size of a non-existent file must raise.

@@ -477,7 +477,10 @@ class S3ResourcePath(ResourcePath):
 
         return s3, f"{self._bucket}/{self.relativeToPathRoot}"
 
-    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
+    @contextlib.contextmanager
+    def _as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
+    ) -> Iterator[ResourcePath]:
         """Download object from S3 and place in temporary directory.
 
         Parameters
@@ -494,13 +497,12 @@ class S3ResourcePath(ResourcePath):
 
         Returns
         -------
-        path : `str`
-            Path to local temporary file.
-        temporary : `bool`
-            Always returns `True`. This is always a temporary file.
+        local_uri : `ResourcePath`
+            A URI to a local POSIX file corresponding to a local temporary
+            downloaded copy of the resource.
         """
         with (
-            ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=False) as tmp_uri,
+            ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=True) as tmp_uri,
             self._use_threads_temp_override(multithreaded),
             time_this(log, msg="Downloading %s to local file", args=(self,)),
         ):
@@ -511,7 +513,7 @@ class S3ResourcePath(ResourcePath):
             )
             with tmp_uri.open("wb") as tmpFile:
                 self._download_file(tmpFile, progress)
-        return tmp_uri.ospath, True
+            yield tmp_uri
 
     @backoff.on_exception(backoff.expo, all_retryable_errors, max_time=max_retry_time)
     def _upload_file(self, local_file: ResourcePath, progress: ProgressPercentage | None) -> None:
