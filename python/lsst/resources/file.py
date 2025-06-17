@@ -79,7 +79,10 @@ class FileResourcePath(ResourcePath):
         """Remove the resource."""
         os.remove(self.ospath)
 
-    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
+    @contextlib.contextmanager
+    def _as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
+    ) -> Iterator[ResourcePath]:
         """Return the local path of the file.
 
         This is an internal helper for ``as_local()``.
@@ -93,12 +96,10 @@ class FileResourcePath(ResourcePath):
 
         Returns
         -------
-        path : `str`
-            The local path to this file.
-        temporary : `bool`
-            Always returns the temporary nature of the input file resource.
+        local_uri : `ResourcePath`
+            A local URI. In this case it will be itself.
         """
-        return self.ospath, self.isTemporary
+        yield self
 
     def read(self, size: int = -1) -> bytes:
         with open(self.ospath, "rb") as fh:

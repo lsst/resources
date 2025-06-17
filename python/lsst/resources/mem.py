@@ -13,6 +13,9 @@ from __future__ import annotations
 
 __all__ = ("InMemoryResourcePath",)
 
+import contextlib
+from collections.abc import Iterator
+
 from ._resourcePath import ResourcePath
 
 
@@ -27,5 +30,8 @@ class InMemoryResourcePath(ResourcePath):
         """Test for existence and always return False."""
         return True
 
-    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
+    @contextlib.contextmanager
+    def _as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
+    ) -> Iterator[ResourcePath]:
         raise RuntimeError(f"Do not know how to retrieve data for URI '{self}'")

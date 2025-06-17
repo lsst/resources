@@ -98,7 +98,7 @@ class LocationTestCase(unittest.TestCase):
 
         for uriInfo in uriStrings:
             uri = ResourcePath(uriInfo[0], root=testRoot, forceAbsolute=uriInfo[1], forceDirectory=uriInfo[2])
-            with self.subTest(in_uri=uriInfo[0], out_uri=uri):
+            with self.subTest(in_uri=repr(uriInfo[0]), out_uri=repr(uri)):
                 self.assertEqual(uri.scheme, uriInfo[3], "test scheme")
                 self.assertEqual(uri.netloc, uriInfo[4], "test netloc")
                 self.assertEqual(uri.path, uriInfo[5], "test path")
@@ -115,7 +115,7 @@ class LocationTestCase(unittest.TestCase):
 
         for uriInfo in uriStrings:
             uri = ResourcePath(uriInfo[0], forceAbsolute=uriInfo[1], forceDirectory=uriInfo[2])
-            with self.subTest(in_uri=uriInfo[0], out_uri=uri):
+            with self.subTest(in_uri=repr(uriInfo[0]), out_uri=repr(uri)):
                 self.assertEqual(uri.scheme, uriInfo[3], "test scheme")
                 self.assertEqual(uri.netloc, uriInfo[4], "test netloc")
                 # Use ospath here to ensure that we have unquoted any
@@ -133,7 +133,7 @@ class LocationTestCase(unittest.TestCase):
 
         for uriInfo in uriStrings:
             uri = ResourcePath(uriInfo[0], forceAbsolute=False).updatedFile(uriInfo[1])
-            with self.subTest(in_uri=uriInfo[0], out_uri=uri):
+            with self.subTest(in_uri=repr(uriInfo[0]), out_uri=repr(uri)):
                 self.assertEqual(uri.path, uriInfo[2])
 
         # Check that schemeless can become file scheme.
@@ -333,7 +333,7 @@ class LocationTestCase(unittest.TestCase):
         """Test round tripping of the posix to os.path conversion helpers."""
         testPaths = ("/a/b/c.e", "a/b", "a/b/", "/a/b", "/a/b/", "a/b/c.e")
         for p in testPaths:
-            with self.subTest(path=p):
+            with self.subTest(path=repr(p)):
                 self.assertEqual(os2posix(posix2os(p)), p)
 
     def testSplit(self):
@@ -368,7 +368,7 @@ class LocationTestCase(unittest.TestCase):
         )
 
         for p, e in zip(testPaths, expected, strict=True):
-            with self.subTest(path=p):
+            with self.subTest(path=repr(p)):
                 uri = ResourcePath(p, testRoot)
                 head, tail = uri.split()
                 self.assertEqual((head.geturl(), tail), e)

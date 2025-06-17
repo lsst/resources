@@ -1531,7 +1531,10 @@ class HttpResourcePath(ResourcePath):
         except json.JSONDecodeError:
             raise ValueError(f"could not deserialize response to POST request for URL {self}")
 
-    def _as_local(self, multithreaded: bool = True, tmpdir: ResourcePath | None = None) -> tuple[str, bool]:
+    @contextlib.contextmanager
+    def _as_local(
+        self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
+    ) -> Iterator[ResourcePath]:
         """Download object over HTTP and place in temporary directory.
 
         Parameters
@@ -1548,10 +1551,9 @@ class HttpResourcePath(ResourcePath):
 
         Returns
         -------
-        path : `str`
-            Path to local temporary file.
-        temporary : `bool`
-            Always returns `True`. This is always a temporary file.
+        local_uri : `ResourcePath`
+            A URI to a local POSIX file corresponding to a local temporary
+            downloaded copy of the resource.
         """
         # Use the session as a context manager to ensure that connections
         # to both the front end and back end servers are closed after the
@@ -1570,7 +1572,7 @@ class HttpResourcePath(ResourcePath):
                 buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
 
             with ResourcePath.temporary_uri(
-                suffix=self.getExtension(), prefix=tmpdir, delete=False
+                suffix=self.getExtension(), prefix=tmpdir, delete=True
             ) as tmp_uri:
                 expected_length = int(resp.headers.get("Content-Length", "-1"))
                 with time_this(
@@ -1586,20 +1588,20 @@ class HttpResourcePath(ResourcePath):
                             tmpFile.write(chunk)
                             content_length += len(chunk)
 
-            # Check that the expected and actual content lengths match. Perform
-            # this check only when the contents of the file was not encoded by
-            # the server.
-            if (
-                "Content-Encoding" not in resp.headers
-                and expected_length >= 0
-                and expected_length != content_length
-            ):
-                raise ValueError(
-                    f"Size of downloaded file does not match value in Content-Length header for {self}: "
-                    f"expecting {expected_length} and got {content_length} bytes"
-                )
+                # Check that the expected and actual content lengths match.
+                # Perform this check only when the contents of the file was not
+                # encoded by the server.
+                if (
+                    "Content-Encoding" not in resp.headers
+                    and expected_length >= 0
+                    and expected_length != content_length
+                ):
+                    raise ValueError(
+                        f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                        f"expecting {expected_length} and got {content_length} bytes"
+                    )
 
-            return tmpFile.name, True
+                yield tmp_uri
 
     def _send_webdav_request(
         self,
