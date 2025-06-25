@@ -385,6 +385,11 @@ class ResourcePath:  # numpydoc ignore=PR02
                 from .mem import InMemoryResourcePath
 
                 subclass = InMemoryResourcePath
+            elif parsed.scheme == "eups":
+                # EUPS package root.
+                from .eups import EupsResourcePath
+
+                subclass = EupsResourcePath
             else:
                 raise NotImplementedError(
                     f"No URI support for scheme: '{parsed.scheme}' in {parsed.geturl()}"
