@@ -386,6 +386,11 @@ class ResourcePath:  # numpydoc ignore=PR02
                 from .mem import InMemoryResourcePath
 
                 subclass = InMemoryResourcePath
+            elif parsed.scheme == "eups":
+                # EUPS package root.
+                from .eups import EupsResourcePath
+
+                subclass = EupsResourcePath
             else:
                 raise NotImplementedError(
                     f"No URI support for scheme: '{parsed.scheme}' in {parsed.geturl()}"
@@ -410,7 +415,12 @@ class ResourcePath:  # numpydoc ignore=PR02
         if isTemporary is None:
             isTemporary = False
         self.isTemporary = isTemporary
+        self._set_proxy()
         return self
+
+    def _set_proxy(self) -> None:
+        """Calculate internal proxy for externally visible resource path."""
+        pass
 
     @property
     def scheme(self) -> str:
