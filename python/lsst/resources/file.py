@@ -21,6 +21,7 @@ import os.path
 import posixpath
 import re
 import shutil
+import stat
 import urllib.parse
 from collections.abc import Iterator
 from typing import IO, TYPE_CHECKING
@@ -328,15 +329,38 @@ class FileResourcePath(ResourcePath):
                 # the same output directory. This at least guarantees that
                 # if multiple processes are writing to the same file
                 # simultaneously the file we end up with will not be corrupt.
-                with self.temporary_uri(prefix=self.parent(), suffix=self.getExtension()) as temp_copy:
-                    shutil.copy(local_src, temp_copy.ospath)
-                    with transaction.undoWith(f"copy from {local_src}", os.remove, newFullPath):
-                        # os.rename works even if the file exists.
-                        # It's possible that another process has copied a file
-                        # in whilst this one was copying. If overwrite
-                        # protection is needed then another stat() call should
-                        # happen here.
-                        os.rename(temp_copy.ospath, newFullPath)
+                if overwrite:
+                    with self.temporary_uri(prefix=self.parent(), suffix=self.getExtension()) as temp_copy:
+                        shutil.copy(local_src, temp_copy.ospath)
+                        with transaction.undoWith(f"copy from {local_src}", os.remove, newFullPath):
+                            os.rename(temp_copy.ospath, newFullPath)
+                else:
+                    # Create the file exclusively to ensure that no others are
+                    # trying to write.
+                    temp_path = newFullPath + ".transfer-tmp"
+                    try:
+                        with open(temp_path, "x"):
+                            pass
+                    except FileExistsError:
+                        raise FileExistsError(
+                            f"Another process is writing to '{self}'."
+                            f" Transfer from {src} cannot be completed."
+                        )
+                    with transaction.undoWith(f"copy from {local_src}", os.remove, temp_path):
+                        # Make sure file is writable, no matter the umask.
+                        st = os.stat(temp_path)
+                        os.chmod(temp_path, st.st_mode | stat.S_IWUSR)
+                        shutil.copy(local_src, temp_path)
+                    # Use link/remove to atomically and exclusively move the
+                    # file into place (only one concurrent linker can win).
+                    try:
+                        os.link(temp_path, newFullPath)
+                    except FileExistsError:
+                        raise FileExistsError(
+                            f"Another process wrote to '{self}'. Transfer from {src} cannot be completed."
+                        )
+                    finally:
+                        os.remove(temp_path)
             elif transfer == "link":
                 # Try hard link and if that fails use a symlink
                 with transaction.undoWith(f"link to {local_src}", os.remove, newFullPath):
