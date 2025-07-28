@@ -392,6 +392,14 @@ class GenericTestCase(_GenericTestCase):
         self.assertEqual(child_file.parent().parent(), parent)
         self.assertEqual(child_subdir.dirname(), child_subdir)
 
+        # Make sure that the parent doesn't retain any fragment from the
+        # child.
+        child_fragment = child_subdir.join("a.txt#fragment")
+        self.assertEqual(child_fragment.fragment, "fragment")
+        fragment_parent = child_fragment.parent()
+        self.assertEqual(fragment_parent.fragment, "")
+        self.assertTrue(str(fragment_parent).endswith("/"))
+
     def test_escapes(self) -> None:
         """Special characters in file paths."""
         src = self.root_uri.join("bbb/???/test.txt")
@@ -495,6 +503,13 @@ class GenericTestCase(_GenericTestCase):
         fnew3 = root.join("a/b.txt#fragment")
         self.assertEqual(fnew3.fragment, "fragment")
         self.assertEqual(fnew3.basename(), "b.txt", msg=f"Got: {fnew3._uri}")
+
+        # Check that fragment on the directory is dropped on join.
+        frag_dir = add_dir.join("subdir/#dir_fragment")
+        self.assertEqual(frag_dir.fragment, "dir_fragment")
+        fnew4 = frag_dir.join("a.txt")
+        self.assertEqual(fnew4.fragment, "")
+        self.assertTrue(str(fnew4).endswith("/a.txt"))
 
         # Join a resource path.
         subpath = ResourcePath("a/b.txt#fragment2", forceAbsolute=False, forceDirectory=False)

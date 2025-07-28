@@ -549,7 +549,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             return self, ""
 
         head, tail = self._pathModule.split(self.path)
-        headuri = self._uri._replace(path=head)
+        headuri = self._uri._replace(path=head, fragment="", query="", params="")
 
         # The file part should never include quoted metacharacters
         tail = urllib.parse.unquote(tail)
@@ -619,7 +619,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         # regardless of the presence of a trailing separator
         originalPath = self._pathLib(self.path)
         parentPath = originalPath.parent
-        return self.replace(path=str(parentPath), forceDirectory=True)
+        return self.replace(path=str(parentPath), forceDirectory=True, fragment="", query="", params="")
 
     def replace(
         self, forceDirectory: bool | None = None, isTemporary: bool = False, **kwargs: Any
@@ -866,6 +866,8 @@ class ResourcePath:  # numpydoc ignore=PR02
             forceDirectory=forceDirectory,
             isTemporary=isTemporary,
             fragment=path_uri.fragment,
+            query=path_uri.query,
+            params=path_uri.params,
         )
 
     def relative_to(self, other: ResourcePath) -> str | None:
