@@ -1,0 +1,1 @@
+Fixed bug where ``.parents()`` and ``.dirname()`` were incorrectly returning the fragment of the file.
