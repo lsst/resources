@@ -104,6 +104,17 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         )
         self.assertEqual(path.read(), b"test")
 
+        # Make sure that headers are added to fsspec.
+        # This triggers logic for "webdav" vs "not-webdav" that does an OPTIONS
+        # request, so we need to check that too.
+        responses.add(
+            responses.OPTIONS,
+            "http://test.example/",
+            match=[responses.matchers.header_matcher({"Authorization": "Bearer my-token"})],
+        )
+        fs, _ = path.to_fsspec()
+        self.assertEqual(fs.client_kwargs.get("headers"), {"Authorization": "Bearer my-token"})
+
         # Extra headers should be preserved through pickle, to ensure that
         # `mtransfer` and similar methods work in multi-process mode.
         dump = pickle.dumps(path)
