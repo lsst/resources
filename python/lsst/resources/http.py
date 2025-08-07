@@ -430,9 +430,7 @@ def _get_dav_and_server_headers(path: ResourcePath | str) -> tuple[str | None, s
         config = HttpResourcePathConfig()
         with SessionStore(config=config).get(path) as session:
             resp = session.options(
-                str(path),
-                stream=False,
-                timeout=config.timeout,
+                str(path), stream=False, timeout=config.timeout, headers=path._extra_headers
             )
 
             dav_header = server_header = None
@@ -1380,15 +1378,11 @@ class HttpResourcePath(ResourcePath):
         path : `str`
             A path that can be opened by the file system object.
         """
-        if (
-            fsspec is None
-            or not self.is_webdav_endpoint
-            or self.server not in HttpResourcePath.SUPPORTED_URL_SIGNERS
-        ):
-            if self.scheme.startswith("dav") and fsspec:
-                # Not webdav so convert to http.
-                return fsspec.url_to_fs(self.geturl())
+        if fsspec is None:
             return super().to_fsspec()
+
+        if not self.is_webdav_endpoint or self.server not in HttpResourcePath.SUPPORTED_URL_SIGNERS:
+            return fsspec.url_to_fs(self.geturl(), client_kwargs={"headers": self._extra_headers})
 
         if self.isdir():
             raise NotImplementedError(
