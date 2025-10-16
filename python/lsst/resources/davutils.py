@@ -58,12 +58,12 @@ def normalize_path(path: str | None) -> str:
     Parameters
     ----------
     path : `str`, optional
-        Path to normalize, e.g. '/path/to/..///normalize/'
+        Path to normalize (e.g., '/path/to/..///normalize/').
 
     Returns
     -------
     url : `str`
-        Normalized URL, e.g. '/path/normalize'
+        Normalized URL (e.g., '/path/normalize').
     """
     return "/" if not path else "/" + posixpath.normpath(path).lstrip("/")
 
@@ -75,20 +75,18 @@ def normalize_url(url: str, preserve_scheme: bool = False, preserve_path: bool =
     Parameters
     ----------
     url : `str`
-        URL to normalize, e.g. 'davs://example.org:1234///path/to//../dir/'
-
+        URL to normalize (e.g., 'davs://example.org:1234///path/to//../dir/').
     preserve_scheme : `bool`
         If True the scheme of `url` will be preserved. Otherwise the scheme
         of the returned normalized URL will be 'http' or 'https'.
-
-    preserve_path :  `bool`
-        if True, the path of `url` will be preserved in the returned
+    preserve_path : `bool`
+        If True, the path of `url` will be preserved in the returned
         normalized URL, otherwise, the returned URL will have '/' as path.
 
     Returns
     -------
     url : `str`
-        Normalized URL, e.g. 'https://example.org:1234/path/dir'
+        Normalized URL (e.g. 'https://example.org:1234/path/dir').
     """
     parsed = parse_url(url)
     if parsed.scheme is None:
@@ -324,7 +322,7 @@ class DavConfigPool:
 
     Parameters
     ----------
-    filenames : `list[str]`
+    filename : `list` [ `str` ]
         List of environment variables or file names to load the configuration
         from. The first file found in the list will be read and the
         configuration settings for all webDAV endpoints will be extracted
@@ -416,7 +414,12 @@ class DavConfigPool:
 
     def get_config_for_url(self, url: str) -> DavConfig:
         """Return the configuration to use a webDAV client when interacting
-        whith the server which hosts the resource at `url`.
+        with the server which hosts the resource at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            URL for which to obtain a configuration.
         """
         # Select the configuration for the endpoint of the provided URL.
         normalized_url: str = normalize_url(url, preserve_path=False)
@@ -446,7 +449,7 @@ def make_retry(config: DavConfig) -> Retry:
     Returns
     -------
     retry : `urllib3.util.Retry`
-        retry object to he used when creating a ``urllib3.PoolManager``
+        Retry object to he used when creating a ``urllib3.PoolManager``.
     """
     backoff_min: float = config.retry_backoff_min
     backoff_max: float = config.retry_backoff_max
@@ -534,6 +537,13 @@ class DavClientPool:
         """Return a client for interacting with the endpoint where `url`
         is hosted.
 
+        Parameters
+        ----------
+        url : `str`
+            URL for which to obtain a client.
+
+        Notes
+        -----
         The returned client is thread-safe. If a client for that endpoint
         already exists it is reused, otherwise a new client is created
         with the appropriate configuration for interacting with the storage
@@ -600,10 +610,13 @@ class DavClient:
     Parameters
     ----------
     url : `str`
-        Root URL of the storage endpoint (e.g. "https://host.example.org:1234/")
-
+        Root URL of the storage endpoint (e.g.
+        "https://host.example.org:1234/").
     config : `DavConfig`
         Configuration to initialize this client.
+    accepts_ranges : `bool` | `None`
+        Indicate whether the remote server accepts the ``Range`` header in GET
+        requests.
     """
 
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
@@ -721,8 +734,13 @@ class DavClient:
 
     def get_server_details(self, url: str) -> dict[str, str]:
         """
-        Retrieve the details of the server and check it  advertises compliance
+        Retrieve the details of the server and check it advertises compliance
         to class 1 of webDAV protocol.
+
+        Parameters
+        ----------
+        url : `str`
+            URL to check.
 
         Returns
         -------
@@ -807,17 +825,17 @@ class DavClient:
             Target URL.
         headers : `dict[str, str]`, optional
             Headers to sent with the request.
-        body: `bytes` or `str` or `None`, optional
+        body : `bytes` or `str` or `None`, optional
             Request body.
-        pool_manager: `PoolManager`, optional
+        pool_manager : `PoolManager`, optional
             Pool manager to use to send the request. By default, the requests
             are sent to the frontend servers.
-        preload_content: `bool`, optional
+        preload_content : `bool`, optional
             If True, the response body is downloaded and can be retrieved
             via the returned response `.data` property. If False, the
             caller needs to call `.read()` on the returned response object to
             download the body, either entirely in one call or by chunks.
-        redirect: `bool`, optional
+        redirect : `bool`, optional
             If True, automatically handle redirects. If False, the returned
             response may contain a redirection to another location.
 
@@ -871,7 +889,7 @@ class DavClient:
             Target URL.
         headers : `dict[str, str]`, optional
             Headers to sent with the request.
-        preload_content: `bool`, optional
+        preload_content : `bool`, optional
             If True, the response body is downloaded and can be retrieved
             via the returned response `.data` property. If False, the
             caller needs to call the `.read()` on the returned response
@@ -934,7 +952,7 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-        data: `BinaryIO` or `bytes`
+        data : `BinaryIO` or `bytes`
             Request body.
         """
         # Send a PUT request with empty body and handle redirection. This
@@ -1000,8 +1018,7 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-
-        raise_if_not_found: `bool``
+        headers : `bool``
             If the target URL is not found, raise an exception. Otherwise
             just return the response.
         """
@@ -1063,9 +1080,9 @@ class DavClient:
         Returns
         -------
         result: `DavResourceMetadata``
-           Details of the resources at `url`. If no resource was found at
-           that URL no exception is raised. Instead the returned details allow
-           for detecting that the resource does not exist.
+            Details of the resources at `url`. If no resource was found at
+            that URL no exception is raised. Instead the returned details allow
+            for detecting that the resource does not exist.
         """
         resp = self._propfind(url)
         match resp.status:
@@ -1095,43 +1112,48 @@ class DavClient:
         Returns
         -------
         result: `dict``
-
             For an existing file, the returned value has the form:
 
-            {
-               "name": name,
-               "size": 1234,
-               "type": "file",
-               "last_modified":
-                    datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
-               "checksums": {
-                  "adler32": "0fc5f83f",
-                  "md5": "1f57339acdec099c6c0a41f8e3d5fcd0",
+            .. code-block:: json
+
+               {
+                  "name": name,
+                  "size": 1234,
+                  "type": "file",
+                  "last_modified":
+                        datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
+                  "checksums": {
+                    "adler32": "0fc5f83f",
+                    "md5": "1f57339acdec099c6c0a41f8e3d5fcd0",
+                  }
                }
-            }
 
             For an existing directory, the returned value has the form:
 
-            {
-                "name": name,
-                "size": 0,
-                "type": "directory",
-                "last_modified":
-                    datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
-                "checksums": {},
-            }
+            .. code-block:: json
 
-            For an inexisting file or directory, the returned value has the
+               {
+                  "name": name,
+                  "size": 0,
+                  "type": "directory",
+                  "last_modified":
+                     datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
+                  "checksums": {},
+                }
+
+            For a non-existing file or directory, the returned value has the
             form:
 
-            {
-                "name": name,
-                "size": None,
-                "type": None,
-                "last_modified":
+            .. code-block:: json
+
+               {
+                 "name": name,
+                 "size": None,
+                 "type": None,
+                 "last_modified":
                     datetime.datetime(1, 1, 1, 0, 0),
-                "checksums": {},
-            }
+                 "checksums": {},
+               }
 
         Notes
         -----
@@ -1234,12 +1256,11 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-
-        start: `int`
+        start : `int`
             Starting byte offset of the range to download.
-        end: `int`
+        end : `int`
             Ending byte offset of the range to download.
-        headers: `dict[str,str]`, optional
+        headers : `dict[str,str]`, optional
             Specific headers to sent with the GET request.
 
         Returns
@@ -1268,13 +1289,13 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-
-        filename: `str`
+        filename : `str`
             Local file to write the content to. If the file already exists,
             it will be rewritten.
-
-        chunk_size: `int`
+        chunk_size : `int`
             Size of the chunks to write to `filename`.
+        close_connection : `bool`
+            Whether to close the connection after download.
 
         Returns
         -------
@@ -1330,8 +1351,7 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-
-        data: `bytes`
+        data : `bytes`
             Sequence of bytes to upload.
 
         Notes
@@ -1350,7 +1370,7 @@ class DavClient:
         Parameters
         ----------
         url : `str`
-            Target URL
+            Target URL.
 
         Returns
         -------
@@ -1412,6 +1432,11 @@ class DavClient:
     def accepts_ranges(self, url: str) -> bool:
         """Return `True` if the server supports a 'Range' header in
         GET requests against `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
         """
         # If we have already determined that the server accepts "Range" for
         # another URL, we assume that it implements that feature for any
@@ -1486,6 +1511,8 @@ class DavClient:
 
         Parameters
         ----------
+        url : `str`
+            Target URL.
         expiration_time_seconds : `int`
             Number of seconds until the generated URL is no longer valid.
 
@@ -1502,6 +1529,8 @@ class DavClient:
 
         Parameters
         ----------
+        url : `str`
+            Target URL.
         expiration_time_seconds : `int`
             Number of seconds until the generated URL is no longer valid.
 
@@ -1530,10 +1559,13 @@ class DavClientURLSigner(DavClient):
     Parameters
     ----------
     url : `str`
-        Root URL of the storage endpoint (e.g. "https://host.example.org:1234/")
-
+        Root URL of the storage endpoint
+        (e.g. "https://host.example.org:1234/").
     config : `DavConfig`
         Configuration to initialize this client.
+    accepts_ranges : `bool` | `None`
+        Indicate whether the remote server accepts the ``Range`` header in GET
+        requests.
     """
 
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
@@ -1772,10 +1804,13 @@ class DavClientDCache(DavClientURLSigner):
     Parameters
     ----------
     url : `str`
-        Root URL of the storage endpoint (e.g. "https://host.example.org:1234/")
-
+        Root URL of the storage endpoint
+        (e.g. "https://host.example.org:1234/").
     config : `DavConfig`
         Configuration to initialize this client.
+    accepts_ranges : `bool` | `None`
+        Indicate whether the remote server accepts the ``Range`` header in GET
+        requests.
     """
 
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
@@ -1817,7 +1852,7 @@ class DavClientDCache(DavClientURLSigner):
             Target URL.
         headers : `dict[str, str]`, optional
             Headers to sent with the request.
-        preload_content: `bool`, optional
+        preload_content : `bool`, optional
             If True, the response body is downloaded and can be retrieved
             via the returned response `.data` property. If False, the
             caller needs to call the `.read()` on the returned response
@@ -1900,7 +1935,7 @@ class DavClientDCache(DavClientURLSigner):
         ----------
         url : `str`
             Target URL.
-        data: `BinaryIO` or `bytes`
+        data : `BinaryIO` or `bytes`
             Request body.
         """
         # Send a PUT request with empty body to the dCache frontend server to
@@ -1999,10 +2034,13 @@ class DavClientXrootD(DavClientURLSigner):
     Parameters
     ----------
     url : `str`
-        Root URL of the storage endpoint (e.g. "https://host.example.org:1234/")
-
+        Root URL of the storage endpoint
+        (e.g. "https://host.example.org:1234/").
     config : `DavConfig`
         Configuration to initialize this client.
+    accepts_ranges : `bool` | `None`
+        Indicate whether the remote server accepts the ``Range`` header in GET
+        requests.
     """
 
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
@@ -2019,7 +2057,7 @@ class DavClientXrootD(DavClientURLSigner):
             Target URL.
         headers : `dict[str, str]`, optional
             Headers to sent with the request.
-        preload_content: `bool`, optional
+        preload_content : `bool`, optional
             If True, the response body is downloaded and can be retrieved
             via the returned response `.data` property. If False, the
             caller needs to call the `.read()` on the returned response
@@ -2087,7 +2125,7 @@ class DavClientXrootD(DavClientURLSigner):
         ----------
         url : `str`
             Target URL.
-        data: `BinaryIO` or `bytes`
+        data : `BinaryIO` or `bytes`
             Request body.
         """
         # Send a PUT request with empty body to the XRootD frontend server to
@@ -2196,7 +2234,27 @@ class DavClientXrootD(DavClientURLSigner):
 
 
 class DavFileMetadata:
-    """Container for attributes of interest of a webDAV file or directory."""
+    """Container for attributes of interest of a webDAV file or directory.
+
+    Parameters
+    ----------
+    base_url : `str`
+        Base URL.
+    href : `str`, optional
+        Path component that can be added to the base URL.
+    name : `str`, optional
+        Name.
+    exists : `bool`, optional
+        Whether file or directory exist.
+    size : `int`, optional
+        Size of file.
+    is_dir : `bool`, optional
+        Whether the URL points to a directory or file.
+    last_modified : `bool`, optional
+        Last modified date.
+    checksums : `dict` [ `str`, `str` ] | `None`, optional
+        Checksums.
+    """
 
     def __init__(
         self,
@@ -2220,7 +2278,15 @@ class DavFileMetadata:
 
     @staticmethod
     def from_property(base_url: str, property: DavProperty) -> DavFileMetadata:
-        """Create an instance from the values in `property`."""
+        """Create an instance from the values in `property`.
+
+        Parameters
+        ----------
+        base_url : `str`
+            Base URL.
+        property : `DavProperty`
+            Properties to associate with URL.
+        """
         return DavFileMetadata(
             base_url=base_url,
             href=property.href,
@@ -2416,13 +2482,7 @@ class DavProperty:
 
 
 class DavPropfindParser:
-    """Helper class to parse the response body of a PROPFIND request.
-
-    Parameters
-    ----------
-    body : `bytes`
-        The XML-encoded response body to PROPFIND.
-    """
+    """Helper class to parse the response body of a PROPFIND request."""
 
     def __init__(self) -> None:
         return
@@ -2434,11 +2494,12 @@ class DavPropfindParser:
         Parameters
         ----------
         body : `bytes`
-            XML-encoded response body to a PROPFIND request
+            XML-encoded response body to a PROPFIND request.
 
         Returns
         -------
-        responses : `List[DavProperty]`
+        responses : `list` [ `DavProperty` ]
+            Parsed content of the response.
 
         Notes
         -----
@@ -2550,7 +2611,13 @@ class TokenAuthorizer:
         return owner_accessible and not group_accessible and not other_accessible
 
     def set_authorization(self, headers: dict[str, str]) -> None:
-        """Add the 'Authorization' header to `headers`."""
+        """Add the 'Authorization' header to `headers`.
+
+        Parameters
+        ----------
+        headers : `dict` [ `str`, `str` ]
+            Dict to augment with authorization information.
+        """
         if self._token is None:
             return
 
@@ -2565,8 +2632,8 @@ def expand_vars(path: str | None) -> str | None:
     Parameters
     ----------
     path : `str` or `None`
-       Abolute or relative path which may include an environment variable
-       e.g. '$HOME/path/to/my/file'
+        Abolute or relative path which may include an environment variable
+        (e.g. '$HOME/path/to/my/file').
 
     Returns
     -------
@@ -2577,7 +2644,15 @@ def expand_vars(path: str | None) -> str | None:
 
 
 def dump_response(method: str, resp: HTTPResponse) -> None:
-    """Dump response for debugging purposes."""
+    """Dump response for debugging purposes.
+
+    Parameters
+    ----------
+    method : `str`
+        Method name to include in log output.
+    resp : `HTTPResponse`
+        Response to dump.
+    """
     log.debug("%s %s", method, resp.geturl())
     for header, value in resp.headers.items():
         log.debug("   %s: %s", header, value)
