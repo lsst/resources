@@ -98,6 +98,17 @@ class SchemelessTestCase(unittest.TestCase):
         self.assertFalse(f.isdir())
         self.assertIsNone(f.dirLike)
 
+    def test_cwd_write(self):
+        f = None
+        try:
+            f = ResourcePath("cwd.txt", forceAbsolute=False)
+            f.write(b"abc")
+            written = f.read()
+            self.assertEqual(written, b"abc")
+        finally:
+            if f:
+                f.remove()
+
 
 if __name__ == "__main__":
     unittest.main()

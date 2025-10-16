@@ -108,7 +108,7 @@ class FileResourcePath(ResourcePath):
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
         dir = os.path.dirname(self.ospath)
-        if not os.path.exists(dir):
+        if dir and not os.path.exists(dir):
             _create_directories(dir)
         mode = "wb" if overwrite else "xb"
         with open(self.ospath, mode) as f:
