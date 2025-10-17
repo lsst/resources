@@ -1,0 +1,1 @@
+Fix ``ResourcePath.write`` for schemeless URIs that had no directory component.

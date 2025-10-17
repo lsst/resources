@@ -1,0 +1,4 @@
+Added ``walk_up`` parameter to ``ResourcePath.relative_to`` to match the behavior of ``Path.relative_to``.
+Using ``walk_up=True`` allows ``..`` to be present in the returned string.
+The default is `False` to remain compatible with previous versions.
+This parameter can only be `True` for Python 3.12 and newer.
