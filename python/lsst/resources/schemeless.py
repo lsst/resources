@@ -105,13 +105,16 @@ class SchemelessResourcePath(FileResourcePath):
             return stat.S_ISDIR(status.st_mode)
         return self.dirLike
 
-    def relative_to(self, other: ResourcePath) -> str | None:
+    def relative_to(self, other: ResourcePath, walk_up: bool = False) -> str | None:
         """Return the relative path from this URI to the other URI.
 
         Parameters
         ----------
         other : `ResourcePath`
             URI to use to calculate the relative path.
+        walk_up : `bool`, optional
+            Control whether "``..``" can be used to resolve a relative path.
+            Default is `False`. Can not be `True` on Python version 3.11.
 
         Returns
         -------
@@ -146,8 +149,8 @@ class SchemelessResourcePath(FileResourcePath):
             raise RuntimeError(f"Unexpected combination of {child}.relative_to({other}).")
 
         if child is None:
-            return super().relative_to(other)
-        return child.relative_to(other)
+            return super().relative_to(other, walk_up=walk_up)
+        return child.relative_to(other, walk_up=walk_up)
 
     @classmethod
     def _fixupPathUri(

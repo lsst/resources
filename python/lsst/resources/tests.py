@@ -17,6 +17,7 @@ import os
 import pathlib
 import random
 import string
+import sys
 import tempfile
 import unittest
 import urllib.parse
@@ -374,6 +375,19 @@ class GenericTestCase(_GenericTestCase):
         child = ResourcePath("d/e.txt", root="/a/b/c")
         parent = ResourcePath("d/e.txt", forceAbsolute=False)
         self.assertIsNone(child.relative_to(parent), f"{child}.relative_to({parent})")
+
+        # Allow .. in response.
+        child = ResourcePath(self._make_uri("a/b/c/d.txt"), forceAbsolute=False)
+        parent = ResourcePath(self._make_uri("a/b/d/e/"), forceAbsolute=False)
+        self.assertIsNone(child.relative_to(parent), f"{child}.relative_to({parent})")
+
+        if sys.version_info >= (3, 12, 0):
+            # Fails on python 3.11.
+            self.assertEqual(
+                child.relative_to(parent, walk_up=True),
+                "../../c/d.txt",
+                f"{child}.relative_to({parent}, walk_up=True)",
+            )
 
     def test_parents(self) -> None:
         """Test of splitting and parent walking."""

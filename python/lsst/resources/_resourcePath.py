@@ -22,6 +22,7 @@ import logging
 import os
 import posixpath
 import re
+import sys
 import urllib.parse
 from collections import defaultdict
 from pathlib import Path, PurePath, PurePosixPath
@@ -870,7 +871,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             params=path_uri.params,
         )
 
-    def relative_to(self, other: ResourcePath) -> str | None:
+    def relative_to(self, other: ResourcePath, walk_up: bool = False) -> str | None:
         """Return the relative path from this URI to the other URI.
 
         Parameters
@@ -878,6 +879,9 @@ class ResourcePath:  # numpydoc ignore=PR02
         other : `ResourcePath`
             URI to use to calculate the relative path. Must be a parent
             of this URI.
+        walk_up : `bool`, optional
+            Control whether "``..``" can be used to resolve a relative path.
+            Default is `False`. Can not be `True` on Python version 3.11.
 
         Returns
         -------
@@ -896,11 +900,22 @@ class ResourcePath:  # numpydoc ignore=PR02
             if not {self.netloc, other.netloc}.issubset(local_netlocs):
                 return None
 
+        # Rather than trying to guess a failure reason from the TypeError
+        # explicitly check for python 3.11. Doing this will simplify the
+        # rediscovery of a useless python version check when we set a new
+        # minimum version.
+        kwargs = {}
+        if walk_up:
+            if sys.version_info < (3, 12, 0):
+                raise TypeError("walk_up parameter can not be true in python 3.11 and older")
+
+            kwargs["walk_up"] = True
+
         enclosed_path = self._pathLib(self.relativeToPathRoot)
         parent_path = other.relativeToPathRoot
         subpath: str | None
         try:
-            subpath = str(enclosed_path.relative_to(parent_path))
+            subpath = str(enclosed_path.relative_to(parent_path, **kwargs))
         except ValueError:
             subpath = None
         else:
