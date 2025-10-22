@@ -23,10 +23,12 @@ import re
 import stat
 import threading
 import time
+import uuid
 import xml.etree.ElementTree as eTree
 from datetime import datetime
 from http import HTTPStatus
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, override
+from urllib.parse import parse_qsl, urlparse, urlunparse
 
 try:
     import fsspec
@@ -97,6 +99,38 @@ def normalize_url(url: str, preserve_scheme: bool = False, preserve_path: bool =
     return Url(scheme=scheme, host=parsed.host, port=parsed.port, path=path).url
 
 
+def redact_url(url: str) -> str:
+    """Return a modified `url` with authorization query redacted. The
+    goal is that this method should be used for logging URLs to avoid
+    leaking authorization tokens.
+
+    Parameters
+    ----------
+    url : `str`
+
+    Returns
+    -------
+    redacted_url : `str`
+        For instance, when called with an URL like:
+
+            davs://host.example.org:1234/a/b/c/file.data?key1=value1&key2=value2&authz=token#fragment
+
+        the returned value would be:
+
+            davs://host.example.org:1234/a/b/c/file.data?key1=value1&key2=value2&authz=[...]#fragment
+    """
+    parsed_url = urlparse(url)
+    redacted_query: list[str] = []
+    for pair in parse_qsl(parsed_url.query):
+        if pair[0] == "authz":
+            redacted_query.append("authz=[...]")
+        else:
+            redacted_query.append(f"{pair[0]}={pair[1]}")
+
+    redacted_url = parsed_url._replace(query="&".join(redacted_query))
+    return str(urlunparse(redacted_url))
+
+
 class DavConfig:
     """Configurable settings a webDAV client must use when interacting with a
     particular storage endpoint.
@@ -128,25 +162,26 @@ class DavConfig:
     # of typical size the webdav client supports.
     DEFAULT_TIMEOUT_READ: float = 300.0
 
-    # Maximum number of network connections to persist against each one of
-    # the hosts in the frontend and backend server pools.
-    # Servers in the frontend pool typically respond to requests such as
-    # OPTIONS, PROPFIND, MKCOL, etc.
-    #
-    # Frontend servers redirect to backend servers to respond to GET and PUT
-    # requests (e.g. dCache) but sometimes also for metadata requests such as
-    # PROPFIND or HEAD (e.g. XRootD).
-    DEFAULT_PERSISTENT_CONNECTIONS_FRONTEND: int = 50
-    DEFAULT_PERSISTENT_CONNECTIONS_BACKEND: int = 100
+    # Maximum number of network connections to persist against a single
+    # "host:port" pair. If this endpoint client needs to issue more
+    # simultaneous requests than this number, additional network connections
+    # will be created but won't be persisted after use.
+    DEFAULT_PERSISTENT_CONNECTIONS_PER_HOST: int = 20
 
     # Size of the buffer (in mebibytes, i.e. 1024*1024 bytes) the webdav
     # client of this endpoint will use when sending requests and receiving
     # responses.
     DEFAULT_BUFFER_SIZE: int = 5
 
+    # Size of the block (in mebibytes, i.e. 1024*1024 bytes) the webdav
+    # client of this endpoint will use for making partial reads. Each partial
+    # read will request at least this number of bytes, unless the total size
+    # of the file is lower than this value.
+    DEFAULT_BLOCK_SIZE: int = 1
+
     # Number of times to retry requests before failing. Retry happens only
     # under certain conditions.
-    DEFAULT_RETRIES: int = 3
+    DEFAULT_RETRIES: int = 4
 
     # Minimal and maximal retry backoff (in seconds) for the client to compute
     # the wait time before retrying a request.
@@ -195,26 +230,21 @@ class DavConfig:
         if config is None:
             config = {}
 
-        if (base_url := config.get("base_url")) is None:
+        if (base_url := expand_vars(config.get("base_url"))) is None:
             self._base_url = "_default_"
         else:
             self._base_url = normalize_url(base_url, preserve_path=False)
 
         self._timeout_connect: float = float(config.get("timeout_connect", DavConfig.DEFAULT_TIMEOUT_CONNECT))
         self._timeout_read: float = float(config.get("timeout_read", DavConfig.DEFAULT_TIMEOUT_READ))
-        self._persistent_connections_frontend: int = int(
+        self._persistent_connections_per_host: int = int(
             config.get(
-                "persistent_connections_frontend",
-                DavConfig.DEFAULT_PERSISTENT_CONNECTIONS_FRONTEND,
-            )
-        )
-        self._persistent_connections_backend: int = int(
-            config.get(
-                "persistent_connections_backend",
-                DavConfig.DEFAULT_PERSISTENT_CONNECTIONS_BACKEND,
+                "persistent_connections_per_host",
+                DavConfig.DEFAULT_PERSISTENT_CONNECTIONS_PER_HOST,
             )
         )
         self._buffer_size: int = 1_048_576 * int(config.get("buffer_size", DavConfig.DEFAULT_BUFFER_SIZE))
+        self._block_size: int = 1_048_576 * int(config.get("block_size", DavConfig.DEFAULT_BLOCK_SIZE))
         self._retries: int = int(config.get("retries", DavConfig.DEFAULT_RETRIES))
         self._retry_backoff_min: float = float(
             config.get("retry_backoff_min", DavConfig.DEFAULT_RETRY_BACKOFF_MIN)
@@ -256,16 +286,16 @@ class DavConfig:
         return self._timeout_read
 
     @property
-    def persistent_connections_frontend(self) -> int:
-        return self._persistent_connections_frontend
-
-    @property
-    def persistent_connections_backend(self) -> int:
-        return self._persistent_connections_backend
+    def persistent_connections_per_host(self) -> int:
+        return self._persistent_connections_per_host
 
     @property
     def buffer_size(self) -> int:
         return self._buffer_size
+
+    @property
+    def block_size(self) -> int:
+        return self._block_size
 
     @property
     def retries(self) -> int:
@@ -649,25 +679,26 @@ class DavClient:
             user_cert = self._config.user_cert
             user_key = self._config.user_key
 
-        # We use this pool manager for sending requests that the front
-        # server typically responds to directly without redirecting (e.g.
-        # OPTIONS, HEAD, etc.)
+        # Pool manager for sending requests. Connections in this pool manager
+        # are generally left open by the client but the front-end server may
+        # choose to close them in some specific situations. For instance,
+        # whe serving a PUT request, the front server may redirect to a
+        # backend server and close the connection to the front end server.
         #
-        # Connections in this pool are generally left open by the client but
-        # the front-end server may choose to close them in some specific
-        # situations (e.g. PUT request with "Expect: 100-continue" header).
-        self._frontend = PoolManager(
+        # In addition, the client may also choose to explicitly close the
+        # network connection after receiving a response.
+        self._pool_manager = PoolManager(
             # Number of connection pools to cache before discarding the least
             # recently used pool. Each connection pool manages network
             # connections to a single host, so this is basically the number
             # of "host:port" we persist network connections to.
-            num_pools=10,
+            num_pools=200,
             # Number of connections to the same "host:port" to persist for
             # later reuse. More than 1 is useful in multithreaded situations.
             # If more than this number of network connections are needed at
-            # a particular moment, they will be created and used but not
-            # perrsisted.
-            maxsize=self._config.persistent_connections_frontend,
+            # a particular moment, they will be created and discarded after
+            # use.
+            maxsize=self._config.persistent_connections_per_host,
             # Retry configuration to use by default with requests sent to
             # host in the front end.
             retries=make_retry(self._config),
@@ -691,33 +722,6 @@ class DavClient:
             # must be as expected by OpenSSL.
             ca_cert_dir=ca_cert_dir,
             # Path to a file of concatenated CA certificates in PEM format.
-            ca_certs=ca_certs,
-        )
-
-        # We use this pool manager to send requests to the backend hosts.
-        # Those requests are typically 'GET' and 'PUT'. The backend servers
-        # typically leave the connection open after serving the request,
-        # but we want the client to have the possibility to close them
-        # when there is no benefit of persist those connections.
-        #
-        # That is the case, for instance, when the backend servers use a
-        # range of ports for listening for new connections. In that case
-        # it is likely that a connection to the same pair
-        #    <backend server, port number>
-        # is not going to be reused in a short interval of time
-        self._backend = PoolManager(
-            num_pools=100,
-            maxsize=self._config.persistent_connections_backend,
-            retries=make_retry(self._config),
-            timeout=Timeout(
-                connect=self._config.timeout_connect,
-                read=self._config.timeout_read,
-            ),
-            blocksize=self._config.buffer_size,
-            cert_file=user_cert,
-            key_file=user_key,
-            cert_reqs="CERT_REQUIRED",
-            ca_cert_dir=ca_cert_dir,
             ca_certs=ca_certs,
         )
 
@@ -778,8 +782,7 @@ class DavClient:
 
         # The value of 'Server' header is expected to be of the form
         # 'dCache/9.2.4' or 'XrootD/v5.7.1'. Not all servers include such a
-        # header in their response to an OPTIONS request. If no such a
-        # header is found in the response, use "_unknown_".
+        # header in their response to an OPTIONS request.
         details: dict[str, str] = {}
         for header in ("Server", "Accept-Ranges"):
             value = resp.headers.get(header, None)
@@ -787,6 +790,19 @@ class DavClient:
                 details[header] = value
 
         return details
+
+    def _get_response_url(self, resp: HTTPResponse, default_url: str) -> str:
+        """Return the URL that response `resp` was obtained from.
+
+        If `resp` contains no redirection history, return `default_url`.
+        """
+        if resp.retries is None:
+            return default_url
+
+        if len(resp.retries.history) == 0:
+            return default_url
+
+        return str(resp.retries.history[-1].redirect_location)
 
     def _options(self, url: str) -> HTTPResponse:
         """Send a HTTP OPTIONS request and return the response.
@@ -811,7 +827,6 @@ class DavClient:
         url: str,
         headers: dict[str, str] | None = None,
         body: BinaryIO | bytes | str | None = None,
-        pool_manager: PoolManager | None = None,
         preload_content: bool = True,
         redirect: bool = True,
     ) -> HTTPResponse:
@@ -827,9 +842,6 @@ class DavClient:
             Headers to sent with the request.
         body : `bytes` or `str` or `None`, optional
             Request body.
-        pool_manager : `PoolManager`, optional
-            Pool manager to use to send the request. By default, the requests
-            are sent to the frontend servers.
         preload_content : `bool`, optional
             If True, the response body is downloaded and can be retrieved
             via the returned response `.data` property. If False, the
@@ -851,11 +863,7 @@ class DavClient:
         if self._authorizer is not None and url.startswith("https://"):
             self._authorizer.set_authorization(headers)
 
-        # By default, send the request to a frontend server.
-        if pool_manager is None:
-            pool_manager = self._frontend
-
-        log.debug("sending request %s %s", method, url)
+        log.debug("sending request %s %s", method, redact_url(url))
 
         with time_this(
             log,
@@ -867,7 +875,7 @@ class DavClient:
             mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
-            resp = pool_manager.request(
+            resp = self._pool_manager.request(
                 method,
                 url,
                 body=body,
@@ -879,8 +887,12 @@ class DavClient:
         return resp
 
     def _get(
-        self, url: str, headers: dict[str, str] | None = None, preload_content: bool = True
-    ) -> HTTPResponse:
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        preload_content: bool = True,
+        redirect: bool = True,
+    ) -> tuple[str, HTTPResponse]:
         """Send a HTTP GET request.
 
         Parameters
@@ -894,52 +906,29 @@ class DavClient:
             via the returned response `.data` property. If False, the
             caller needs to call the `.read()` on the returned response
             object to download the body.
+        redirect : `bool`, optional
+            If True, follow redirections.
 
         Returns
         -------
+        url: `str`
+            The URL we used to obtain this response. It may be different from
+            the URL passed as argument in case of redirection.
         resp: `HTTPResponse`
             Response to the GET request as received from the server.
         """
-        # Send the GET request to the frontend servers. We handle redirections
-        # ourselves.
+        # Send the GET request to the frontend servers.
         headers = {} if headers is None else dict(headers)
-        resp = self._request("GET", url, headers=headers, preload_content=preload_content, redirect=False)
-        if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
-            return resp
-
-        if resp.status == HTTPStatus.NOT_FOUND:
-            raise FileNotFoundError(f"No file found at {resp.geturl()}")
-
-        redirect_location = resp.get_redirect_location()
-        if redirect_location is None or redirect_location is False:
-            raise ValueError(
-                f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
-            )
-
-        # We were redirected to a backend server so follow the redirection.
-        # The response body will be automatically downloaded when
-        # `preload_content` is true and the underlying network connection
-        # may be kept open for future reuse if the maximum number of
-        # connections for the backend pool is not reached.
-        url = redirect_location
-        resp = self._request(
-            "GET",
-            url,
-            headers=headers,
-            pool_manager=self._backend,
-            preload_content=preload_content,
-        )
-        if resp.status not in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
-            raise ValueError(
-                f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
-            )
-
-        # The caller will access the `resp.data` property or use
-        # the `resp.read()` method to read the contents of the
-        # response body. If `preload_content` argument is True, the
-        # response body is already downloaded, otherwise `resp.read()`
-        # will download it.
-        return resp
+        resp = self._request("GET", url, headers=headers, preload_content=preload_content, redirect=redirect)
+        match resp.status:
+            case HTTPStatus.OK | HTTPStatus.PARTIAL_CONTENT:
+                return self._get_response_url(resp, default_url=url), resp
+            case HTTPStatus.NOT_FOUND:
+                raise FileNotFoundError(f"No file found at {resp.geturl()}")
+            case _:
+                raise ValueError(
+                    f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
+                )
 
     def _put(
         self,
@@ -998,7 +987,6 @@ class DavClient:
             url,
             body=data,
             headers=headers,
-            pool_manager=self._backend,
         )
 
         if resp.status not in (
@@ -1068,6 +1056,101 @@ class DavClient:
             raise ValueError(
                 f"Unexpected response to PROPFIND {resp.geturl()}: status {resp.status} {resp.reason}"
             )
+
+    def _parent(self, url: str) -> str:
+        """Return the URL of the parent directory to `url`."""
+        parsed: Url = parse_url(url)
+        parent_path: str = posixpath.dirname(normalize_path(parsed.path))
+        return Url(
+            scheme=parsed.scheme,
+            auth=parsed.auth,
+            host=parsed.host,
+            port=parsed.port,
+            path=parent_path,
+            query=parsed.query,
+            fragment=parsed.fragment,
+        ).url
+
+    def exists(self, url: str) -> bool:
+        """Return True if a file or directory exists at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        result: `bool`
+           True if there is an object at `url`.
+        """
+        is_dir, is_file, _ = self.exists_and_size(url)
+        return is_dir or is_file
+
+    def size(self, url: str) -> int:
+        """Return the size in bytes of resource at `url`.
+
+        If `url` designates a directory, the size is zero.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        size: `int`
+           The number of bytes of the resource located at `url`.
+        """
+        is_dir, is_file, file_size = self.exists_and_size(url)
+        if not is_dir and not is_file:
+            raise FileNotFoundError(f"No file or directory found at {url}")
+
+        return file_size
+
+    def is_dir(self, url: str) -> bool:
+        """Return True if a directory exists at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        result: `bool`
+           True if there is a directory at `url`.
+        """
+        is_dir, _, _ = self.exists_and_size(url)
+        return is_dir
+
+    def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
+        """Return some metadata of resource at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        is_dir: `bool`
+           True if the resource at `url` exists and is a directory.
+        is_file: `bool`
+           True if the resource at `url` exists and is a file.
+        size: `int`
+           The size in bytes of the resource at `url` if it exists. The size
+           of a directory is always zero.
+
+        Notes
+        -----
+        The main purpose of this method is to allow subclasses to specialize
+        the retrieval of the metadata of resource at `url`.
+
+        The returned is_dir and is_file cannot be both True.
+        """
+        stat = self.stat(url)
+        return stat.is_dir, stat.is_file, stat.size
 
     def stat(self, url: str) -> DavFileMetadata:
         """Return the properties of file or directory located at `url`.
@@ -1227,7 +1310,7 @@ class DavClient:
 
         return result
 
-    def read(self, url: str) -> bytes:
+    def read(self, url: str) -> tuple[str, bytes]:
         """Download the contents of file located at `url`.
 
         Parameters
@@ -1237,7 +1320,9 @@ class DavClient:
 
         Returns
         -------
-        read: `bytes`
+        url: `str`
+            Backend URL from which the data was obtained.
+        data: `bytes`
             Contents of the file.
 
         Notes
@@ -1245,11 +1330,16 @@ class DavClient:
         The caller must ensure that the resource at `url` is a file, not
         a directory.
         """
-        return self._get(url).data
+        backend_url, resp = self._get(url)
+        return backend_url, resp.data
 
     def read_range(
-        self, url: str, start: int, end: int | None, headers: dict[str, str] | None = None
-    ) -> bytes:
+        self,
+        url: str,
+        start: int,
+        end: int | None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[str, bytes]:
         """Download partial content of file located at `url`.
 
         Parameters
@@ -1265,7 +1355,10 @@ class DavClient:
 
         Returns
         -------
-        read: `bytes`
+        backend_url: `str`
+            URL used to retrieve this data. If the server redirected us
+            this is the URL we were redirected to.
+        data: `bytes`
             Partial contents of the file.
 
         Notes
@@ -1275,14 +1368,16 @@ class DavClient:
         with an HTML document when asked for reading a directory.
         """
         headers = {} if headers is None else dict(headers)
+        headers.update({"Accept-Encoding": "identity"})
         if end is None:
             headers.update({"Range": f"bytes={start}-"})
         else:
             headers.update({"Range": f"bytes={start}-{end}"})
 
-        return self._get(url, headers=headers).data
+        backend_url, resp = self._get(url, headers=headers)
+        return backend_url, resp.data
 
-    def download(self, url: str, filename: str, chunk_size: int, close_connection: bool = False) -> int:
+    def download(self, url: str, filename: str, chunk_size: int) -> int:
         """Download the content of a file and write it to local file.
 
         Parameters
@@ -1294,8 +1389,6 @@ class DavClient:
             it will be rewritten.
         chunk_size : `int`
             Size of the chunks to write to `filename`.
-        close_connection : `bool`
-            Whether to close the connection after download.
 
         Returns
         -------
@@ -1307,41 +1400,29 @@ class DavClient:
         The caller must ensure that the resource at `url` is a file, not
         a directory.
         """
-        try:
-            resp = self._get(url, preload_content=False)
+        _, resp = self._get(url, preload_content=False)
 
-            # If we were asked to close the connection to the server, disable
-            # auto close so that we can explicitly close the connection.
-            # By default, urrlib3 releases the connection and keeps it open
-            # for later reuse when it consumes the response body.
-            if close_connection:
-                resp.auto_close = False
+        content_length = 0
+        with open(filename, "wb", buffering=chunk_size) as file:
+            for chunk in resp.stream(chunk_size):
+                file.write(chunk)
+                content_length += len(chunk)
 
-            content_length = 0
-            with open(filename, "wb", buffering=chunk_size) as file:
-                for chunk in resp.stream(chunk_size):
-                    file.write(chunk)
-                    content_length += len(chunk)
+        # Check that the expected and actual content lengths match. Perform
+        # this check only when the content of the file was not encoded by
+        # the server.
+        expected_length: int = int(resp.headers.get("Content-Length", -1))
+        if (
+            "Content-Encoding" not in resp.headers
+            and expected_length != -1
+            and expected_length != content_length
+        ):
+            raise ValueError(
+                f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                f"expecting {expected_length} and got {content_length} bytes"
+            )
 
-            # Check that the expected and actual content lengths match. Perform
-            # this check only when the content of the file was not encoded by
-            # the server.
-            expected_length: int = int(resp.headers.get("Content-Length", -1))
-            if (
-                "Content-Encoding" not in resp.headers
-                and expected_length != -1
-                and expected_length != content_length
-            ):
-                raise ValueError(
-                    f"Size of downloaded file does not match value in Content-Length header for {self}: "
-                    f"expecting {expected_length} and got {content_length} bytes"
-                )
-
-            return content_length
-        finally:
-            # Close this connection
-            if close_connection:
-                resp.close()
+        return content_length
 
     def write(self, url: str, data: BinaryIO | bytes) -> None:
         """Create or rewrite a remote file at `url` with `data` as its
@@ -1358,7 +1439,20 @@ class DavClient:
         -----
         If a file already exists at `url` it will be rewritten.
         """
+        # According to RFC 4918, the parent directory of the file must
+        # exist before we can write to it. So create it first and then
+        # upload.
+        self.mkcol(self._parent(url))
         self._put(url, data)
+
+    def release_backend(self, url: str) -> None:
+        """Signal the backend server it can release the resources allocated
+        for serving the file at `url`.
+
+        By default it is a no-op but subclasses can override this method
+        according to the needs of the specific backend.
+        """
+        return
 
     def checksums(self, url: str) -> dict[str, str]:
         """Return the checksums of the contents of file located at `url`.
@@ -1398,6 +1492,14 @@ class DavClient:
             Target URL.
         """
         resp = self._request("MKCOL", url)
+        if resp.status == HTTPStatus.CONFLICT:
+            # The parent directory does not exist. Create it first except
+            # if the parent's path is "/".
+            parent = self._parent(url)
+            if not parent.endswith("/"):
+                self.mkcol(parent)
+                resp = self._request("MKCOL", url)
+
         if resp.status not in (HTTPStatus.CREATED, HTTPStatus.METHOD_NOT_ALLOWED):
             raise ValueError(f"Can not create directory {resp.geturl()}: status {resp.status} {resp.reason}")
 
@@ -1465,8 +1567,14 @@ class DavClient:
             overwritten. Otherwise an exception is raised.
         """
         # Check the source is a file
-        if self.stat(source_url).is_dir:
+        if self.is_dir(source_url):
             raise NotImplementedError(f"copy is not implemented for directory {source_url}")
+
+        # Create the destination's parent directory first because COPY may
+        # fail if it does not exist, depending on the server implementation
+        # of RFC 4918.
+        destination_parent = self._parent(destination_url)
+        self.mkcol(destination_parent)
 
         # Send a COPY request for this file.
         headers = {
@@ -1494,6 +1602,12 @@ class DavClient:
             If True and a file exists at `destination_url` it will be
             overwritten. Otherwise an exception is raised.
         """
+        # Create the destination's parent directory first because MOVE may
+        # fail if it does not exist, depending on the server implementation
+        # of RFC 4918.
+        destination_parent = self._parent(destination_url)
+        self.mkcol(destination_parent)
+
         headers = {
             "Destination": destination_url,
             "Overwrite": "T" if overwrite else "F",
@@ -1696,6 +1810,7 @@ class DavClientURLSigner(DavClient):
 
         raise ValueError(f"Could not retrieve macaroon for URL {resp.geturl()}")
 
+    @override
     def copy(self, source_url: str, destination_url: str, overwrite: bool = False) -> None:
         """Copy the file at `source_url` to `destination_url` in the same
         storage endpoint.
@@ -1711,7 +1826,7 @@ class DavClientURLSigner(DavClient):
             overwritten. Otherwise an exception is raised.
         """
         # Check the source is a file
-        if self.stat(source_url).is_dir:
+        if self.is_dir(source_url):
             raise NotImplementedError(f"copy is not implemented for directory {source_url}")
 
         # Neither dCache nor XrootD currently implement the COPY
@@ -1745,6 +1860,12 @@ class DavClientURLSigner(DavClient):
         #
         # The reason is that dCache does not correctly implement webDAV's COPY
         # method. See https://github.com/dCache/dcache/issues/6950
+
+        # Create the destination's parent directory first because COPY may
+        # fail if it does not exist, depending on the server implementation
+        # of RFC 4918.
+        destination_parent = self._parent(destination_url)
+        self.mkcol(destination_parent)
 
         # Retrieve a macaroon for downloading the source
         download_macaroon = self._get_macaroon(source_url, ActivityCaveat.DOWNLOAD, 300)
@@ -1816,6 +1937,7 @@ class DavClientDCache(DavClientURLSigner):
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
         super().__init__(url=url, config=config, accepts_ranges=accepts_ranges)
 
+    @override
     def _propfind(self, url: str, body: str | None = None, depth: str = "0") -> HTTPResponse:
         """Send a HTTP PROPFIND request and return the response.
 
@@ -1841,89 +1963,7 @@ class DavClientDCache(DavClientURLSigner):
 
         return super()._propfind(url=url, body=body, depth=depth)
 
-    def _get(
-        self, url: str, headers: dict[str, str] | None = None, preload_content: bool = True
-    ) -> HTTPResponse:
-        """Send a HTTP GET request to a dCache webDAV server.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-        headers : `dict[str, str]`, optional
-            Headers to sent with the request.
-        preload_content : `bool`, optional
-            If True, the response body is downloaded and can be retrieved
-            via the returned response `.data` property. If False, the
-            caller needs to call the `.read()` on the returned response
-            object to download the body.
-
-        Returns
-        -------
-        resp: `HTTPResponse`
-            Response to the GET request as received from the server.
-        """
-        # Send the GET request to the frontend servers. We handle
-        # redirections ourselves.
-        headers = {} if headers is None else dict(headers)
-        resp = self._request("GET", url, headers=headers, preload_content=preload_content, redirect=False)
-        if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
-            return resp
-
-        if resp.status == HTTPStatus.NOT_FOUND:
-            raise FileNotFoundError(f"No file found at {resp.geturl()}")
-
-        redirect_location = resp.get_redirect_location()
-        if redirect_location is None or redirect_location is False:
-            raise ValueError(
-                f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
-            )
-
-        # We were redirected to a backend server so follow the redirection.
-        # The response body will be automatically downloaded when
-        # `preload_content` is true and the underlying network connection
-        # may be kept open for future reuse if the maximum number of
-        # connections for the backend pool is not reached.
-        try:
-            # Explicitly ask the backend server to close the connection after
-            # serving this request.
-            if preload_content:
-                headers.update({"Connection": "close"})
-
-            url = redirect_location
-            resp = self._request(
-                "GET",
-                url,
-                headers=headers,
-                pool_manager=self._backend,
-                preload_content=preload_content,
-            )
-
-            # Mark this connection so that it won't be be automatically
-            # returned to the reusable connection pool. We will close it
-            # ourselves if appropriate.
-            if preload_content:
-                resp.auto_close = False
-
-            if resp.status not in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
-                raise ValueError(
-                    f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
-                )
-
-            # The caller will access the `resp.data` property or use
-            # the `resp.read()` method to read the contents of the
-            # response body. If `preload_content` argument is True, the
-            # response body is already downloaded, otherwise `resp.read()`
-            # will download it.
-            return resp
-        finally:
-            # Don't keep this connection to the backend server open. Given
-            # that dCache pools may be configured to serve requests over a
-            # range of ports, it is unlikely we will reuse this particular
-            # connection again in the short term.
-            if preload_content:
-                resp.close()
-
+    @override
     def _put(
         self,
         url: str,
@@ -1951,15 +1991,21 @@ class DavClientDCache(DavClientURLSigner):
         # We want to reuse the connections to the door as much as possible so
         # that metadata operations are faster; all metadata operations use the
         # frontend pool manager.
+        #
         headers = {"Content-Length": "0", "Expect": "100-continue"}
-        resp = self._request("PUT", url, headers=headers, redirect=False, pool_manager=self._backend)
+        if isinstance(data, bytes) and len(data) == 0:
+            # We are uploading an empty file. Don't send the "Expect" header
+            # so that the dCache door handles this PUT request itself without
+            # redirecting us to a pool.
+            headers.pop("Expect")
+
+        resp = self._request("PUT", url, headers=headers, redirect=False)
+        if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+            return
+
         if redirect_location := resp.get_redirect_location():
             url = redirect_location
-        elif resp.status not in (
-            HTTPStatus.OK,
-            HTTPStatus.CREATED,
-            HTTPStatus.NO_CONTENT,
-        ):
+        else:
             raise ValueError(
                 f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
@@ -1990,7 +2036,6 @@ class DavClientDCache(DavClientURLSigner):
                 url,
                 body=data,
                 headers=headers,
-                pool_manager=self._backend,
                 # Don't consume the response body, so that we can explicitly
                 # close the connection.
                 preload_content=False,
@@ -2015,15 +2060,154 @@ class DavClientDCache(DavClientURLSigner):
                 )
 
         finally:
-            # Explicitly close this connection to the dCache backend server.
+            # Close this network connection to the dCache backend server.
             resp.close()
 
-    def download(self, url: str, filename: str, chunk_size: int, close_connection: bool = True) -> int:
-        # Close the connection to the backend servers after downloading
-        # the entire file content.
-        return super().download(
-            url=url, filename=filename, chunk_size=chunk_size, close_connection=close_connection
-        )
+    @override
+    def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
+        """Return some metadata of resource at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        is_dir: `bool`
+           True if the resource at `url` exists and is a directory.
+        is_file: `bool`
+           True if the resource at `url` exists and is a file.
+        size: `int`
+           The size in bytes of the resource at `url` if it exists. The size
+           of a directory is always zero.
+
+        Notes
+        -----
+        The main purpose of this method is to allow subclasses to specialize
+        the retrieval of the metadata of resource at `url`.
+
+        The returned is_dir and is_file cannot be both True.
+        """
+        # dCache responds "200 OK" to a HEAD request against an existing
+        # file or directory.
+        #
+        # When the target URL is a directory, there is no
+        # "Content-Length" header in the response and the value of header
+        # "Content-Type" is like "text/html;charset=utf-8".
+        #
+        # When the target is a file, the header "Content-Length" is
+        # present in the response and its value is the size of the file.
+        resp = self._request("HEAD", url)
+        if resp.status != HTTPStatus.OK:
+            # There is no resource at url
+            return False, False, 0
+
+        if "Content-Length" not in resp.headers:
+            # The resource at url is a directory
+            return True, False, 0
+
+        # The resource at url is a file. Retrieve its size.
+        size = int(resp.headers.get("Content-Length"))
+        return False, True, size
+
+    @override
+    def read(self, url: str) -> tuple[str, bytes]:
+        """Download the contents of file located at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        url: `str`
+            Backend URL from which the data was obtained.
+        data: `bytes`
+            Contents of the file.
+
+        Notes
+        -----
+        The caller must ensure that the resource at `url` is a file, not
+        a directory.
+        """
+        # Send a GET request, follow redirections and close the network
+        # connection to the dCache backend server so that it releases the
+        # mover.
+        backend_url, resp = self._get(url, preload_content=False)
+        resp.auto_close = False
+        data = resp.data
+        resp.close()
+        return backend_url, data
+
+    @override
+    def write(self, url: str, data: BinaryIO | bytes) -> None:
+        """Create or rewrite a remote file at `url` with `data` as its
+        contents.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        data: `bytes`
+            Sequence of bytes to upload.
+
+        Notes
+        -----
+        If a file already exists at `url` it will be rewritten.
+        """
+        # dCache will automatically create all the parent directories so we
+        # don't need to explicitly create them. Although this is not compliant
+        # to RFC 4918, this is advantageous because it avoids several
+        # round-trips to the server for creating all the directories
+        # before actually uploading the data.
+        self._put(url, data)
+
+    @override
+    def mkcol(self, url: str) -> None:
+        """Create a directory at `url`.
+
+        If a directory already exists at `url` no error is returned nor
+        exception is raised. An exception is raised if a file exists at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        """
+        # A "MKCOL" request to dCache does not automatically create all
+        # the intermediate directories if they do not exist. However, a
+        # "PUT" request of a file does create the directory hierarchy.
+        #
+        # We exploit that to create directory hierarchies: we first create an
+        # empty file with a random name and then we remove it. As a side
+        # effect, the target directory will be created.
+        #
+        # Creating a directory this way implies two requests to the server
+        # ("PUT" and "DELETE"), while using "MKCOL" would on average imply
+        # one request per inexisting directory in the hierarchy. When
+        # directory hierarchies are relatively deep, requiring two
+        # requests per hierarchy is better than sending a "MKCOL" request
+        # per directory in the hierarchy.
+        file_name = f".mkcol-{str(uuid.uuid4())}"
+        file_url = f"{url}/{file_name}"
+        self.write(file_url, data=b"")
+        self.delete(file_url)
+
+    @override
+    def release_backend(self, url: str) -> None:
+        # Send a HEAD request to the server and explicitly close the network
+        # connection. This notifies the dCache mover that no more partial read
+        # requests will be issued for the resource at `url`.
+        #
+        # If the dCache mover was already shutdown, we will receive a redirect
+        # response to the webDAV door that we don't need to follow.
+        headers = {"Connection": "close"}
+        resp = self._request("HEAD", url, headers=headers, redirect=False, preload_content=False)
+        resp.auto_close = False
+        resp.close()
 
 
 class DavClientXrootD(DavClientURLSigner):
@@ -2046,74 +2230,7 @@ class DavClientXrootD(DavClientURLSigner):
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
         super().__init__(url=url, config=config, accepts_ranges=accepts_ranges)
 
-    def _get(
-        self, url: str, headers: dict[str, str] | None = None, preload_content: bool = True
-    ) -> HTTPResponse:
-        """Send a HTTP GET request to a XrootD webDAV server.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-        headers : `dict[str, str]`, optional
-            Headers to sent with the request.
-        preload_content : `bool`, optional
-            If True, the response body is downloaded and can be retrieved
-            via the returned response `.data` property. If False, the
-            caller needs to call the `.read()` on the returned response
-            object to download the body.
-
-        Returns
-        -------
-        resp: `HTTPResponse`
-            Response to the GET request as received from the server.
-        """
-        # Send the GET request to the frontend servers and follow redirection.
-        headers = {} if headers is None else dict(headers)
-        resp = self._request("GET", url, headers=headers, preload_content=preload_content, redirect=False)
-        if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
-            return resp
-
-        if resp.status == HTTPStatus.NOT_FOUND:
-            raise FileNotFoundError(f"No file found at {resp.geturl()}")
-
-        redirect_location = resp.get_redirect_location()
-        if redirect_location is None or redirect_location is False:
-            raise ValueError(
-                f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
-            )
-
-        # We were redirected to a backend server so follow the redirection.
-        # The response body will be automatically downloaded when
-        # `preload_content` is true and the underlying network connection
-        # may be kept open for future reuse if the maximum number of
-        # connections for the backend pool is not reached.
-        #
-        # For XRootD endpoints, we always use the same pool manager, namely
-        # the frontend pool manager, to increase the chance of reusing
-        # network connections.
-        url = redirect_location
-        resp = self._request(
-            "GET",
-            url,
-            headers=headers,
-            pool_manager=self._frontend,
-            preload_content=preload_content,
-        )
-
-        if resp.status not in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
-            resp.close()
-            raise ValueError(
-                f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
-            )
-
-        # The caller will access the `resp.data` property or use
-        # the `resp.read()` method to read the contents of the
-        # response body. If `preload_content` argument is True, the
-        # response body is already downloaded, otherwise `resp.read()`
-        # will download it.
-        return resp
-
+    @override
     def _put(
         self,
         url: str,
@@ -2200,7 +2317,6 @@ class DavClientXrootD(DavClientURLSigner):
             url,
             body=data,
             headers=headers,
-            pool_manager=self._frontend,
         )
 
         if resp.status not in (
@@ -2213,6 +2329,7 @@ class DavClientXrootD(DavClientURLSigner):
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
+    @override
     def info(self, url: str, name: str | None = None) -> dict[str, Any]:
         # XRootD does not include checksums in the response to PROPFIND
         # requqest. We need to send a specific HEAD request to retrieve
@@ -2231,6 +2348,62 @@ class DavClientXrootD(DavClientURLSigner):
                 result["checksums"].update({"adler32": value})
 
         return result
+
+    @override
+    def write(self, url: str, data: BinaryIO | bytes) -> None:
+        """Create or rewrite a remote file at `url` with `data` as its
+        contents.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        data: `bytes`
+            Sequence of bytes to upload.
+
+        Notes
+        -----
+        If a file already exists at `url` it will be rewritten.
+        """
+        # XRootD will automatically create all the parent directories so we
+        # don't need to explicitly create them. Although this is not compliant
+        # to RFC 4918, this is advantageous because it avoids several
+        # round-trips to the server for creating all the directories
+        # before actually uploading the data.
+        self._put(url, data)
+
+    @override
+    def mkcol(self, url: str) -> None:
+        """Create a directory at `url`.
+
+        If a directory already exists at `url` no error is returned nor
+        exception is raised. An exception is raised if a file exists at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        """
+        # XRootD automatically creates all the intermediate directories.
+        resp = self._request("MKCOL", url)
+        if resp.status == HTTPStatus.CREATED:
+            return
+
+        # XRootD returns "405 Method Not Allowed" when either a file or a
+        # directory already exists at `url`
+        if resp.status == HTTPStatus.METHOD_NOT_ALLOWED:
+            is_dir, is_file, _ = self.exists_and_size(url)
+            if is_dir:
+                # Nothing more to do
+                return
+
+            if is_file:
+                raise NotADirectoryError(
+                    f"Can not create a directory because a file already exists at {resp.geturl()}"
+                )
+
+        raise ValueError(f"Can not create directory {resp.geturl()}: status {resp.status} {resp.reason}")
 
 
 class DavFileMetadata:
@@ -2643,7 +2816,7 @@ def expand_vars(path: str | None) -> str | None:
     return None if path is None else os.path.expandvars(path)
 
 
-def dump_response(method: str, resp: HTTPResponse) -> None:
+def dump_response(method: str, resp: HTTPResponse, dump_body: bool = False) -> None:
     """Dump response for debugging purposes.
 
     Parameters
@@ -2654,6 +2827,10 @@ def dump_response(method: str, resp: HTTPResponse) -> None:
         Response to dump.
     """
     log.debug("%s %s", method, resp.geturl())
+    log.debug("   %s %s", resp.status, resp.reason)
+
     for header, value in resp.headers.items():
         log.debug("   %s: %s", header, value)
-    log.debug("   response body length: %d", len(resp.data.decode("utf-8")))
+
+    if dump_body:
+        log.debug("   response body length: %d", len(resp.data.decode("utf-8")))
