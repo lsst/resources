@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, AnyStr
 
-from ..davutils import DavFileMetadata
+from ..davutils import DavClient, redact_url
 from ._baseResourceHandle import BaseResourceHandle, CloseStatus
 
 if TYPE_CHECKING:
@@ -50,21 +50,33 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         mode: str,
         log: logging.Logger,
         uri: DavResourcePath,
-        stat: DavFileMetadata,
+        file_size: int,
+        encoding: str | None = None,
         *,
         newline: AnyStr | None = None,
     ) -> None:
         super().__init__(mode, log, uri, newline=newline)
         self._uri: DavResourcePath = uri
-        self._stat: DavFileMetadata = stat
-        self._current_position = 0
-        self._cache: io.BytesIO | None = None
-        self._buffer: io.BytesIO | None = None
+        self._client: DavClient = self._uri._client
+        self._backend_url: str = self._uri._internal_url
+        self._filesize: int = file_size
+        self._encoding: str | None = "locale" if encoding is None else encoding
         self._closed = CloseStatus.OPEN
+        self._current_position = 0
+        self._cache: DavReadAheadCache = DavReadAheadCache(
+            client=self._client,
+            backend_url=self._backend_url,
+            filesize=self._filesize,
+            blocksize=self._uri._client._config.block_size,
+            log=log,
+        )
+        self._log.debug("initializing read handle for %s [%d]", self._uri, id(self))
 
     def close(self) -> None:
-        self._closed = CloseStatus.CLOSED
-        self._cache = None
+        if self._closed != CloseStatus.CLOSED:
+            self._log.debug("closing read handle for %s [%d]", self._uri, id(self))
+            self._cache.close()
+            self._closed = CloseStatus.CLOSED
 
     @property
     def closed(self) -> bool:
@@ -88,10 +100,18 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
     def readline(self, size: int = -1) -> bytes:
         raise io.UnsupportedOperation("DavReadResourceHandles Do not support line by line reading")
 
-    def readlines(self, size: int = -1) -> Iterable[bytes]:
+    def readlines(self, hint: int = -1) -> Iterable[bytes]:
         raise io.UnsupportedOperation("DavReadResourceHandles Do not support line by line reading")
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        self._log.debug(
+            "handle seek for %s: offset=%d, whence=%d, current_position=%d",
+            self._uri,
+            offset,
+            whence,
+            self._current_position,
+        )
+
         match whence:
             case io.SEEK_SET:
                 if offset < 0:
@@ -100,7 +120,7 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
             case io.SEEK_CUR:
                 self._current_position += offset
             case io.SEEK_END:
-                self._current_position = self._stat.size + offset
+                self._current_position = self._filesize + offset
             case _:
                 raise ValueError(f"unexpected value {whence} for whence in seek()")
 
@@ -129,56 +149,33 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
 
     @property
     def _eof(self) -> bool:
-        return self._current_position >= self._stat.size
-
-    def _download_to_cache(self) -> io.BytesIO:
-        """Download the entire content of the remote resource to an internal
-        memory buffer.
-        """
-        if self._cache is None:
-            self._cache = io.BytesIO()
-            self._cache.write(self._uri.read())
-
-        return self._cache
+        return self._current_position >= self._filesize
 
     def read(self, size: int = -1) -> bytes:
-        if self._eof or size == 0:
+        self._log.debug(
+            "handle read for %s: filesize=%d, current_position=%d, size=%d",
+            self._uri,
+            self._filesize,
+            self._current_position,
+            size,
+        )
+
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+
+        if size == 0 or self._eof:
             return b""
 
-        # If this file's size is small than the buffer size configured for
-        # this URI's client, download the entire file in one request and cache
-        # its content. This avoids multiple roundtrips to the server
-        # for retrieving small chunks.
-        if self._stat.size <= self._uri._client._config.buffer_size:
-            self._download_to_cache()
+        if size < 0:
+            # Read up to the end of the file
+            size = self._filesize - self._current_position
 
-        # If we are asked to read the whole file content, cache the entire
-        # file content and return a copy-on-write memory view of our internal
-        # cache.
-        if self._current_position == 0 and size == -1:
-            cache = self._download_to_cache()
-            self._current_position = self._stat.size
-            return cache.getvalue()
+        output = self._cache.fetch(start=self._current_position, end=self._current_position + size)
+        self._current_position += len(output)
 
-        # This is a partial read. If we have already cached the whole file
-        # content use the cache to build the return value.
-        if self._cache is not None:
-            start = self._current_position
-            end = self._current_position = self._stat.size if size < 0 else start + size
-            return self._cache.getvalue()[start:end]
+        self._log.debug("returning %d bytes from handle read for %s", len(output), self._uri)
 
-        # We need to make a partial read from the server. Reuse our internal
-        # I/O buffer to reduce memory allocations.
-        if self._buffer is None:
-            self._buffer = io.BytesIO()
-
-        start = self._current_position
-        end = self._stat.size if size < 0 else min(start + size, self._stat.size)
-        self._buffer.seek(0)
-        self._buffer.write(self._uri.read_range(start=start, end=end - 1))
-        count = self._buffer.tell()
-        self._current_position += count
-        return self._buffer.getvalue()[0:count]
+        return output
 
     def readinto(self, output: bytearray) -> int:
         """Read up to `len(output)` bytes into `output` and return the number
@@ -195,3 +192,113 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         data = self.read(len(output))
         output[:] = data
         return len(data)
+
+
+class DavReadAheadCache:
+    """Helper read-ahead cache for fetching chunks of a DavResourceHandle.
+
+    Parameters
+    ----------
+    client : `lsst.resources.davutils.DavClient`
+        webDAV client to interact with the server to download data.
+    backend_url : `str`
+        URL of the resource to download data from.
+    filesize : `int`
+        Size in bytes of the remote file.
+    blocksize : `int`
+        Size in bytes of the block for this resource. This is the size we use
+        to retrieve data from this resource.
+    log : `logging.Logger`
+        Logger object to emit log records.
+
+    Notes
+    -----
+    Behavior of this cache is inspired from fsspec's ReadAheadCache class.
+    https://github.com/fsspec/filesystem_spec/blob/master/fsspec/caching.py
+    """
+
+    def __init__(
+        self, client: DavClient, backend_url: str, filesize: int, blocksize: int, log: logging.Logger
+    ) -> None:
+        self._client: DavClient = client
+        self._backend_url: str = backend_url
+        self._filesize: int = filesize
+        self._blocksize: int = blocksize
+        self._cache = b""
+        self._start: int = 0
+        self._end: int = 0
+        self._log: logging.Logger = log
+
+    def geturl(self) -> str:
+        return redact_url(self._backend_url)
+
+    def fetch(self, start: int, end: int) -> bytes:
+        """Fetch a chunk of the file and store it in memory.
+
+        Parameters
+        ----------
+        start : `int`
+            Position of the first byte of the chunk.
+        end : `int`
+            Position of the last byte of the chunk.
+
+        Returns
+        -------
+        output: `bytes`
+            A chunk of up to end-start bytes. The returned chunk is
+            served directly from the in-memory buffer without fetching new
+            data from the remote file if it is already cached. Otherwise,
+            a new chunk is retrieved from the origin file server and cached
+            in memory. The size of the chunk can be the configured block
+            size for this particular kind of resource path or the remaining
+            bytes in the file.
+        """
+        self._log.debug(
+            "DavReadAheadCache.fetch: %s start=%d end=%d [total: %d]",
+            self.geturl(),
+            start,
+            end,
+            end - start,
+        )
+        start = max(0, start)
+        end = min(end, self._filesize)
+        if start >= self._filesize or start >= end:
+            return b""
+
+        if start >= self._start and end <= self._end:
+            # The requested chunk is entirely cached
+            return self._cache[start - self._start : end - self._start]
+
+        # The requested chunk is not fully in cache. Repopulate the cache
+        # with a number of blocks large enough to satisfy the requested chunk.
+        blocks_to_fetch = 1 + ((end - start) // self._blocksize)
+        bytes_to_fetch = self._blocksize * blocks_to_fetch
+        end_range = min(self._filesize, start + bytes_to_fetch)
+        start_range = max(0, end_range - bytes_to_fetch)
+
+        self._log.debug(
+            "populating handle cache for %s with %d blocks [%d - %d, total bytes: %d]",
+            self.geturl(),
+            blocks_to_fetch,
+            start_range,
+            end_range,
+            end_range - start_range,
+        )
+
+        # Make a partial read and save the URL of this resource as obtained
+        # from the backend server. Further requests don't need to go through
+        # the front-end server again.
+        self._backend_url, self._cache = self._client.read_range(
+            self._backend_url, start=start_range, end=end_range - 1
+        )
+        self._start = start_range
+        self._end = self._start + len(self._cache)
+        return self._cache[start - self._start : end - self._start]
+
+    def close(self) -> None:
+        """Notify the backend server that we want it to release
+        the resources it has allocated to serve partial read requests for
+        this handle.
+        """
+        self._log.debug("closing backend connection to %s", self.geturl())
+        self._client.release_backend(self._backend_url)

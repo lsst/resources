@@ -23,7 +23,7 @@ import re
 import threading
 import urllib
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast, override
 
 try:
     import fsspec
@@ -42,6 +42,7 @@ from .davutils import (
     DavFileMetadata,
     normalize_path,
     normalize_url,
+    redact_url,
 )
 from .utils import get_tempdir
 
@@ -86,7 +87,7 @@ class DavResourcePathConfig:
 
     def __init__(self) -> None:
         # Path to the local temporary directory all instances of
-        # `DavResourcePath`must use and its associated buffer size (in bytes).
+        # `DavResourcePath` must use and its associated buffer size (in bytes).
         self._tmpdir_buffersize: tuple[str, int] | None = None
 
     @property
@@ -206,8 +207,7 @@ class DavResourcePath(ResourcePath):
         # Retrieve the configuration shared by all instances of this class.
         self._config: DavResourcePathConfig = dav_globals.config()
 
-        # Cached attributes of this file
-        self._cached_metadata: DavFileMetadata | None = None
+        log.debug("created instance of DavResourcePath %s [%d]", self, id(self))
 
     @classmethod
     def _fixupPathUri(
@@ -243,87 +243,92 @@ class DavResourcePath(ResourcePath):
         self._dav_client = dav_globals.client_pool().get_client_for_url(self._internal_url)
         return self._dav_client
 
-    def _stat(self, refresh: bool = False) -> DavFileMetadata:
-        """Retrieve metadata about this resource.
+    def _stat(self) -> DavFileMetadata:
+        """Retrieve metadata about this resource."""
+        return self._client.stat(self._internal_url)
 
-        We cache this resource's metadata to avoid expensive roundtrips to
-        the server for each call.
+    def _exists_and_size(self) -> tuple[bool, bool, int]:
+        """Return frequently used metadata of resource at `url`.
 
         Parameters
         ----------
-        refresh : `bool`, optional
-            If True, metadata is retrieved again from the server even if it
-            is already cached.
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        is_dir: `bool`
+           True if the resource at `url` exists and is a directory.
+        is_file: `bool`
+           True if the resource at `url` exists and is a file.
+        size: `int`
+           The size in bytes of the resource at `url` if it exists. The size
+           of a directory is always zero.
 
         Notes
         -----
-        Cached metadata is explicitly invalidated when this resource is
-        modified, for instance as a result of calling write(), transfer_from()
-        remove(), etc.
+        The returned is_dir and is_file cannot be both True.
         """
-        # Caching metadata is a compromise because each roundtrip is
-        # relatively expensive and is fragile if this same resource is
-        # modified by a different thread or by a different process.
-        if refresh or self._cached_metadata is None:
-            self._cached_metadata = self._client.stat(self._internal_url)
+        return self._client.exists_and_size(self._internal_url)
 
-        return self._cached_metadata
+    def _exists_and_is_file(self) -> bool:
+        """Return True if this resource exists and is a file."""
+        _, is_file, _ = self._exists_and_size()
+        return is_file
 
-    def _invalidate_metatada_cache(self) -> None:
-        """Invalidate cached metadata for this resource.
+    @override
+    def __str__(self) -> str:
+        """Return this resource's redacted URL."""
+        return redact_url(self.geturl())
 
-        This method is intended to be explicitly invoked when a method
-        modifies the content of this resource (e.g. write, remove,
-        transfer_from).
-        """
-        self._cached_metadata = None
-
+    @override
     def mkdir(self) -> None:
         """Create the directory resource if it does not already exist."""
+        log.debug("mkdir %s [%d]", self, id(self))
+
         if not self.isdir():
             raise NotADirectoryError(f"Can not create a directory for file-like URI {self}")
 
-        stat = self._stat()
-        if stat.is_dir:
-            return
-
-        if stat.is_file:
+        if self._exists_and_is_file():
             # A file exists at this path.
             raise NotADirectoryError(
                 f"Can not create a directory for {self} because a file already exists at that URL"
             )
 
-        # Target directory does not exist. Create it and its ancestors as
-        # needed. We need to test if parent URL is different from self URL,
-        # otherwise we could be stuck in a recursive loop
-        # where self == parent.
-        if self.geturl() != self.parent().geturl():
-            self.parent().mkdir()
-
+        # The underlying webDAV client will use the knowledge it has about
+        # the specific server to create the requested directory
+        # hierarchy by issueing the minimum possible number of requests.
         self._client.mkcol(self._internal_url)
-        self._invalidate_metatada_cache()
 
+    @override
     def exists(self) -> bool:
         """Check that this resource exists."""
-        # Force checking for existence against the server for all the
-        # external calls to this method.
-        return self._stat(refresh=True).exists
+        log.debug("exists %s [%d]", self, id(self))
 
+        is_dir, is_file, _ = self._exists_and_size()
+        return is_dir or is_file
+
+    @override
     def size(self) -> int:
         """Return the size of the remote resource in bytes."""
+        log.debug("size %s [%d]", self, id(self))
+
         if self.isdir():
             return 0
 
-        stat = self._stat()
-        if not stat.exists:
+        is_dir, is_file, file_size = self._exists_and_size()
+        if not is_dir and not is_file:
             raise FileNotFoundError(f"No file or directory found at {self}")
 
-        return stat.size
+        return file_size
 
     def info(self) -> dict[str, Any]:
         """Return metadata details about this resource."""
+        log.debug("info %s [%d]", self, id(self))
+
         return self._client.info(self._internal_url, name=str(self))
 
+    @override
     def read(self, size: int = -1) -> bytes:
         """Open the resource and return the contents in bytes.
 
@@ -333,6 +338,8 @@ class DavResourcePath(ResourcePath):
             The number of bytes to read. Negative or omitted indicates that
             all data should be read.
         """
+        log.debug("read %s [%d] size=%d", self, id(self), size)
+
         # A GET request on a dCache directory returns the contents of the
         # directory in HTML, to be visualized with a browser. This means
         # that we need to check first that this resource is not a directory.
@@ -345,57 +352,28 @@ class DavResourcePath(ResourcePath):
         if self.isdir():
             raise ValueError(f"method read() is not implemented for directory {self}")
 
-        stat = self._stat()
-        if stat.is_dir:
-            raise ValueError(f"method read() is not implemented for directory {self}")
-        elif not stat.exists:
-            raise FileNotFoundError(f"no file found at {self}")
-        elif stat.size == 0:
-            # This is an empty file.
+        if size == 0:
             return b""
 
-        if size > 0:
-            end_range = min(stat.size, size) - 1
-            return self._client.read_range(self._internal_url, start=0, end=end_range)
-        else:
-            return self._client.read(self._internal_url)
+        if size < 0:
+            # Read the entire file content
+            _, data = self._client.read(self._internal_url)
+            return data
 
-    def read_range(
-        self,
-        start: int,
-        end: int | None = None,
-        check_exists: bool = False,
-        headers: dict[str, str] | None = None,
-    ) -> bytes:
-        """Read the specified range of the resource and return the bytes read.
+        # This is a partial read. Retrieve the file size.
+        _, is_file, file_size = self._exists_and_size()
+        if not is_file:
+            raise FileNotFoundError(f"No file found at {self}")
 
-        Parameters
-        ----------
-        start : `int`
-            Position of the first byte to read.
-        end : `int`, optional
-            Position of the last byte to read.
-        check_exists : `bool`, optional
-            Check the file exists before sending the GET request, which may
-            fail if the file does not exist. This is useful when the caller
-            has already checked the file exists before doing several
-            partial reads, so we want to avoid checking for every call.
-        headers : `dict[str, str]`, optional
-            Headers to include in the partial GET request.
-        """
-        if check_exists:
-            stat = self._stat()
-            if not stat.is_file:
-                raise FileNotFoundError(f"No file found at {self}")
+        if file_size == 0:
+            # File is empty
+            return b""
 
-            if stat.size == 0:
-                # This is an empty file.
-                return b""
+        end_range = min(file_size, size) - 1
+        _, data = self._client.read_range(self._internal_url, start=0, end=end_range)
+        return data
 
-        headers = {} if headers is None else dict(headers)
-        headers.update({"Accept-Encoding": "identity"})
-        return self._client.read_range(self._internal_url, start=start, end=end, headers=headers)
-
+    @override
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
@@ -420,11 +398,10 @@ class DavResourcePath(ResourcePath):
             A URI to a local POSIX file corresponding to a local temporary
             downloaded copy of the resource.
         """
-        # We need to ensure that this resource is actually a file. dCache
-        # responds with a HTML-formatted content to a HTTP GET request to a
-        # directory, which is not what we want.
-        stat = self._stat()
-        if not stat.is_file:
+        # We need to ensure that this resource is actually a file since
+        # the response to a GET request on a directory may be implemented in
+        # several ways, according to RFC 4818.
+        if not self._exists_and_is_file():
             raise FileNotFoundError(f"No file found at {self}")
 
         if tmpdir is None:
@@ -437,6 +414,7 @@ class DavResourcePath(ResourcePath):
             self._client.download(self._internal_url, tmp_uri.ospath, buffer_size)
             yield tmp_uri
 
+    @override
     def write(self, data: BinaryIO | bytes, overwrite: bool = True) -> None:
         """Write the supplied bytes to the new resource.
 
@@ -449,18 +427,17 @@ class DavResourcePath(ResourcePath):
             If `True` the resource will be overwritten if it exists. Otherwise
             the write will fail.
         """
+        log.debug("write %s [%d] overwrite=%s", self, id(self), overwrite)
+
         if self.isdir():
             raise ValueError(f"Method write() is not implemented for directory {self}")
 
-        stat = self._stat()
-        if stat.is_file and not overwrite:
+        if not overwrite and self._exists_and_is_file():
             raise FileExistsError(f"File {self} exists and overwrite has been disabled")
 
-        # Create parent directory and upload the data.
-        self.parent().mkdir()
         self._client.write(self._internal_url, data)
-        self._invalidate_metatada_cache()
 
+    @override
     def remove(self) -> None:
         """Remove the resource.
 
@@ -468,18 +445,21 @@ class DavResourcePath(ResourcePath):
         method raises. Removing a non-existent file or directory is not
         considered an error.
         """
-        if not self.exists():
+        log.debug("remove %s [%d]", self, id(self))
+
+        is_dir, is_file, _ = self._exists_and_size()
+        if not is_dir and not is_file:
+            # There is no resource at this uri. There is nothing to do.
             return
 
-        if self.isdir():
+        if is_dir:
             entries = self._client.read_dir(self._internal_url)
             if len(entries) > 0:
-                raise IsADirectoryError(f"directory {self} is not empty")
+                raise IsADirectoryError(f"Directory {self} is not empty")
 
         # This resource is a either file or an empty directory, we can remove
         # it.
         self._client.delete(self._internal_url)
-        self._invalidate_metatada_cache()
 
     def remove_dir(self, recursive: bool = False) -> None:
         """Remove a directory if empty.
@@ -494,12 +474,14 @@ class DavResourcePath(ResourcePath):
         -----
             This method is not present in the superclass.
         """
+        log.debug("remove_dir %s [%d] recursive=%s", self, id(self), recursive)
+
         if not self.isdir():
             raise NotADirectoryError(f"{self} is not a directory")
 
         for root, subdirs, files in self.walk():
             if not recursive and (len(subdirs) > 0 or len(files) > 0):
-                raise IsADirectoryError(f"directory {self} is not empty and recursive argument is False")
+                raise IsADirectoryError(f"Directory at {self} is not empty and recursive argument is False")
 
             for file in files:
                 root.join(file).remove()
@@ -510,6 +492,7 @@ class DavResourcePath(ResourcePath):
         # Remove empty top directory
         self.remove()
 
+    @override
     def transfer_from(
         self,
         src: ResourcePath,
@@ -540,17 +523,27 @@ class DavResourcePath(ResourcePath):
             if a global override has been applied. If `False` parallel
             streams will be disabled.
         """
+        log.debug(
+            "transfer_from %s [%d] src=%s transfer=%s overwrite=%s",
+            self,
+            id(self),
+            src,
+            transfer,
+            overwrite,
+        )
+
         # Fail early to prevent delays if remote resources are requested.
         if transfer not in self.transferModes:
             raise ValueError(f"Transfer mode {transfer} not supported by URI scheme {self.scheme}")
 
         # Existence checks cost time so do not call this unless we know
         # that debugging is enabled.
-        destination_exists = self.exists()
+        destination_exists = None
         if log.isEnabledFor(logging.DEBUG):
+            destination_exists = self.exists()
             log.debug(
                 "Transferring %s [exists: %s] -> %s [exists: %s] (transfer=%s)",
-                src,
+                redact_url(src.geturl()),
                 src.exists(),
                 self,
                 destination_exists,
@@ -566,8 +559,12 @@ class DavResourcePath(ResourcePath):
             )
             return
 
-        if not overwrite and destination_exists:
-            raise FileExistsError(f"Destination path {self} already exists.")
+        if not overwrite:
+            if destination_exists is None:
+                destination_exists = self.exists()
+
+            if destination_exists:
+                raise FileExistsError(f"Destination path {self} already exists.")
 
         if transfer == "auto":
             transfer = self.transferDefault
@@ -575,7 +572,7 @@ class DavResourcePath(ResourcePath):
         # We can use webDAV 'COPY' or 'MOVE' if both the current and source
         # resources are located in the same server.
         if isinstance(src, type(self)) and self.root_uri() == src.root_uri():
-            log.debug("Transfer from %s to %s directly", src, self)
+            log.debug("Transfer from %s to %s [%d] directly", src, self, id(self))
             return (
                 self._move_from(src, overwrite=overwrite)
                 if transfer == "move"
@@ -601,31 +598,33 @@ class DavResourcePath(ResourcePath):
             The source of the contents to copy to `self`.
         """
         with source.as_local() as local_uri:
-            log.debug("Transfer from %s to %s via local file %s", source, self, local_uri)
+            log.debug(
+                "Transfer from %s to %s [%d] via local file %s",
+                redact_url(source.geturl()),
+                self,
+                id(self),
+                local_uri,
+            )
             with open(local_uri.ospath, "rb") as f:
                 self.write(data=f)
-
-        self._invalidate_metatada_cache()
 
     def _copy_from(self, source: DavResourcePath, overwrite: bool = False) -> None:
         """Copy the contents of `source` to this resource. `source` must
         be a file.
         """
+        log.debug("_copy_from %s [%d] source=%s overwrite=%s", self, id(self), source, overwrite)
+
         # Copy is only supported for files, not directories.
+        if self.isdir():
+            raise ValueError(f"Copy is not supported because destination {self} is a directory")
+
         if source.isdir():
             raise ValueError(f"Copy is not supported for directory {source}")
 
-        src_stat = source._stat()
-        if not src_stat.is_file:
-            raise FileNotFoundError(f"No such file {source}")
+        if not source.exists():
+            raise FileNotFoundError(f"No file found at {source}")
 
-        dst_stat = self._stat()
-        if dst_stat.is_dir:
-            raise ValueError(f"Copy is not supported because destination {self} is a directory")
-
-        self.parent().mkdir()
         self._client.copy(source._internal_url, self._internal_url, overwrite)
-        self._invalidate_metatada_cache()
 
     def _move_from(self, source: DavResourcePath, overwrite: bool = False) -> None:
         """Send a MOVE webDAV request to replace the contents of this resource
@@ -636,25 +635,21 @@ class DavResourcePath(ResourcePath):
         source : `DavResourcePath`
             The source of the contents to move to `self`.
         """
+        log.debug("_move_from %s [%d] source=%s overwrite=%s", self, id(self), source, overwrite)
+
         # Move is only supported for files, not directories.
+        if self.isdir():
+            raise ValueError(f"Move is not supported for destination directory {self}")
+
         if source.isdir():
             raise ValueError(f"Move is not supported for directory {source}")
 
-        src_stat = source._stat()
-        if not src_stat.is_file:
-            raise FileNotFoundError(f"No such file {source}")
+        if not source.exists():
+            raise FileNotFoundError(f"No file found at {source}")
 
-        dst_stat = self._stat()
-        if dst_stat.is_dir:
-            raise ValueError(f"Move is not supported for destination directory {self}")
-
-        # Create the destination's parent directory, move the source to
-        # this resource and invalidate caches for both.
-        self.parent().mkdir()
         self._client.move(source._internal_url, self._internal_url, overwrite)
-        self._invalidate_metatada_cache()
-        source._invalidate_metatada_cache()
 
+    @override
     def walk(
         self, file_filter: str | re.Pattern | None = None
     ) -> Iterator[list | tuple[ResourcePath, list[str], list[str]]]:
@@ -675,10 +670,10 @@ class DavResourcePath(ResourcePath):
             Names of all the files within dirpath.
         """
         if not self.isdir():
-            raise ValueError("Can not walk a non-directory URI")
+            raise ValueError(f"Can not walk non-directory URI {self}")
 
         # We must return no entries for non-existent directories.
-        if not self._stat().exists:
+        if not self.exists():
             return
 
         # Retrieve the entries in this directory
@@ -702,6 +697,7 @@ class DavResourcePath(ResourcePath):
             new_uri = self.join(subdir, forceDirectory=True)
             yield from new_uri.walk(file_filter)
 
+    @override
     def generate_presigned_get_url(self, *, expiration_time_seconds: int) -> str:
         """Return a pre-signed URL that can be used to retrieve this resource
         using an HTTP GET without supplying any access credentials.
@@ -718,6 +714,7 @@ class DavResourcePath(ResourcePath):
         """
         return self._client.generate_presigned_get_url(self._internal_url, expiration_time_seconds)
 
+    @override
     def generate_presigned_put_url(self, *, expiration_time_seconds: int) -> str:
         """Return a pre-signed URL that can be used to upload a file to this
         path using an HTTP PUT without supplying any access credentials.
@@ -734,6 +731,7 @@ class DavResourcePath(ResourcePath):
         """
         return self._client.generate_presigned_put_url(self._internal_url, expiration_time_seconds)
 
+    @override
     def to_fsspec(self) -> tuple[DavFileSystem, str]:
         """Return an abstract file system and path that can be used by fsspec.
 
@@ -747,9 +745,11 @@ class DavResourcePath(ResourcePath):
         if fsspec is None or not self._client._config.enable_fsspec:
             raise ImportError("fsspec is not available")
 
-        path: str = self.path
-        return DavFileSystem(self, path), path
+        log.debug("DavResourcePath.to_fsspec: %s", self)
+        fsys = DavFileSystem(self)
+        return fsys, fsys._path
 
+    @override
     @contextlib.contextmanager
     def _openImpl(
         self,
@@ -757,24 +757,23 @@ class DavResourcePath(ResourcePath):
         *,
         encoding: str | None = None,
     ) -> Iterator[ResourceHandleProtocol]:
-        if self.isdir():
-            raise OSError(f"open is not implemented for directory {self}")
+        log.debug("DavResourcePath._openImpl: %s mode: %s", self, mode)
 
         if mode in ("rb", "r") and self._client.accepts_ranges(self._internal_url):
-            stat: DavFileMetadata = self._stat(refresh=True)
-            if not stat.exists:
-                raise FileNotFoundError(f"No such file {self}")
-
-            if not stat.is_file:
+            is_dir, is_file, file_size = self._exists_and_size()
+            if is_dir:
                 raise OSError(f"open is not implemented for directory {self}")
 
-            handle: ResourceHandleProtocol = DavReadResourceHandle(mode, log, self, stat)
-            if mode == "r":
-                # cast because the protocol is compatible, but does not have
-                # BytesIO in the inheritance tree
-                yield io.TextIOWrapper(cast(Any, handle), encoding=encoding)
-            else:
-                yield handle
+            if not is_file:
+                raise FileNotFoundError(f"No such file {self}")
+
+            with DavReadResourceHandle(mode, log, self, file_size) as handle:
+                if mode == "r":
+                    # cast because the protocol is compatible, but does not
+                    # have BytesIO in the inheritance tree
+                    yield io.TextIOWrapper(cast(Any, handle), encoding=encoding)
+                else:
+                    yield handle
         else:
             with super()._openImpl(mode, encoding=encoding) as handle:
                 yield handle
@@ -788,52 +787,69 @@ class DavFileSystem(AbstractFileSystem):
     ----------
     uri : `DavResourcePath`
         URI of the single resource contained in the file system.
-
-    path : `str`
-        Path within the file system of the file.
     """
 
-    def __init__(self, uri: DavResourcePath, path: str):
+    def __init__(self, uri: DavResourcePath):
+        super().__init__()
         self._uri: DavResourcePath = uri
-        self._path: str = path
+        self._path: str = self._uri.geturl()
+        self._size: int | None = None
 
+    @override
     def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        log.debug("DavFileSystem.info %s", path)
         if path != self._path:
             raise FileNotFoundError(path)
 
         return {
             "name": path,
-            "size": self._uri.size(),
+            "size": self.size(self._path),
             "type": "file",
         }
 
+    @override
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[str] | list[dict[str, str]]:
+        log.debug("DavFileSystem.ls %s", path)
         if path != self._path:
             raise FileNotFoundError(path)
 
         return list(self.info(path)) if detail else list(path)
 
+    @override
     def modified(self, path: str) -> datetime.datetime:
+        log.debug("DavFileSystem.modified %s", path)
         if path != self._path:
             raise FileNotFoundError(path)
 
         return self._uri._stat().last_modified
 
+    @override
     def size(self, path: str) -> int:
+        log.debug("DavFileSystem.size %s", path)
         if path != self._path:
             raise FileNotFoundError(path)
 
-        return self._uri.size()
+        if self._size is None:
+            self._size = self._uri.size()
 
+        return self._size
+
+    @override
     def isfile(self, path: str) -> bool:
+        log.debug("DavFileSystem.isfile %s", path)
         return path == self._path
 
+    @override
     def isdir(self, path: str) -> bool:
+        log.debug("DavFileSystem.isdir %s", path)
         return False
 
+    @override
     def exists(self, path: str, **kwargs: Any) -> bool:
+        log.debug("DavFileSystem.exists %s", path)
         return path == self._path
 
+    @override
     def open(
         self,
         path: str,
@@ -843,26 +859,43 @@ class DavFileSystem(AbstractFileSystem):
         cache_options: dict[Any, Any] | None = None,
         compression: str | None = None,
         **kwargs: Any,
-    ) -> ResourceHandleProtocol[Any]:
+    ) -> DavReadResourceHandle | io.TextIOWrapper:
+        log.debug(
+            "DavFileSystem.open path: %s mode: %s encoding: %s blocksize: %s",
+            path,
+            mode,
+            encoding,
+            block_size,
+        )
         if path != self._path:
-            raise FileNotFoundError(path)
+            raise FileNotFoundError(f"File {path} does not exist")
 
-        with self._uri.open(mode=mode, encoding=encoding) as handle:
+        if mode not in ("rb", "r"):
+            raise OSError(f"Opening {path} for writing is not supported")
+
+        handle = DavReadResourceHandle(mode, log, self._uri, self.size(self._path))
+        if mode == "rb":
             return handle
+        else:
+            return io.TextIOWrapper(cast(Any, handle), encoding=encoding)
 
     @property
     def fsid(self) -> Any:
-        raise NotImplementedError
+        return "davs"
 
+    @override
     def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         raise NotImplementedError
 
+    @override
     def makedirs(self, path: str, exist_ok: bool = False) -> None:
         raise NotImplementedError
 
+    @override
     def rmdir(self, path: str) -> None:
         raise NotImplementedError
 
+    @override
     def walk(
         self,
         path: str,
@@ -873,6 +906,7 @@ class DavFileSystem(AbstractFileSystem):
     ) -> None:
         raise NotImplementedError
 
+    @override
     def find(
         self,
         path: str,
@@ -883,6 +917,7 @@ class DavFileSystem(AbstractFileSystem):
     ) -> None:
         raise NotImplementedError
 
+    @override
     def du(
         self,
         path: str,
@@ -893,20 +928,26 @@ class DavFileSystem(AbstractFileSystem):
     ) -> None:
         raise NotImplementedError
 
+    @override
     def glob(self, path: str, maxdepth: int | None = None, **kwargs: Any) -> None:
         raise NotImplementedError
 
+    @override
     def rm_file(self, path: str) -> None:
         raise NotImplementedError
 
+    @override
     def rm(self, path: str, recursive: bool = False, maxdepth: int | None = None) -> None:
         raise NotImplementedError
 
+    @override
     def touch(self, path: str, truncate: bool = True, **kwargs: Any) -> None:
         raise NotImplementedError
 
+    @override
     def ukey(self, path: str) -> None:
         raise NotImplementedError
 
+    @override
     def created(self, path: str) -> None:
         raise NotImplementedError
