@@ -36,6 +36,8 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         Logger to used when writing messages.
     uri : `lsst.resources.dav.DavResourcePath`
         URI of remote resource.
+    stat : `DavFileMetadata`
+        Information about this resource.
     newline : `str` or `None`, optional
         When doing multiline operations, break the stream on given character.
         Defaults to newline. If a file is opened in binary mode, this argument
@@ -181,6 +183,11 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
     def readinto(self, output: bytearray) -> int:
         """Read up to `len(output)` bytes into `output` and return the number
         of bytes read.
+
+        Parameters
+        ----------
+        output : `bytearray`
+            Byte array to write output into.
         """
         if self._eof or len(output) == 0:
             return 0

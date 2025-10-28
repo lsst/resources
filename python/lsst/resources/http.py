@@ -774,8 +774,8 @@ class HttpResourcePath(ResourcePath):
             generated internally by `HttpResourcePath` (e.g. authentication
             headers).
 
-        Return
-        ------
+        Returns
+        -------
         instance : `ResourcePath`
             Newly-created `HttpResourcePath` instance.
 
