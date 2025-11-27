@@ -126,7 +126,7 @@ WebDAV endpoint:
     Number of times to retry requests before failing. Retry happens only
     under certain conditions.
 
-    Default: 3 (``int``).
+    Default: 4 (``int``).
 
 ``retry_backoff_min``
     Minimal retry backoff (in seconds) for the client to compute
@@ -147,23 +147,26 @@ WebDAV endpoint:
     Default: 3.0 seconds (``float``).
 
 ``buffer_size``
-    Size of the buffer (in mebibytes, i.e. 1024*1024 bytes) the WebDAV
-    client of this endpoint will use when sending requests and receiving
-    responses.
+    Size of the internal buffer (in mebibytes, i.e. 1024*1024 bytes) the
+    WebDAV client of this endpoint will use when sending requests and
+    receiving responses.
 
     Default: 5 mebibytes (``int``).
 
-``persistent_connections_frontend``
+``block_size``
+    Size of the block (in mebibytes, i.e. 1024*1024 bytes) the WebDAV
+    client of this endpoint will use when making partial read requests.
+    Each partial read request will attempt to retrieve at least this number
+    of bytes unless the size of the file is lower.
+
+    Default: 1 mebibytes (``int``).
+
+``persistent_connections_per_host``
     Maximum number of network connections to persist against each one of
-    the hosts in the server frontend.
+    the hosts of this endpoint. If more than this number of network
+    connections are needed they will be established and discarded after use.
 
-    Default: 50 (``int``).
-
-``persistent_connections_backend``
-    Maximum number of network connections to persist against each one of
-    the hosts in the server backend.
-
-    Default: 100 (``int``).
+    Default: 20 (``int``).
 
 ``enable_fsspec``
     If specified, expose a `fsspec <https://filesystem-spec.read>`_-compatible,
