@@ -369,6 +369,9 @@ class DavResourcePath(ResourcePath):
             # File is empty
             return b""
 
+        # Read the requested chunk of data. The connection to the backend
+        # server may be released if the client decides it is beneficial
+        # for the specific server it interacts with.
         end_range = min(file_size, size) - 1
         _, data = self._client.read_range(self._internal_url, start=0, end=end_range)
         return data
@@ -788,6 +791,8 @@ class DavFileSystem(AbstractFileSystem):
     uri : `DavResourcePath`
         URI of the single resource contained in the file system.
     """
+
+    protocol = ("davs", "dav")
 
     def __init__(self, uri: DavResourcePath):
         super().__init__()
