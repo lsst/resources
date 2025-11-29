@@ -1339,6 +1339,7 @@ class DavClient:
         start: int,
         end: int | None,
         headers: dict[str, str] | None = None,
+        release_backend: bool = False,
     ) -> tuple[str, bytes]:
         """Download partial content of file located at `url`.
 
@@ -1374,8 +1375,20 @@ class DavClient:
         else:
             headers.update({"Range": f"bytes={start}-{end}"})
 
-        backend_url, resp = self._get(url, headers=headers)
-        return backend_url, resp.data
+        backend_url, resp = self._get(url, headers=headers, preload_content=False)
+        resp.auto_close = False
+        data = resp.data
+        if release_backend and url != backend_url:
+            # Close the HTTP connection to notify the backend server
+            # that we are not issuing more partial read requests for this
+            # resource.
+            resp.close()
+        else:
+            # Release the connection back to the connection pool so that it
+            # can be reused later on.
+            resp.release_conn()
+
+        return backend_url, data
 
     def download(self, url: str, filename: str, chunk_size: int) -> int:
         """Download the content of a file and write it to local file.
@@ -2195,6 +2208,23 @@ class DavClientDCache(DavClientURLSigner):
         file_url = f"{url}/{file_name}"
         self.write(file_url, data=b"")
         self.delete(file_url)
+
+    @override
+    def read_range(
+        self,
+        url: str,
+        start: int,
+        end: int | None,
+        headers: dict[str, str] | None = None,
+        release_backend: bool = False,
+    ) -> tuple[str, bytes]:
+        # Notify the dCache backend server that we are not issuing more
+        # partial reads requests for this resource, so that it stops the mover.
+        #
+        # dCache pools stop their mover when they detect the client closed
+        # the network connection or when a header "Connection: close" is
+        # included in a request sent directly to the pool.
+        return super().read_range(url=url, start=start, end=end, headers=headers, release_backend=True)
 
     @override
     def release_backend(self, url: str) -> None:
