@@ -1368,27 +1368,50 @@ class DavClient:
         a directory. This is important because some webDAV servers respond
         with an HTML document when asked for reading a directory.
         """
-        headers = {} if headers is None else dict(headers)
-        headers.update({"Accept-Encoding": "identity"})
+        range_headers = {"Accept-Encoding": "identity"}
         if end is None:
-            headers.update({"Range": f"bytes={start}-"})
+            range_headers.update({"Range": f"bytes={start}-"})
         else:
-            headers.update({"Range": f"bytes={start}-{end}"})
+            range_headers.update({"Range": f"bytes={start}-{end}"})
 
-        backend_url, resp = self._get(url, headers=headers, preload_content=False)
-        resp.auto_close = False
-        data = resp.data
-        if release_backend and url != backend_url:
-            # Close the HTTP connection to notify the backend server
-            # that we are not issuing more partial read requests for this
-            # resource.
-            resp.close()
-        else:
-            # Release the connection back to the connection pool so that it
-            # can be reused later on.
-            resp.release_conn()
+        frontend_headers = {} if headers is None else dict(headers)
+        frontend_headers.update(range_headers)
 
-        return backend_url, data
+        # Send the request to the frontend server and don't follow
+        # redirections automatically. We need to be able to add a
+        # "Connection: close" request header when sending the request to the
+        # backend server (if any) if are requested to. We don't send that
+        # header to the frontend.
+        resp = self._request("GET", url, headers=frontend_headers, redirect=False)
+        match resp.status:
+            case HTTPStatus.OK | HTTPStatus.PARTIAL_CONTENT:
+                return self._get_response_url(resp, default_url=url), resp.data
+            case HTTPStatus.NOT_FOUND:
+                raise FileNotFoundError(f"No file found at {url}")
+            case _:
+                redirect_location = resp.get_redirect_location()
+                if redirect_location is None or redirect_location is False:
+                    raise ValueError(
+                        f"Unexpected error in HTTP GET {url}: status {resp.status} {resp.reason}"
+                    )
+
+        # We were redirected to a backend server. Follow the redirection and
+        # if requested add a "Connection: close" header to explicitly release
+        # the backend.
+        url = redirect_location
+        backend_headers = {} if headers is None else dict(headers)
+        backend_headers.update(range_headers)
+        if release_backend:
+            backend_headers.update({"Connection": "close"})
+
+        resp = self._request("GET", url, headers=backend_headers)
+        match resp.status:
+            case HTTPStatus.OK | HTTPStatus.PARTIAL_CONTENT:
+                return self._get_response_url(resp, default_url=url), resp.data
+            case HTTPStatus.NOT_FOUND:
+                raise FileNotFoundError(f"No file found at {url}")
+            case _:
+                raise ValueError(f"Unexpected error in HTTP GET {url}: status {resp.status} {resp.reason}")
 
     def download(self, url: str, filename: str, chunk_size: int) -> int:
         """Download the content of a file and write it to local file.
