@@ -948,17 +948,17 @@ class DavClient:
         # is useful if the server redirects us; since we cannot rewind the
         # data we are uploading, we don't start uploading data until we
         # connect to the server that will actually serve our request.
+        temporary_url = f"{url}.{str(uuid.uuid4())}"
+        final_url = url
         headers = {"Content-Length": "0"}
-        resp = self._request("PUT", url, headers=headers, redirect=False)
-        if redirect_location := resp.get_redirect_location():
-            url = redirect_location
-        elif resp.status not in (
-            HTTPStatus.OK,
-            HTTPStatus.CREATED,
-            HTTPStatus.NO_CONTENT,
-        ):
+        resp = self._request("PUT", temporary_url, headers=headers, redirect=False)
+        if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+            redirect_url = temporary_url
+        elif redirect_location := resp.get_redirect_location():
+            redirect_url = redirect_location
+        else:
             raise ValueError(
-                f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
+                f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
@@ -984,20 +984,26 @@ class DavClient:
 
         resp = self._request(
             "PUT",
-            url,
+            redirect_url,
             body=data,
             headers=headers,
         )
-
-        if resp.status not in (
+        if resp.status in (
             HTTPStatus.OK,
             HTTPStatus.CREATED,
             HTTPStatus.NO_CONTENT,
         ):
-            raise ValueError(
-                f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
-                f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
-            )
+            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
+            return
+
+        # A problem occurred uploading the data to the server. Remove
+        # the temporary file.
+        self.delete(temporary_url)
+
+        raise ValueError(
+            f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
+            f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
+        )
 
     def _head(self, url: str, headers: dict[str, str] | None = None) -> HTTPResponse:
         """Send a HTTP HEAD request and return the response.
@@ -1624,7 +1630,9 @@ class DavClient:
             )
         return
 
-    def move(self, source_url: str, destination_url: str, overwrite: bool = False) -> None:
+    def move(
+        self, source_url: str, destination_url: str, overwrite: bool = False, create_parent: bool = True
+    ) -> None:
         """Move the file at `source_url` to `destination_url` in the same
         storage endpoint.
 
@@ -1641,15 +1649,16 @@ class DavClient:
         # Create the destination's parent directory first because MOVE may
         # fail if it does not exist, depending on the server implementation
         # of RFC 4918.
-        destination_parent = self._parent(destination_url)
-        self.mkcol(destination_parent)
+        if create_parent:
+            destination_parent = self._parent(destination_url)
+            self.mkcol(destination_parent)
 
         headers = {
             "Destination": destination_url,
             "Overwrite": "T" if overwrite else "F",
         }
         resp = self._request("MOVE", source_url, headers=headers)
-        if resp.status not in (HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+        if resp.status not in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
             raise ValueError(
                 f"""Could not move file {resp.geturl()} to {destination_url}: status {resp.status} """
                 f"""{resp.reason}"""
@@ -2020,14 +2029,8 @@ class DavClientDCache(DavClientURLSigner):
         # Details:
         # https://www.dcache.org/manuals/UserGuide-10.2/webdav.shtml#redirection
         #
-        # Note that we use the backend pool manager for PUT requests, since
-        # the dCache webDAV door closes the connection when redirecting a
-        # PUT request to the backend.
-        #
-        # We want to reuse the connections to the door as much as possible so
-        # that metadata operations are faster; all metadata operations use the
-        # frontend pool manager.
-        #
+        temporary_url = f"{url}.{str(uuid.uuid4())}"
+        final_url = url
         headers = {"Content-Length": "0", "Expect": "100-continue"}
         if isinstance(data, bytes) and len(data) == 0:
             # We are uploading an empty file. Don't send the "Expect" header
@@ -2035,15 +2038,17 @@ class DavClientDCache(DavClientURLSigner):
             # redirecting us to a pool.
             headers.pop("Expect")
 
-        resp = self._request("PUT", url, headers=headers, redirect=False)
+        resp = self._request("PUT", temporary_url, headers=headers, redirect=False)
         if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+            # Upload succeeded. Rename to the final name.
+            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
             return
 
         if redirect_location := resp.get_redirect_location():
-            url = redirect_location
+            redirect_url = redirect_location
         else:
             raise ValueError(
-                f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
+                f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
@@ -2051,6 +2056,7 @@ class DavClientDCache(DavClientURLSigner):
         # its final destination. Explicitly ask the server to close this
         # network connection after serving this PUT request to release
         # the associated dCache mover.
+        headers = {"Connection": "close"}
 
         # Ask dCache to compute and record a checksum of the uploaded
         # file contents, for later integrity checks. Since we don't compute
@@ -2062,42 +2068,22 @@ class DavClientDCache(DavClientURLSigner):
         # See RFC-3230 for details and
         # https://www.iana.org/assignments/http-dig-alg/http-dig-alg.xhtml
         # for the list of supported digest algorithhms.
-        headers = {"Connection": "close"}
         if (checksum := self._config.request_checksum) is not None:
             headers.update({"Want-Digest": checksum})
 
-        try:
-            resp = self._request(
-                "PUT",
-                url,
-                body=data,
-                headers=headers,
-                # Don't consume the response body, so that we can explicitly
-                # close the connection.
-                preload_content=False,
+        resp = self._request("PUT", redirect_url, body=data, headers=headers)
+        if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+            # Upload succeeded. Rename to the final name.
+            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
+        else:
+            # A problem prevented to successfully upload the file: attempt to
+            # remove the temporary file.
+            self.delete(temporary_url)
+
+            raise ValueError(
+                f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
+                f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
-
-            # Disable automatically returning the connection to the pool
-            # to be reused later on, since we want that connection to be
-            # closed. By default, when preload_content is True, the network
-            # connection is returned to the connection pool once the response
-            # body is completely consumed. Once this happens, we don't have a
-            # mecanism to force closing the connection.
-            resp.auto_close = False
-
-            if resp.status not in (
-                HTTPStatus.OK,
-                HTTPStatus.CREATED,
-                HTTPStatus.NO_CONTENT,
-            ):
-                raise ValueError(
-                    f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
-                    f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
-                )
-
-        finally:
-            # Close this network connection to the dCache backend server.
-            resp.close()
 
     @override
     def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
@@ -2300,11 +2286,16 @@ class DavClientXrootD(DavClientURLSigner):
         """
         # Send a PUT request with empty body to the XRootD frontend server to
         # get redirected to the backend.
+        temporary_url = f"{url}.{str(uuid.uuid4())}"
+        final_url = url
         headers = {"Content-Length": "0", "Expect": "100-continue"}
         for attempt in range(max_attempts := 3):
-            resp = self._request("PUT", url, headers=headers, redirect=False)
-            if redirect_location := resp.get_redirect_location():
-                url = redirect_location
+            resp = self._request("PUT", temporary_url, headers=headers, redirect=False)
+            if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+                redirect_url = temporary_url
+                break
+            elif redirect_location := resp.get_redirect_location():
+                redirect_url = redirect_location
                 break
             elif resp.status == HTTPStatus.LOCKED:
                 # Sometimes XRootD servers respond with status code LOCKED and
@@ -2317,24 +2308,20 @@ class DavClientXrootD(DavClientURLSigner):
                 # the maximum number of attempts.
                 if attempt == max_attempts - 1:
                     raise ValueError(
-                        f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
+                        f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                         f"""{resp.reason} [{resp.data.decode("utf-8")}] after {max_attempts} attempts"""
                     )
 
                 # Wait a bit and try again
                 log.warning(
-                    f"""got unexpected response status {HTTPStatus.LOCKED} Locked for {url} """
+                    f"""got unexpected response status {HTTPStatus.LOCKED} Locked for PUT {resp.geturl()} """
                     f"""(attempt {attempt}/{max_attempts}), retrying..."""
                 )
                 time.sleep((attempt + 1) * 0.100)
                 continue
-            elif resp.status not in (
-                HTTPStatus.OK,
-                HTTPStatus.CREATED,
-                HTTPStatus.NO_CONTENT,
-            ):
+            else:
                 raise ValueError(
-                    f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
+                    f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                     f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
                 )
 
@@ -2362,23 +2349,16 @@ class DavClientXrootD(DavClientURLSigner):
         if (checksum := self._config.request_checksum) is not None:
             headers = {"Want-Digest": checksum}
 
-        # For XRootD endpoints, we always use the same pool manager, namely
-        # the frontend pool manager, to increase the chance of reusing
-        # network connections.
-        resp = self._request(
-            "PUT",
-            url,
-            body=data,
-            headers=headers,
-        )
+        resp = self._request("PUT", redirect_url, body=data, headers=headers)
+        if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+            # Upload succeeded. Rename the temporary file.
+            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
+        else:
+            # Upload failed. Delete the temporary file.
+            self.delete(temporary_url)
 
-        if resp.status not in (
-            HTTPStatus.OK,
-            HTTPStatus.CREATED,
-            HTTPStatus.NO_CONTENT,
-        ):
             raise ValueError(
-                f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
+                f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
