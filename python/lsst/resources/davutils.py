@@ -2506,6 +2506,68 @@ class DavClientXrootD(DavClientURLSigner):
 
         raise ValueError(f"Can not create directory {resp.geturl()}: status {resp.status} {resp.reason}")
 
+    @override
+    def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
+        """Return some metadata of resource at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        is_dir: `bool`
+           True if the resource at `url` exists and is a directory.
+        is_file: `bool`
+           True if the resource at `url` exists and is a file.
+        size: `int`
+           The size in bytes of the resource at `url` if it exists. The size
+           of a directory is always zero.
+
+        Notes
+        -----
+        The returned is_dir and is_file cannot be both True.
+        """
+        # XRootD v5.9.1 responds "200 OK" to a HEAD request against an
+        # existing file. When the target URL is a directory, it also responds
+        # "200 OK". In both cases the response header "Content-Length"
+        # is present but has different meaning. If the target URL is a file,
+        # the header value is the size in bytes of the file. If the target
+        # URL is a directory, the header value is the number of items in
+        # the directory.
+        #
+        # So there is not an easy way to determine if the target URL is a
+        # file or a directory from the response to a HEAD request.
+        #
+        # When the target URL is a directory and we ask for a digest, the
+        # server responds "409 Conflict". We use this behavior to
+        # discriminate between a file and a directory.
+        resp = self._request("HEAD", url, headers={"Want-Digest": "adler32"})
+        match resp.status:
+            case HTTPStatus.OK:
+                # There is a file at target URL
+                if "Content-Length" in resp.headers:
+                    size = int(resp.headers.get("Content-Length"))
+                    return False, True, size
+                else:
+                    raise ValueError(
+                        f"""Expecting Content-Length header to be present in """
+                        f"""response to HTTP HEAD {resp.geturl()}: status {resp.status} """
+                        f"""{resp.reason} [{resp.data.decode("utf-8")}] but could not find it"""
+                    )
+            case HTTPStatus.CONFLICT:
+                # There is a directory at target URL
+                return True, False, 0
+            case HTTPStatus.NOT_FOUND:
+                # There is no file nor directory at target URL
+                return False, False, 0
+            case _:
+                raise ValueError(
+                    f"""Unexpected response to HTTP HEAD {resp.geturl()}: status {resp.status} """
+                    f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
+                )
+
 
 class DavFileMetadata:
     """Container for attributes of interest of a webDAV file or directory.
