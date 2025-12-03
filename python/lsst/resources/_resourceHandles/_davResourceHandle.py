@@ -64,7 +64,7 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         self._current_position = 0
         self._cache: DavReadAheadCache = DavReadAheadCache(
             client=self._client,
-            frontend_url=self._uri._internal_url,
+            url=self._uri._internal_url,
             filesize=self._filesize,
             blocksize=self._uri._client._config.block_size,
             log=log,
@@ -74,7 +74,6 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
     def close(self) -> None:
         if self._closed != CloseStatus.CLOSED:
             self._log.debug("closing read handle for %s [%d]", self._uri, id(self))
-            self._cache.release_backend()
             self._closed = CloseStatus.CLOSED
 
     @property
@@ -217,21 +216,19 @@ class DavReadAheadCache:
     """
 
     def __init__(
-        self, client: DavClient, frontend_url: str, filesize: int, blocksize: int, log: logging.Logger
+        self, client: DavClient, url: str, filesize: int, blocksize: int, log: logging.Logger
     ) -> None:
         self._client: DavClient = client
-        self._frontend_url: str = frontend_url
+        self._url: str = url
         self._filesize: int = filesize
         self._blocksize: int = blocksize
         self._cache = b""
         self._start: int = 0
         self._end: int = 0
-        self._backend_url: str | None = None
-        self._backend_released: bool = False
         self._log: logging.Logger = log
 
     def geturl(self) -> str:
-        return redact_url(self._frontend_url)
+        return redact_url(self._url)
 
     def fetch(self, start: int, end: int) -> bytes:
         """Fetch a chunk of the file and store it in memory.
@@ -286,32 +283,8 @@ class DavReadAheadCache:
             end_range - start_range,
         )
 
-        # Make a partial read and save the URL of this resource as obtained
-        # from the backend server. Further requests don't need to go through
-        # the front-end server again.
-        #
-        # NOTE: when reading parquet files with method pq.read_table(), the
-        # resource handle is not automatically closed, so we cannot keep the
-        # connection with the backend server open. So, for each partial read
-        # request, we need to go through the frontend server to get redirected
-        # again to the backend server with a new transaction identifier.
-        _, self._cache = self._client.read_range(
-            self._frontend_url, start=start_range, end=end_range - 1, release_backend=True
-        )
+        # Read the requested range.
+        _, self._cache = self._client.read_range(self._url, start=start_range, end=end_range - 1)
         self._start = start_range
         self._end = self._start + len(self._cache)
         return self._cache[start - self._start : end - self._start]
-
-    def release_backend(self) -> None:
-        """Notify the backend server that we want it to release
-        the resources it has allocated to serve partial read requests for
-        this handle.
-        """
-        if self._backend_released:
-            return
-
-        self._backend_released = True
-        if self._backend_url is not None:
-            self._log.debug("releasing connection to backend for %s", self.geturl())
-            self._client.release_backend(self._backend_url)
-            self._backend_url = None
