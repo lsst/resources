@@ -926,9 +926,14 @@ class DavClient:
             case HTTPStatus.NOT_FOUND:
                 raise FileNotFoundError(f"No file found at {resp.geturl()}")
             case _:
-                raise ValueError(
-                    f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
-                )
+                if resp.status in resp.REDIRECT_STATUSES and not redirect:
+                    # This response is a redirection but we are asked not to
+                    # follow redirections, so return this response as is.
+                    return self._get_response_url(resp, default_url=url), resp
+                else:
+                    raise ValueError(
+                        f"Unexpected error in HTTP GET {resp.geturl()}: status {resp.status} {resp.reason}"
+                    )
 
     def _put(
         self,
@@ -1388,36 +1393,68 @@ class DavClient:
         # "Connection: close" request header when sending the request to the
         # backend server (if any) if are requested to. We don't send that
         # header to the frontend.
-        resp = self._request("GET", url, headers=frontend_headers, redirect=False)
-        match resp.status:
-            case HTTPStatus.OK | HTTPStatus.PARTIAL_CONTENT:
-                return self._get_response_url(resp, default_url=url), resp.data
-            case HTTPStatus.NOT_FOUND:
-                raise FileNotFoundError(f"No file found at {url}")
-            case _:
-                redirect_location = resp.get_redirect_location()
-                if redirect_location is None or redirect_location is False:
-                    raise ValueError(
-                        f"Unexpected error in HTTP GET {url}: status {resp.status} {resp.reason}"
-                    )
+        final_url, resp = self._get(url, headers=frontend_headers, redirect=False)
+        if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
+            return final_url, resp.data
+        elif resp.status not in resp.REDIRECT_STATUSES:
+            raise ValueError(f"Unexpected error in HTTP GET {url}: status {resp.status} {resp.reason}")
 
         # We were redirected to a backend server. Follow the redirection and
         # if requested add a "Connection: close" header to explicitly release
         # the backend.
-        url = redirect_location
         backend_headers = {} if headers is None else dict(headers)
         backend_headers.update(range_headers)
         if release_backend:
             backend_headers.update({"Connection": "close"})
 
-        resp = self._request("GET", url, headers=backend_headers)
-        match resp.status:
-            case HTTPStatus.OK | HTTPStatus.PARTIAL_CONTENT:
-                return self._get_response_url(resp, default_url=url), resp.data
-            case HTTPStatus.NOT_FOUND:
-                raise FileNotFoundError(f"No file found at {url}")
-            case _:
-                raise ValueError(f"Unexpected error in HTTP GET {url}: status {resp.status} {resp.reason}")
+        redirect_url = resp.headers.get("Location")
+        final_url, resp = self._get(redirect_url, headers=backend_headers)
+        if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
+            return final_url, resp.data
+        else:
+            raise ValueError(f"Unexpected error in HTTP GET {url}: status {resp.status} {resp.reason}")
+
+    def _write_response_body_to_file(self, resp: HTTPResponse, filename: str, chunk_size: int) -> int:
+        """Write the the response body to a local file.
+
+        Parameters
+        ----------
+        resp : `HTTPResponse`
+            The HTTP Response to read the body from.
+        filename : `str`
+            Local file to write the content to. If the file already exists,
+            it will be rewritten.
+        chunk_size : `int`
+            Size of the chunks to write to `filename`.
+
+        Returns
+        -------
+        count: `int`
+            Number of bytes written to `filename`.
+        """
+        content_length = 0
+        with open(filename, "wb", buffering=chunk_size) as file:
+            for chunk in resp.stream(chunk_size):
+                file.write(chunk)
+                content_length += len(chunk)
+
+        # Check that the expected and actual content lengths match. Perform
+        # this check only when the content of the response was not encoded by
+        # the server.
+        expected_length: int = int(resp.headers.get("Content-Length", -1))
+        if (
+            "Content-Encoding" not in resp.headers
+            and expected_length != -1
+            and expected_length != content_length
+        ):
+            raise ValueError(
+                f"Size of downloaded file does not match value in Content-Length header for {resp.geturl()}: "
+                f"expecting {expected_length} and got {content_length} bytes"
+            )
+
+        resp.drain_conn()
+        resp.release_conn()
+        return content_length
 
     def download(self, url: str, filename: str, chunk_size: int) -> int:
         """Download the content of a file and write it to local file.
@@ -1443,28 +1480,7 @@ class DavClient:
         a directory.
         """
         _, resp = self._get(url, preload_content=False)
-
-        content_length = 0
-        with open(filename, "wb", buffering=chunk_size) as file:
-            for chunk in resp.stream(chunk_size):
-                file.write(chunk)
-                content_length += len(chunk)
-
-        # Check that the expected and actual content lengths match. Perform
-        # this check only when the content of the file was not encoded by
-        # the server.
-        expected_length: int = int(resp.headers.get("Content-Length", -1))
-        if (
-            "Content-Encoding" not in resp.headers
-            and expected_length != -1
-            and expected_length != content_length
-        ):
-            raise ValueError(
-                f"Size of downloaded file does not match value in Content-Length header for {self}: "
-                f"expecting {expected_length} and got {content_length} bytes"
-            )
-
-        return content_length
+        return self._write_response_body_to_file(resp, filename, chunk_size)
 
     def write(self, url: str, data: BinaryIO | bytes) -> None:
         """Create or rewrite a remote file at `url` with `data` as its
@@ -1486,15 +1502,6 @@ class DavClient:
         # upload.
         self.mkcol(self._parent(url))
         self._put(url, data)
-
-    def release_backend(self, url: str) -> None:
-        """Signal the backend server it can release the resources allocated
-        for serving the file at `url`.
-
-        By default it is a no-op but subclasses can override this method
-        according to the needs of the specific backend.
-        """
-        return
 
     def checksums(self, url: str) -> dict[str, str]:
         """Return the checksums of the contents of file located at `url`.
@@ -2134,6 +2141,62 @@ class DavClientDCache(DavClientURLSigner):
         return False, True, size
 
     @override
+    def download(self, url: str, filename: str, chunk_size: int) -> int:
+        """Download the content of a file and write it to local file.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        filename : `str`
+            Local file to write the content to. If the file already exists,
+            it will be rewritten.
+        chunk_size : `int`
+            Size of the chunks to write to `filename`.
+
+        Returns
+        -------
+        count: `int`
+            Number of bytes written to `filename`.
+
+        Notes
+        -----
+        The caller must ensure that the resource at `url` is a file, not
+        a directory.
+        """
+        # Send a GET request without following redirection to get redirected
+        # to the backend server.
+        _, resp = self._get(url, preload_content=False, redirect=False)
+        if resp.status == HTTPStatus.OK:
+            # We were not redirected. Consume this response.
+            return self._write_response_body_to_file(resp, filename, chunk_size)
+
+        # If this response is not a redirection as we expected something
+        # went wrong.
+        if resp.status not in resp.REDIRECT_STATUSES:
+            raise ValueError(
+                f"""Unexpected response to HTTP GET {resp.geturl()}: status {resp.status} """
+                f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
+            )
+
+        # Drain and release the response we received from the frontend server
+        # so that it can be reused.
+        resp.drain_conn()
+        resp.release_conn()
+
+        # Send a GET request to the backend server and ask it to close
+        # the HTTP connection to force closing the network connection.
+        redirect_url = resp.headers.get("Location")
+        _, resp = self._get(redirect_url, headers={"Connection": "close"}, preload_content=False)
+        if resp.status == HTTPStatus.OK:
+            return self._write_response_body_to_file(resp, filename, chunk_size)
+        else:
+            raise ValueError(
+                f"""Unexpected response to HTTP GET {resp.geturl()}: status {resp.status} """
+                f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
+            )
+
+    @override
     def read(self, url: str) -> tuple[str, bytes]:
         """Download the contents of file located at `url`.
 
@@ -2154,14 +2217,32 @@ class DavClientDCache(DavClientURLSigner):
         The caller must ensure that the resource at `url` is a file, not
         a directory.
         """
-        # Send a GET request, follow redirections and close the network
-        # connection to the dCache backend server so that it releases the
-        # mover.
-        backend_url, resp = self._get(url, preload_content=False)
-        resp.auto_close = False
-        data = resp.data
-        resp.close()
-        return backend_url, data
+        # Send a GET request without following redirection to get redirected
+        # to the backend server.
+        backend_url, resp = self._get(url, redirect=False)
+        if resp.status == HTTPStatus.OK:
+            # We were not redirected. Use this response.
+            return backend_url, resp.data
+
+        # If this response is not a redirection as we expected something
+        # went wrong.
+        if resp.status not in resp.REDIRECT_STATUSES:
+            raise ValueError(
+                f"""Unexpected response to HTTP GET {resp.geturl()}: status {resp.status} """
+                f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
+            )
+
+        # Send a GET request to the backend server and ask it to close
+        # the HTTP connection to force closing the network connection.
+        redirect_url = resp.headers.get("Location")
+        final_url, resp = self._get(redirect_url, headers={"Connection": "close"})
+        if resp.status == HTTPStatus.OK:
+            return final_url, resp.data
+        else:
+            raise ValueError(
+                f"""Unexpected response to HTTP GET {resp.geturl()}: status {resp.status} """
+                f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
+            )
 
     @override
     def write(self, url: str, data: BinaryIO | bytes) -> None:
@@ -2234,19 +2315,6 @@ class DavClientDCache(DavClientURLSigner):
         # the network connection or when a header "Connection: close" is
         # included in a request sent directly to the pool.
         return super().read_range(url=url, start=start, end=end, headers=headers, release_backend=True)
-
-    @override
-    def release_backend(self, url: str) -> None:
-        # Send a HEAD request to the server and explicitly close the network
-        # connection. This notifies the dCache mover that no more partial read
-        # requests will be issued for the resource at `url`.
-        #
-        # If the dCache mover was already shutdown, we will receive a redirect
-        # response to the webDAV door that we don't need to follow.
-        headers = {"Connection": "close"}
-        resp = self._request("HEAD", url, headers=headers, redirect=False, preload_content=False)
-        resp.auto_close = False
-        resp.close()
 
 
 class DavClientXrootD(DavClientURLSigner):

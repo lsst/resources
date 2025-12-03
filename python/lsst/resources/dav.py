@@ -352,9 +352,6 @@ class DavResourcePath(ResourcePath):
         if self.isdir():
             raise ValueError(f"method read() is not implemented for directory {self}")
 
-        if size == 0:
-            return b""
-
         if size < 0:
             # Read the entire file content
             _, data = self._client.read(self._internal_url)
@@ -365,8 +362,7 @@ class DavResourcePath(ResourcePath):
         if not is_file:
             raise FileNotFoundError(f"No file found at {self}")
 
-        if file_size == 0:
-            # File is empty
+        if size == 0 or file_size == 0:
             return b""
 
         # Read the requested chunk of data. The connection to the backend
