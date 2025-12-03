@@ -953,7 +953,7 @@ class DavClient:
         # is useful if the server redirects us; since we cannot rewind the
         # data we are uploading, we don't start uploading data until we
         # connect to the server that will actually serve our request.
-        temporary_url = f"{url}.{str(uuid.uuid4())}"
+        temporary_url = self._make_temporary_url(url)
         final_url = url
         headers = {"Content-Length": "0"}
         resp = self._request("PUT", temporary_url, headers=headers, redirect=False)
@@ -1081,6 +1081,17 @@ class DavClient:
             query=parsed.query,
             fragment=parsed.fragment,
         ).url
+
+    def _basename(self, url: str) -> str:
+        """Return the basename of `url`'s path."""
+        parsed: Url = parse_url(url)
+        return posixpath.basename(normalize_path(parsed.path))
+
+    def _make_temporary_url(self, url: str) -> str:
+        basename = self._basename(url)
+        parent = self._parent(url)
+        temporary_basename = f".tmp.{str(uuid.uuid4())}.{basename}"
+        return f"{parent}/{temporary_basename}"
 
     def exists(self, url: str) -> bool:
         """Return True if a file or directory exists at `url`.
@@ -2036,7 +2047,7 @@ class DavClientDCache(DavClientURLSigner):
         # Details:
         # https://www.dcache.org/manuals/UserGuide-10.2/webdav.shtml#redirection
         #
-        temporary_url = f"{url}.{str(uuid.uuid4())}"
+        temporary_url = self._make_temporary_url(url)
         final_url = url
         headers = {"Content-Length": "0", "Expect": "100-continue"}
         if isinstance(data, bytes) and len(data) == 0:
@@ -2354,7 +2365,7 @@ class DavClientXrootD(DavClientURLSigner):
         """
         # Send a PUT request with empty body to the XRootD frontend server to
         # get redirected to the backend.
-        temporary_url = f"{url}.{str(uuid.uuid4())}"
+        temporary_url = self._make_temporary_url(url)
         final_url = url
         headers = {"Content-Length": "0", "Expect": "100-continue"}
         for attempt in range(max_attempts := 3):
