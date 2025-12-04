@@ -289,7 +289,11 @@ class DavResourcePath(ResourcePath):
         if not self.isdir():
             raise NotADirectoryError(f"Can not create a directory for file-like URI {self}")
 
-        if self._exists_and_is_file():
+        is_dir, is_file, _ = self._exists_and_size()
+        if is_dir:
+            return
+
+        if is_file:
             # A file exists at this path.
             raise NotADirectoryError(
                 f"Can not create a directory for {self} because a file already exists at that URL"
