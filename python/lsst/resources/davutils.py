@@ -953,12 +953,10 @@ class DavClient:
         # is useful if the server redirects us; since we cannot rewind the
         # data we are uploading, we don't start uploading data until we
         # connect to the server that will actually serve our request.
-        temporary_url = self._make_temporary_url(url)
-        final_url = url
         headers = {"Content-Length": "0"}
-        resp = self._request("PUT", temporary_url, headers=headers, redirect=False)
+        resp = self._request("PUT", url, headers=headers, redirect=False)
         if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
-            redirect_url = temporary_url
+            redirect_url = url
         elif redirect_location := resp.get_redirect_location():
             redirect_url = redirect_location
         else:
@@ -993,22 +991,11 @@ class DavClient:
             body=data,
             headers=headers,
         )
-        if resp.status in (
-            HTTPStatus.OK,
-            HTTPStatus.CREATED,
-            HTTPStatus.NO_CONTENT,
-        ):
-            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
-            return
-
-        # A problem occurred uploading the data to the server. Remove
-        # the temporary file.
-        self.delete(temporary_url)
-
-        raise ValueError(
-            f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
-            f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
-        )
+        if resp.status not in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+            raise ValueError(
+                f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
+                f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
+            )
 
     def _head(self, url: str, headers: dict[str, str] | None = None) -> HTTPResponse:
         """Send a HTTP HEAD request and return the response.
@@ -1068,11 +1055,20 @@ class DavClient:
                 f"Unexpected response to PROPFIND {resp.geturl()}: status {resp.status} {resp.reason}"
             )
 
-    def _parent(self, url: str) -> str:
-        """Return the URL of the parent directory to `url`."""
+    def _get_temporary_basename(self, basename: str, prefix: str) -> str:
+        """Return a basename for a temporary file."""
+        unique_id = str(uuid.uuid4())
+        return f"{prefix}.{unique_id}.{basename}"
+
+    def _split_parent_and_basename(self, url: str) -> tuple[str, str]:
+        """Return the URL of the parent directory and the basename from
+        `url`.
+        """
         parsed: Url = parse_url(url)
-        parent_path: str = posixpath.dirname(normalize_path(parsed.path))
-        return Url(
+        normalized_path = normalize_path(parsed.path)
+        parent_path = posixpath.dirname(normalized_path)
+        basename = posixpath.basename(normalized_path)
+        parent_url = Url(
             scheme=parsed.scheme,
             auth=parsed.auth,
             host=parsed.host,
@@ -1081,17 +1077,18 @@ class DavClient:
             query=parsed.query,
             fragment=parsed.fragment,
         ).url
+        return parent_url, basename
 
-    def _basename(self, url: str) -> str:
-        """Return the basename of `url`'s path."""
-        parsed: Url = parse_url(url)
-        return posixpath.basename(normalize_path(parsed.path))
+    def _parent(self, url: str) -> str:
+        """Return the URL of the parent directory to `url`."""
+        parent_url, _ = self._split_parent_and_basename(url)
+        return parent_url
 
-    def _make_temporary_url(self, url: str) -> str:
-        basename = self._basename(url)
-        parent = self._parent(url)
-        temporary_basename = f".tmp.{str(uuid.uuid4())}.{basename}"
-        return f"{parent}/{temporary_basename}"
+    def _make_temporary_url(self, url: str, prefix: str = ".tmp") -> str:
+        """Return the URL of a temporary file based on `url`."""
+        parent_url, basename = self._split_parent_and_basename(url)
+        temporary_basename = self._get_temporary_basename(basename=basename, prefix=prefix)
+        return f"{parent_url}/{temporary_basename}"
 
     def exists(self, url: str) -> bool:
         """Return True if a file or directory exists at `url`.
@@ -1512,7 +1509,16 @@ class DavClient:
         # exist before we can write to it. So create it first and then
         # upload.
         self.mkcol(self._parent(url))
-        self._put(url, data)
+
+        try:
+            # Upload to a temporary file and rename to the final name.
+            temporary_url = self._make_temporary_url(url)
+            self._put(temporary_url, data)
+            self.move(temporary_url, url, overwrite=True, create_parent=False)
+        except Exception:
+            # Upload failed. Attempt to remove the temporary file.
+            self._request("DELETE", temporary_url)
+            raise
 
     def checksums(self, url: str) -> dict[str, str]:
         """Return the checksums of the contents of file located at `url`.
@@ -2047,28 +2053,27 @@ class DavClientDCache(DavClientURLSigner):
         # Details:
         # https://www.dcache.org/manuals/UserGuide-10.2/webdav.shtml#redirection
         #
-        temporary_url = self._make_temporary_url(url)
-        final_url = url
         headers = {"Content-Length": "0", "Expect": "100-continue"}
-        if isinstance(data, bytes) and len(data) == 0:
+        if is_zero_length := isinstance(data, bytes) and len(data) == 0:
             # We are uploading an empty file. Don't send the "Expect" header
             # so that the dCache door handles this PUT request itself without
             # redirecting us to a pool.
             headers.pop("Expect")
 
-        resp = self._request("PUT", temporary_url, headers=headers, redirect=False)
+        resp = self._request("PUT", url, headers=headers, redirect=False)
         if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
-            # Upload succeeded. Rename to the final name.
-            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
-            return
-
-        if redirect_location := resp.get_redirect_location():
+            redirect_url = url
+        elif redirect_location := resp.get_redirect_location():
             redirect_url = redirect_location
         else:
             raise ValueError(
                 f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
+
+        # If we are uploading an empty file, there is nothing more to do.
+        if is_zero_length:
+            return
 
         # We were redirected to a backend server. Upload the file contents to
         # its final destination. Explicitly ask the server to close this
@@ -2090,14 +2095,7 @@ class DavClientDCache(DavClientURLSigner):
             headers.update({"Want-Digest": checksum})
 
         resp = self._request("PUT", redirect_url, body=data, headers=headers)
-        if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
-            # Upload succeeded. Rename to the final name.
-            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
-        else:
-            # A problem prevented to successfully upload the file: attempt to
-            # remove the temporary file.
-            self.delete(temporary_url)
-
+        if resp.status not in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
             raise ValueError(
                 f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
@@ -2277,7 +2275,15 @@ class DavClientDCache(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        self._put(url, data)
+        try:
+            # Upload to a temporary file and rename to the final name.
+            temporary_url = self._make_temporary_url(url)
+            self._put(temporary_url, data)
+            self.move(temporary_url, url, overwrite=True, create_parent=False)
+        except Exception:
+            # Upload failed. Attempt to remove the temporary file.
+            self._request("DELETE", temporary_url)
+            raise
 
     @override
     def mkcol(self, url: str) -> None:
@@ -2305,10 +2311,11 @@ class DavClientDCache(DavClientURLSigner):
         # directory hierarchies are relatively deep, requiring two
         # requests per hierarchy is better than sending a "MKCOL" request
         # per directory in the hierarchy.
-        file_name = f".mkcol-{str(uuid.uuid4())}"
-        file_url = f"{url}/{file_name}"
-        self.write(file_url, data=b"")
-        self.delete(file_url)
+        try:
+            temporary_url = self._make_temporary_url(url=f"{url}/mkcol")
+            self._put(temporary_url, data=b"")
+        finally:
+            self._request("DELETE", temporary_url)
 
     @override
     def read_range(
@@ -2365,13 +2372,11 @@ class DavClientXrootD(DavClientURLSigner):
         """
         # Send a PUT request with empty body to the XRootD frontend server to
         # get redirected to the backend.
-        temporary_url = self._make_temporary_url(url)
-        final_url = url
         headers = {"Content-Length": "0", "Expect": "100-continue"}
         for attempt in range(max_attempts := 3):
-            resp = self._request("PUT", temporary_url, headers=headers, redirect=False)
+            resp = self._request("PUT", url, headers=headers, redirect=False)
             if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
-                redirect_url = temporary_url
+                redirect_url = url
                 break
             elif redirect_location := resp.get_redirect_location():
                 redirect_url = redirect_location
@@ -2429,13 +2434,7 @@ class DavClientXrootD(DavClientURLSigner):
             headers = {"Want-Digest": checksum}
 
         resp = self._request("PUT", redirect_url, body=data, headers=headers)
-        if resp.status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
-            # Upload succeeded. Rename the temporary file.
-            self.move(temporary_url, final_url, overwrite=True, create_parent=False)
-        else:
-            # Upload failed. Delete the temporary file.
-            self.delete(temporary_url)
-
+        if resp.status not in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
             raise ValueError(
                 f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
@@ -2483,7 +2482,15 @@ class DavClientXrootD(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        self._put(url, data)
+        try:
+            # Upload to a temporary file and rename to the final name.
+            temporary_url = self._make_temporary_url(url)
+            self._put(temporary_url, data)
+            self.move(temporary_url, url, overwrite=True, create_parent=False)
+        except Exception:
+            # Upload failed. Attempt to remove the temporary file.
+            self._request("DELETE", temporary_url)
+            raise
 
     @override
     def mkcol(self, url: str) -> None:
