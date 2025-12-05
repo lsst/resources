@@ -278,17 +278,26 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         os.remove(local_file)
 
     def test_dav_as_local(self):
-        contents = str.encode("12345")
-        remote_file = self.tmpdir.join(self._get_file_name())
-        self.assertIsNone(remote_file.write(data=contents, overwrite=True))
-        self.assertTrue(remote_file.exists())
-        self.assertEqual(remote_file.size(), len(contents))
+        # Generate a file with random data and upload to a remote file.
+        original_file, original_file_size = self._generate_file()
+        original_digest = self._compute_digest_for_file(original_file)
 
+        with open(original_file, "rb") as file:
+            remote_file = self.tmpdir.join(self._get_file_name())
+            self.assertIsNone(remote_file.write(data=file, overwrite=True))
+            self.assertTrue(remote_file.exists())
+            remote_file_size = remote_file.size()
+            self.assertEqual(remote_file_size, original_file_size)
+
+        # Download the remote file to a temporary local file, check that
+        # the sizes and contents of the original file and the downloaded files
+        # match.
         with remote_file._as_local() as local_uri:
             self.assertTrue(local_uri.isTemporary)
             self.assertTrue(os.path.exists(local_uri.ospath))
-            self.assertTrue(os.stat(local_uri.ospath).st_size, len(contents))
-            self.assertEqual(local_uri.read(), contents)
+            self.assertTrue(os.stat(local_uri.ospath).st_size, remote_file_size)
+            self.assertEqual(original_digest, self._compute_digest(local_uri.read()))
+
         self.assertFalse(local_uri.exists())
 
     def test_dav_size(self):
@@ -620,8 +629,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Create a local zip file composed of a random number of identical
         # files.
         local_file, local_file_size = self._generate_file()
-        with open(local_file, "rb") as lf:
-            local_file_digest = self._compute_digest(lf.read())
+        local_file_digest = self._compute_digest_for_file(local_file)
 
         num_members = random.randint(10, 20)
         basename = os.path.basename(local_file)
@@ -867,6 +875,12 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 return f"{zlib.adler32(data):08x}"
             case _:
                 raise ValueError(f"unsupported checksum algorithm {algorithm}")
+
+    @classmethod
+    def _compute_digest_for_file(cls, filename: str, algorithm: str = "sha256") -> str:
+        """Compute a hash of the contents of file `filename`."""
+        with open(filename, "rb") as file:
+            return cls._compute_digest(file.read(), algorithm)
 
     @classmethod
     def _is_server_running(cls, port: int) -> bool:

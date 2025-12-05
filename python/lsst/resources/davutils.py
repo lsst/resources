@@ -1440,29 +1440,39 @@ class DavClient:
         count: `int`
             Number of bytes written to `filename`.
         """
-        content_length = 0
-        with open(filename, "wb", buffering=chunk_size) as file:
-            for chunk in resp.stream(chunk_size):
-                file.write(chunk)
-                content_length += len(chunk)
+        try:
+            # Read the response body into a pre-allocated memory buffer and
+            # write the buffer content to the destination file avoiding
+            # copies if possible.
+            content_length = 0
+            with open(filename, "wb", buffering=0) as file:
+                view = memoryview(bytearray(chunk_size))
+                while True:
+                    if (count := resp.readinto(view)) > 0:  # type: ignore
+                        content_length += count
+                        file.write(view[:count])
+                    else:
+                        break
 
-        # Check that the expected and actual content lengths match. Perform
-        # this check only when the content of the response was not encoded by
-        # the server.
-        expected_length: int = int(resp.headers.get("Content-Length", -1))
-        if (
-            "Content-Encoding" not in resp.headers
-            and expected_length != -1
-            and expected_length != content_length
-        ):
-            raise ValueError(
-                f"Size of downloaded file does not match value in Content-Length header for {resp.geturl()}: "
-                f"expecting {expected_length} and got {content_length} bytes"
-            )
+            # Check that the expected and actual content lengths match.
+            # Perform this check only when the body of the response was not
+            # encoded by the server.
+            expected_length: int = int(resp.headers.get("Content-Length", -1))
+            if (
+                "Content-Encoding" not in resp.headers
+                and expected_length != -1
+                and expected_length != content_length
+            ):
+                raise ValueError(
+                    f"Size of downloaded file does not match value in Content-Length header for "
+                    f"{resp.geturl()}: expecting {expected_length} and got {content_length} bytes"
+                )
 
-        resp.drain_conn()
-        resp.release_conn()
-        return content_length
+            return content_length
+        finally:
+            # Release the connection
+            resp.drain_conn()
+            resp.release_conn()
 
     def download(self, url: str, filename: str, chunk_size: int) -> int:
         """Download the content of a file and write it to local file.
@@ -2189,7 +2199,7 @@ class DavClientDCache(DavClientURLSigner):
             )
 
         # Drain and release the response we received from the frontend server
-        # so that it can be reused.
+        # so that the connection can be reused.
         resp.drain_conn()
         resp.release_conn()
 
