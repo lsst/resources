@@ -224,6 +224,9 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
     def test_implicit_default_threading(self):
         S3ResourcePath.use_threads = None
         boto_default = signature(boto3.s3.transfer.TransferConfig).parameters["use_threads"].default
+        # Newer versions of boto return None as the default.
+        if boto_default is None:
+            boto_default = True
         test_resource_path = self.root_uri.join("test_file.dat")
         self.assertEqual(test_resource_path._transfer_config.use_threads, boto_default)
 
@@ -231,6 +234,9 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
         with mock.patch.dict(os.environ, {"LSST_S3_USE_THREADS": "None"}):
             S3ResourcePath.use_threads = None
             boto_default = signature(boto3.s3.transfer.TransferConfig).parameters["use_threads"].default
+            # Newer versions of boto return None as the default.
+            if boto_default is None:
+                boto_default = True
             test_resource_path = self.root_uri.join("test_file.dat")
             self.assertEqual(test_resource_path._transfer_config.use_threads, boto_default)
 
