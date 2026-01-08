@@ -1,0 +1,3 @@
+Added ``eups:`` URI scheme.
+This scheme will use the EUPS ``$<PRODUCT>_DIR`` environment variables if set, else try to find the corresponding Python package and look for a ``resources`` directory inside it following the decisions made in `RFC-1090 <https://rubinobs.atlassian.net/browse/RFC-1090>`_.
+Additionally, if a URI starts with ``$PRODUCT_DIR`` it is automatically converted to an EUPS URI.
