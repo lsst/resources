@@ -386,6 +386,11 @@ class ResourcePath:  # numpydoc ignore=PR02
                 from .mem import InMemoryResourcePath
 
                 subclass = InMemoryResourcePath
+            elif parsed.scheme == "eups":
+                # EUPS package root.
+                from .eups import EupsResourcePath
+
+                subclass = EupsResourcePath
             else:
                 raise NotImplementedError(
                     f"No URI support for scheme: '{parsed.scheme}' in {parsed.geturl()}"
@@ -396,11 +401,15 @@ class ResourcePath:  # numpydoc ignore=PR02
             )
 
             # It is possible for the class to change from schemeless
-            # to file so handle that
+            # to file or eups so handle that
             if parsed.scheme == "file":
                 from .file import FileResourcePath
 
                 subclass = FileResourcePath
+            elif parsed.scheme == "eups":
+                from .eups import EupsResourcePath
+
+                subclass = EupsResourcePath
 
         # Now create an instance of the correct subclass and set the
         # attributes directly
@@ -410,7 +419,12 @@ class ResourcePath:  # numpydoc ignore=PR02
         if isTemporary is None:
             isTemporary = False
         self.isTemporary = isTemporary
+        self._set_proxy()
         return self
+
+    def _set_proxy(self) -> None:
+        """Calculate internal proxy for externally visible resource path."""
+        pass
 
     @property
     def scheme(self) -> str:

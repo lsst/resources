@@ -417,11 +417,19 @@ class GenericTestCase(_GenericTestCase):
     def test_escapes(self) -> None:
         """Special characters in file paths."""
         src = self.root_uri.join("bbb/???/test.txt")
-        self.assertNotIn("???", src.path)
+        quotes = src.quotePaths
+
+        if quotes:
+            self.assertNotIn("???", src.path)
+        else:
+            self.assertIn("???", src.path)
         self.assertIn("???", src.unquoted_path)
 
         file = src.updatedFile("tests??.txt")
-        self.assertNotIn("??.txt", file.path)
+        if quotes:
+            self.assertNotIn("??.txt", file.path)
+        else:
+            self.assertIn("??.txt", file.path)
 
         src = src.updatedFile("tests??.txt")
         self.assertIn("??.txt", src.unquoted_path)
@@ -456,7 +464,10 @@ class GenericTestCase(_GenericTestCase):
 
         fnew2 = fdir.join(new2name)
         self.assertTrue(fnew2.unquoted_path.endswith(new2name))
-        self.assertNotIn("###", fnew2.path)
+        if quotes:
+            self.assertNotIn("###", fnew2.path)
+        else:
+            self.assertIn("###", fnew2.path)
 
         # Test that children relative to schemeless and file schemes
         # still return the same unquoted name

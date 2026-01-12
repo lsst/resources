@@ -16,6 +16,7 @@ __all__ = ("SchemelessResourcePath",)
 import logging
 import os
 import os.path
+import re
 import stat
 import urllib.parse
 from pathlib import PurePath
@@ -211,12 +212,23 @@ class SchemelessResourcePath(FileResourcePath):
         expandedPath = os.path.expanduser(urllib.parse.unquote(parsed.path))
 
         # We might also be receiving a path containing environment variables
-        # so expand those here
+        # so expand those here, although we treat $X_DIR at the start of the
+        # path as a special EUPS URI. This allows us to handle EUPS-style
+        # env var specifications even if EUPS has not set them.
+        # Support $X_DIR and ${X_DIR} variants at the start of the path.
+        if eups := re.match(r"(\$\{?([A-Z_]+)_DIR\}?)/", expandedPath):
+            replacements["scheme"] = "eups"
+            # Two matching groups: the entire env var, and the EUPS product.
+            replacements["netloc"] = eups.group(2).lower()
+            expandedPath = expandedPath.removeprefix(eups.group(1))
+
         expandedPath = os.path.expandvars(expandedPath)
 
-        # Ensure that this becomes a file URI if it is already absolute
+        # Ensure that this becomes a file URI if it is already absolute, unless
+        # we already overrode it above.
         if os.path.isabs(expandedPath):
-            replacements["scheme"] = "file"
+            if "scheme" not in replacements:
+                replacements["scheme"] = "file"
             # Keep in OS form for now to simplify later logic
             replacements["path"] = os.path.normpath(expandedPath)
         elif forceAbsolute:
@@ -265,9 +277,9 @@ class SchemelessResourcePath(FileResourcePath):
             if not replacements["path"].endswith(os.sep):
                 replacements["path"] += os.sep
 
-        if "scheme" in replacements:
+        if "scheme" in replacements and replacements["scheme"] == "file":
             # This is now meant to be a URI path so force to posix
-            # and quote
+            # and quote. EUPS URIs are not quoted.
             replacements["path"] = urllib.parse.quote(os2posix(replacements["path"]))
 
         # ParseResult is a NamedTuple so _replace is standard API
