@@ -177,6 +177,16 @@ class EupsReadTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             list(bad_dir.walk())
 
+    def test_env_var(self):
+        """Test that environment variables are converted."""
+        with unittest.mock.patch.dict(os.environ, {"MY_TEST_DIR": TESTDIR}):
+            for env_string in ("$MY_TEST_DIR", "${MY_TEST_DIR}"):
+                uri = ResourcePath(f"{env_string}/data/dir1/a.yaml")
+                self.assertEqual(uri.path, "/data/dir1/a.yaml")
+                self.assertEqual(uri.scheme, "eups")
+                self.assertEqual(uri.netloc, "my_test")
+                self.assertTrue(uri.exists())
+
 
 class EupsAsResourcesReadTestCase(EupsReadTestCase):
     """Test that EUPS information can be read via resources.

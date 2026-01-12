@@ -46,14 +46,14 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
 
     def test_env_var(self):
         """Test that environment variables are expanded."""
-        with unittest.mock.patch.dict(os.environ, {"MY_TEST_DIR": "/a/b/c"}):
-            uri = ResourcePath("${MY_TEST_DIR}/d.txt")
+        with unittest.mock.patch.dict(os.environ, {"MY_TEST_DIRX": "/a/b/c"}):
+            uri = ResourcePath("${MY_TEST_DIRX}/d.txt")
         self.assertEqual(uri.path, "/a/b/c/d.txt")
         self.assertEqual(uri.scheme, "file")
 
         # This will not expand
-        uri = ResourcePath("${MY_TEST_DIR}/d.txt", forceAbsolute=False)
-        self.assertEqual(uri.path, "${MY_TEST_DIR}/d.txt")
+        uri = ResourcePath("${MY_TEST_DIRX}/d.txt", forceAbsolute=False)
+        self.assertEqual(uri.path, "${MY_TEST_DIRX}/d.txt")
         self.assertFalse(uri.scheme)
 
     def test_ospath(self):
