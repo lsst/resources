@@ -42,6 +42,8 @@ class PackageResourcePath(ResourcePath):
     resource name.
     """
 
+    quotePaths = False
+
     def _get_ref(self) -> resources.abc.Traversable | None:
         """Obtain the object representing the resource.
 
