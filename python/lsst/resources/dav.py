@@ -401,11 +401,13 @@ class DavResourcePath(ResourcePath):
             A URI to a local POSIX file corresponding to a local temporary
             downloaded copy of the resource.
         """
+        log.debug("_as_local %s [%d] tmpdir: %s", self, id(self), tmpdir)
+
         # We need to ensure that this resource is actually a file since
         # the response to a GET request on a directory may be implemented in
         # several ways, according to RFC 4818.
-        if not self._exists_and_is_file():
-            raise FileNotFoundError(f"No file found at {self}")
+        if self.isdir():
+            raise FileNotFoundError(f"{self} is a directory")
 
         if tmpdir is None:
             local_dir, buffer_size = self._config.tmpdir_buffersize
@@ -414,6 +416,7 @@ class DavResourcePath(ResourcePath):
             buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
 
         with ResourcePath.temporary_uri(suffix=self.getExtension(), prefix=tmpdir, delete=True) as tmp_uri:
+            log.debug("downloading %s [%d] to local file %s [buffer_size %d]", self, id(self), tmp_uri.ospath, buffer_size)
             self._client.download(self._internal_url, tmp_uri.ospath, buffer_size)
             yield tmp_uri
 
