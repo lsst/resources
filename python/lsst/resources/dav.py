@@ -49,8 +49,9 @@ from .utils import get_tempdir
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
 
+from lsst.utils.logging import getLogger
 
-log = logging.getLogger(__name__)
+log = getLogger(__name__)
 
 
 @functools.lru_cache
@@ -317,14 +318,7 @@ class DavResourcePath(ResourcePath):
         """Return the size of the remote resource in bytes."""
         log.debug("size %s [%d]", self, id(self))
 
-        if self.isdir():
-            return 0
-
-        is_dir, is_file, file_size = self._exists_and_size()
-        if not is_dir and not is_file:
-            raise FileNotFoundError(f"No file or directory found at {self}")
-
-        return file_size
+        return 0 if self.isdir() else self._client.size(self._internal_url)
 
     def info(self) -> dict[str, Any]:
         """Return metadata details about this resource."""
@@ -416,7 +410,13 @@ class DavResourcePath(ResourcePath):
             buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
 
         with ResourcePath.temporary_uri(suffix=self.getExtension(), prefix=tmpdir, delete=True) as tmp_uri:
-            log.debug("downloading %s [%d] to local file %s [buffer_size %d]", self, id(self), tmp_uri.ospath, buffer_size)
+            log.debug(
+                "downloading %s [%d] to local file %s [buffer_size %d]",
+                self,
+                id(self),
+                tmp_uri.ospath,
+                buffer_size,
+            )
             self._client.download(self._internal_url, tmp_uri.ospath, buffer_size)
             yield tmp_uri
 
@@ -773,7 +773,7 @@ class DavResourcePath(ResourcePath):
             if not is_file:
                 raise FileNotFoundError(f"No such file {self}")
 
-            with DavReadResourceHandle(mode, log, self, file_size) as handle:
+            with DavReadResourceHandle(mode, log.logger, self, file_size) as handle:
                 if mode == "r":
                     # cast because the protocol is compatible, but does not
                     # have BytesIO in the inheritance tree
@@ -881,7 +881,7 @@ class DavFileSystem(AbstractFileSystem):
         if mode not in ("rb", "r"):
             raise OSError(f"Opening {path} for writing is not supported")
 
-        handle = DavReadResourceHandle(mode, log, self._uri, self.size(self._path))
+        handle = DavReadResourceHandle(mode, log.logger, self._uri, self.size(self._path))
         if mode == "rb":
             return handle
         else:
