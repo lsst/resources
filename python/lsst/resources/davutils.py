@@ -43,10 +43,11 @@ from urllib3 import PoolManager
 from urllib3.response import HTTPResponse
 from urllib3.util import Retry, Timeout, Url, parse_url
 
+from lsst.utils.logging import getLogger
 from lsst.utils.timer import time_this
 
 # Use the same logger than `dav.py`.
-log = logging.getLogger(f"""{__name__.replace(".davutils", ".dav")}""")
+log = getLogger(f"""{__name__.replace(".davutils", ".dav")}""")
 
 
 def normalize_path(path: str | None) -> str:
@@ -365,8 +366,7 @@ class DavConfigPool:
         The configuration file is a YAML file with the structure below:
 
           - base_url: "davs://webdav1.example.org:1234/"
-            persistent_connections_frontend: 10
-            persistent_connections_backend: 100
+            persistent_connections_per_host: 10
             timeout_connect: 20.0
             timeout_read: 120.0
             retries: 3
@@ -382,7 +382,7 @@ class DavConfigPool:
             collect_memory_usage: false
 
           - base_url: "davs://webdav2.example.org:1234/"
-            persistent_connections_frontend: 5
+            persistent_connections_per_host: 5
             ...
 
         All settings are optional. If no settings are found in the
@@ -632,6 +632,125 @@ class DavClientPool:
             DavClientPool._instance = None
 
 
+class DavFileSizeCache:
+    """Helper class to cache file sizes of recently uploaded files.
+
+    Parameters
+    ----------
+    default_timeout : `float`, optional
+        Default validity period, in seconds, of the entries in this cache.
+        The validity period for a specific entry can be specified when the
+        entry is added to the cache (see `update_size` method).
+
+    Notes
+    -----
+    There is a single instance of this class shared by several `DavClient`
+    objects. This singleton is thread safe.
+
+    Caching file sizes helps preventing sending requests to the server for
+    retrieving the size of recently uploaded files. This is in particular
+    intended to efficiently serve `Butler` requests for the size of a file it
+    just wrote to the datastore.
+    """
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls) -> DavFileSizeCache:
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+
+        return cls._instance
+
+    def __init__(self, default_timeout: float = 60.0) -> None:
+        # The key of the cache dictionnary is a URL of the form
+        #
+        #    "https://host.example.org:1234/path/to/file".
+        #
+        # The value is a triplet (file_size, last_updated, timeout) where:
+        # - 'file_size' is the size of the file in bytes,
+        # - 'last_updated' is the time when this entry was added to the cache
+        #   or last updated, in seconds since epoch,
+        # - 'timeout' is the validity period of this cache entry, in seconds,
+        #   understood from the moment the cache entry was created.
+        with DavFileSizeCache._lock:
+            if not hasattr(self, "_cache"):
+                self._default_timeout: float = default_timeout
+                self._cache: dict[str, tuple[int, float, float]] = {}
+
+    def invalidate(self, url: str) -> None:
+        """Invalidate the cache entry for `url`, if any.
+
+        Parameters
+        ----------
+        url : `str`
+            URL of the file to invalidate which cache entry must be
+            invalidated.
+        """
+        with DavFileSizeCache._lock:
+            self._cache.pop(url, None)
+
+    def update_size(self, url: str, size: int | None, timeout: float | None = None) -> None:
+        """
+        Update the cache with an entry for `url` which has a size of `size`
+        bytes. This entry is considered valid for a period of `timeout`
+        seconds from now.
+
+        Parameters
+        ----------
+        url : `str`
+            URL of the file the size to be cached.
+        size : `size` or `None`, optional
+            Size in bytes of the file at `url`. If this value is `None`, the
+            cache is not modified.
+        timeout : `float` or `None`, optional
+            The validity period, in seconds, this size is to be considered
+            valid. If not specified, the default value specified when this
+            object was created will be used for this cache entry.
+        """
+        if size is None:
+            return
+
+        timeout = self._default_timeout if timeout is None else timeout
+        with DavFileSizeCache._lock:
+            self._cache[url] = (size, time.time(), timeout)
+
+    def get_size(self, url: str) -> int | None:
+        """Retrieve the cached valued of the size of file at `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            URL of the file to retrieve the size for.
+
+        Returns
+        -------
+        `size`: `int` or `None`
+            The cached value of the size of file at `url` if any value was
+            found in the cache, `None` otherwise.
+            `None` is also returned if there is a cached value but its
+            validity period has expired. In this case, the entry associated to
+            `url` is removed from the cache.
+        """
+        with DavFileSizeCache._lock:
+            if (entry := self._cache.get(url, None)) is None:
+                # There is no entry in the cache for this URL
+                return None
+
+            # There is an entry in the cache for this URL. Check that
+            # its validity period has not yet expired.
+            size, last_updated, timeout = entry
+            if time.time() <= last_updated + timeout:
+                # This entry is stil valid
+                return size
+            else:
+                # This entry is no longer valid. Remove it from the cache.
+                self._cache.pop(url)
+                return None
+
+
 class DavClient:
     """WebDAV client, configured to talk to a single storage endpoint.
 
@@ -735,6 +854,9 @@ class DavClient:
         # Base URL of the server this is a client for. It is of the form:
         #   "davs://host.example.org:1234./"
         self._base_url: str = url
+
+        # Cache of file sizes uploaded by this client
+        self._file_size_cache = DavFileSizeCache()
 
     def get_server_details(self, url: str) -> dict[str, str]:
         """
@@ -863,7 +985,13 @@ class DavClient:
         if self._authorizer is not None and url.startswith("https://"):
             self._authorizer.set_authorization(headers)
 
-        log.debug("sending request %s %s", method, redact_url(url))
+        if log.level < logging.INFO:
+            annotation = ""
+            if method == "GET" and "Range" in headers:
+                byte_range = headers.get("Range", "").removeprefix("bytes=")
+                annotation = f" (byte range: {byte_range})"
+
+            log.verbose("sending request %s %s%s", method, redact_url(url), annotation)
 
         with time_this(
             log,
@@ -939,7 +1067,7 @@ class DavClient:
         self,
         url: str,
         data: BinaryIO | bytes,
-    ) -> None:
+    ) -> int | None:
         """Send a HTTP PUT request.
 
         Parameters
@@ -948,6 +1076,12 @@ class DavClient:
             Target URL.
         data : `BinaryIO` or `bytes`
             Request body.
+
+        Returns
+        -------
+        size : `int | None`
+            size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
         """
         # Send a PUT request with empty body and handle redirection. This
         # is useful if the server redirects us; since we cannot rewind the
@@ -996,6 +1130,11 @@ class DavClient:
                 f"""Unexpected response to HTTP request PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
+
+        # Send a HEAD request to retrieve the size of the file we just uploaded
+        resp = self._head(redirect_url)
+        size = int(resp.headers.get("Content-Length", -1))
+        return None if size == -1 else size
 
     def _head(self, url: str, headers: dict[str, str] | None = None) -> HTTPResponse:
         """Send a HTTP HEAD request and return the response.
@@ -1121,6 +1260,10 @@ class DavClient:
         size: `int`
            The number of bytes of the resource located at `url`.
         """
+        # Check if we have the size of this URL in our cache
+        if (size := self._file_size_cache.get_size(url)) is not None:
+            return size
+
         is_dir, is_file, file_size = self.exists_and_size(url)
         if not is_dir and not is_file:
             raise FileNotFoundError(f"No file or directory found at {url}")
@@ -1409,7 +1552,7 @@ class DavClient:
 
         # We were redirected to a backend server. Follow the redirection and
         # if requested add a "Connection: close" header to explicitly release
-        # the backend.
+        # the backend server.
         backend_headers = {} if headers is None else dict(headers)
         backend_headers.update(range_headers)
         if release_backend:
@@ -1500,7 +1643,7 @@ class DavClient:
         _, resp = self._get(url, preload_content=False)
         return self._write_response_body_to_file(resp, filename, chunk_size)
 
-    def write(self, url: str, data: BinaryIO | bytes) -> None:
+    def write(self, url: str, data: BinaryIO | bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
 
@@ -1510,6 +1653,12 @@ class DavClient:
             Target URL.
         data : `bytes`
             Sequence of bytes to upload.
+
+        Returns
+        -------
+        size : `int | None`
+            size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
 
         Notes
         -----
@@ -1523,8 +1672,12 @@ class DavClient:
         try:
             # Upload to a temporary file and rename to the final name.
             temporary_url = self._make_temporary_url(url)
-            self._put(temporary_url, data)
+            size = self._put(temporary_url, data)
             self.move(temporary_url, url, overwrite=True, create_parent=False)
+
+            # Update the file size cache with this size
+            self._file_size_cache.update_size(url, size)
+            return size
         except Exception:
             # Upload failed. Attempt to remove the temporary file.
             self._request("DELETE", temporary_url)
@@ -1606,6 +1759,9 @@ class DavClient:
             HTTPStatus.NOT_FOUND,
         ):
             raise ValueError(f"Unable to delete resource {resp.geturl()}: status {resp.status} {resp.reason}")
+
+        # Invalidate the entry for this file in our cache, if any
+        self._file_size_cache.invalidate(url)
 
     def accepts_ranges(self, url: str) -> bool:
         """Return `True` if the server supports a 'Range' header in
@@ -2013,6 +2169,13 @@ class DavClientDCache(DavClientURLSigner):
         requests.
     """
 
+    # Regular expression to parse dCache's response body of a successful
+    # PUT request. Such a response body is of the form:
+    #
+    # "104857600 bytes uploaded\r\n\r\n"
+    #
+    rex: re.Pattern = re.compile(r"^(\d*) bytes uploaded", re.IGNORECASE | re.ASCII)
+
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
         super().__init__(url=url, config=config, accepts_ranges=accepts_ranges)
 
@@ -2047,7 +2210,7 @@ class DavClientDCache(DavClientURLSigner):
         self,
         url: str,
         data: BinaryIO | bytes,
-    ) -> None:
+    ) -> int | None:
         """Send a HTTP PUT request to a dCache webDAV server.
 
         Parameters
@@ -2056,6 +2219,12 @@ class DavClientDCache(DavClientURLSigner):
             Target URL.
         data : `BinaryIO` or `bytes`
             Request body.
+
+        Returns
+        -------
+        size : `int | None`
+            size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
         """
         # Send a PUT request with empty body to the dCache frontend server to
         # get redirected to the backend.
@@ -2083,7 +2252,7 @@ class DavClientDCache(DavClientURLSigner):
 
         # If we are uploading an empty file, there is nothing more to do.
         if is_zero_length:
-            return
+            return 0
 
         # We were redirected to a backend server. Upload the file contents to
         # its final destination. Explicitly ask the server to close this
@@ -2110,6 +2279,15 @@ class DavClientDCache(DavClientURLSigner):
                 f"""Unexpected response to HTTP PUT {resp.geturl()}: status {resp.status} """
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
+
+        # Parse the response body and extract the number of bytes uploaded.
+        # This allows us to avoid sending a HEAD request to retrieve the
+        # file size.
+        response_body = resp.data.decode("utf-8")
+        if match := DavClientDCache.rex.match(response_body):
+            return int(match.group(1))
+
+        return None
 
     @override
     def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
@@ -2264,7 +2442,7 @@ class DavClientDCache(DavClientURLSigner):
             )
 
     @override
-    def write(self, url: str, data: BinaryIO | bytes) -> None:
+    def write(self, url: str, data: BinaryIO | bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
 
@@ -2275,6 +2453,12 @@ class DavClientDCache(DavClientURLSigner):
 
         data: `bytes`
             Sequence of bytes to upload.
+
+        Returns
+        -------
+        size : `int | None`
+            size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
 
         Notes
         -----
@@ -2288,8 +2472,12 @@ class DavClientDCache(DavClientURLSigner):
         try:
             # Upload to a temporary file and rename to the final name.
             temporary_url = self._make_temporary_url(url)
-            self._put(temporary_url, data)
+            size = self._put(temporary_url, data)
             self.move(temporary_url, url, overwrite=True, create_parent=False)
+
+            # Update the file size cache with this size
+            self._file_size_cache.update_size(url, size)
+            return size
         except Exception:
             # Upload failed. Attempt to remove the temporary file.
             self._request("DELETE", temporary_url)
@@ -2370,7 +2558,7 @@ class DavClientXrootD(DavClientURLSigner):
         self,
         url: str,
         data: BinaryIO | bytes,
-    ) -> None:
+    ) -> int | None:
         """Send a HTTP PUT request to a dCache webDAV server.
 
         Parameters
@@ -2379,6 +2567,12 @@ class DavClientXrootD(DavClientURLSigner):
             Target URL.
         data : `BinaryIO` or `bytes`
             Request body.
+
+        Returns
+        -------
+        size : `int | None`
+            size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
         """
         # Send a PUT request with empty body to the XRootD frontend server to
         # get redirected to the backend.
@@ -2450,6 +2644,11 @@ class DavClientXrootD(DavClientURLSigner):
                 f"""{resp.reason} [{resp.data.decode("utf-8")}]"""
             )
 
+        # Send a HEAD request to retrieve the size of the file we just uploaded
+        resp = self._head(redirect_url)
+        size = int(resp.headers.get("Content-Length", -1))
+        return None if size == -1 else size
+
     @override
     def info(self, url: str, name: str | None = None) -> dict[str, Any]:
         # XRootD does not include checksums in the response to PROPFIND
@@ -2471,7 +2670,7 @@ class DavClientXrootD(DavClientURLSigner):
         return result
 
     @override
-    def write(self, url: str, data: BinaryIO | bytes) -> None:
+    def write(self, url: str, data: BinaryIO | bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
 
@@ -2482,6 +2681,12 @@ class DavClientXrootD(DavClientURLSigner):
 
         data: `bytes`
             Sequence of bytes to upload.
+
+        Returns
+        -------
+        size : `int | None`
+            size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
 
         Notes
         -----
@@ -2495,8 +2700,12 @@ class DavClientXrootD(DavClientURLSigner):
         try:
             # Upload to a temporary file and rename to the final name.
             temporary_url = self._make_temporary_url(url)
-            self._put(temporary_url, data)
+            size = self._put(temporary_url, data)
             self.move(temporary_url, url, overwrite=True, create_parent=False)
+
+            # Update the file size cache with this size
+            self._file_size_cache.update_size(url, size)
+            return size
         except Exception:
             # Upload failed. Attempt to remove the temporary file.
             self._request("DELETE", temporary_url)
