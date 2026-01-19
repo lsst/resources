@@ -69,11 +69,12 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
             blocksize=self._uri._client._config.block_size,
             log=log,
         )
-        self._log.debug("initializing read handle for %s [%d]", self._uri, id(self))
+        self._log.debug("initializing read handle for %s [%#x]", self._uri, id(self))
 
     def close(self) -> None:
         if self._closed != CloseStatus.CLOSED:
-            self._log.debug("closing read handle for %s [%d]", self._uri, id(self))
+            self._log.debug("closing read handle for %s [%#x]", self._uri, id(self))
+            self._cache.close()
             self._closed = CloseStatus.CLOSED
 
     @property
@@ -220,6 +221,7 @@ class DavReadAheadCache:
     ) -> None:
         self._client: DavClient = client
         self._url: str = url
+        self._backend_url: str = url
         self._filesize: int = filesize
         self._blocksize: int = blocksize
         self._cache = b""
@@ -284,7 +286,15 @@ class DavReadAheadCache:
         )
 
         # Read the requested range.
-        _, self._cache = self._client.read_range(self._url, start=start_range, end=end_range - 1)
+        self._backend_url, self._cache = self._client.read_range(
+            self._backend_url, start=start_range, end=end_range - 1, release_backend=False
+        )
         self._start = start_range
         self._end = self._start + len(self._cache)
         return self._cache[start - self._start : end - self._start]
+
+    def close(self) -> None:
+        # Send a HEAD request to the backend server and ask it to close this
+        # connection. This signals the server that we no longer need it for
+        # serving partial reads for this handle. We can ignore its response.
+        self._client._request("HEAD", self._backend_url, headers={"Connection": "close"}, redirect=False)

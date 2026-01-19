@@ -208,7 +208,7 @@ class DavResourcePath(ResourcePath):
         # Retrieve the configuration shared by all instances of this class.
         self._config: DavResourcePathConfig = dav_globals.config()
 
-        log.debug("created instance of DavResourcePath %s [%d]", self, id(self))
+        log.debug("created instance of DavResourcePath %s [%#x]", self, id(self))
 
     @classmethod
     def _fixupPathUri(
@@ -285,7 +285,7 @@ class DavResourcePath(ResourcePath):
     @override
     def mkdir(self) -> None:
         """Create the directory resource if it does not already exist."""
-        log.debug("mkdir %s [%d]", self, id(self))
+        log.debug("mkdir %s [%#x]", self, id(self))
 
         if not self.isdir():
             raise NotADirectoryError(f"Can not create a directory for file-like URI {self}")
@@ -308,7 +308,7 @@ class DavResourcePath(ResourcePath):
     @override
     def exists(self) -> bool:
         """Check that this resource exists."""
-        log.debug("exists %s [%d]", self, id(self))
+        log.debug("exists %s [%#x]", self, id(self))
 
         is_dir, is_file, _ = self._exists_and_size()
         return is_dir or is_file
@@ -316,13 +316,13 @@ class DavResourcePath(ResourcePath):
     @override
     def size(self) -> int:
         """Return the size of the remote resource in bytes."""
-        log.debug("size %s [%d]", self, id(self))
+        log.debug("size %s [%#x]", self, id(self))
 
         return 0 if self.isdir() else self._client.size(self._internal_url)
 
     def info(self) -> dict[str, Any]:
         """Return metadata details about this resource."""
-        log.debug("info %s [%d]", self, id(self))
+        log.debug("info %s [%#x]", self, id(self))
 
         return self._client.info(self._internal_url, name=str(self))
 
@@ -336,7 +336,7 @@ class DavResourcePath(ResourcePath):
             The number of bytes to read. Negative or omitted indicates that
             all data should be read.
         """
-        log.debug("read %s [%d] size=%d", self, id(self), size)
+        log.debug("read %s [%#x] size=%d", self, id(self), size)
 
         # A GET request on a dCache directory returns the contents of the
         # directory in HTML, to be visualized with a browser. This means
@@ -363,11 +363,9 @@ class DavResourcePath(ResourcePath):
         if size == 0 or file_size == 0:
             return b""
 
-        # Read the requested chunk of data. The connection to the backend
-        # server may be released if the client decides it is beneficial
-        # for the specific server it interacts with.
+        # Read the requested chunk of data and release the backend server.
         end_range = min(file_size, size) - 1
-        _, data = self._client.read_range(self._internal_url, start=0, end=end_range)
+        _, data = self._client.read_range(self._internal_url, start=0, end=end_range, release_backend=True)
         return data
 
     @override
@@ -395,7 +393,7 @@ class DavResourcePath(ResourcePath):
             A URI to a local POSIX file corresponding to a local temporary
             downloaded copy of the resource.
         """
-        log.debug("_as_local %s [%d] tmpdir: %s", self, id(self), tmpdir)
+        log.debug("_as_local %s [%#x] tmpdir: %s", self, id(self), tmpdir)
 
         # We need to ensure that this resource is actually a file since
         # the response to a GET request on a directory may be implemented in
@@ -411,7 +409,7 @@ class DavResourcePath(ResourcePath):
 
         with ResourcePath.temporary_uri(suffix=self.getExtension(), prefix=tmpdir, delete=True) as tmp_uri:
             log.debug(
-                "downloading %s [%d] to local file %s [buffer_size %d]",
+                "downloading %s [%#x] to local file %s [buffer_size %d]",
                 self,
                 id(self),
                 tmp_uri.ospath,
@@ -433,7 +431,7 @@ class DavResourcePath(ResourcePath):
             If `True` the resource will be overwritten if it exists. Otherwise
             the write will fail.
         """
-        log.debug("write %s [%d] overwrite=%s", self, id(self), overwrite)
+        log.debug("write %s [%#x] overwrite=%s", self, id(self), overwrite)
 
         if self.isdir():
             raise ValueError(f"Method write() is not implemented for directory {self}")
@@ -451,7 +449,7 @@ class DavResourcePath(ResourcePath):
         method raises. Removing a non-existent file or directory is not
         considered an error.
         """
-        log.debug("remove %s [%d]", self, id(self))
+        log.debug("remove %s [%#x]", self, id(self))
 
         is_dir, is_file, _ = self._exists_and_size()
         if not is_dir and not is_file:
@@ -480,7 +478,7 @@ class DavResourcePath(ResourcePath):
         -----
             This method is not present in the superclass.
         """
-        log.debug("remove_dir %s [%d] recursive=%s", self, id(self), recursive)
+        log.debug("remove_dir %s [%#x] recursive=%s", self, id(self), recursive)
 
         if not self.isdir():
             raise NotADirectoryError(f"{self} is not a directory")
@@ -530,7 +528,7 @@ class DavResourcePath(ResourcePath):
             streams will be disabled.
         """
         log.debug(
-            "transfer_from %s [%d] src=%s transfer=%s overwrite=%s",
+            "transfer_from %s [%#x] src=%s transfer=%s overwrite=%s",
             self,
             id(self),
             src,
@@ -578,7 +576,7 @@ class DavResourcePath(ResourcePath):
         # We can use webDAV 'COPY' or 'MOVE' if both the current and source
         # resources are located in the same server.
         if isinstance(src, type(self)) and self.root_uri() == src.root_uri():
-            log.debug("Transfer from %s to %s [%d] directly", src, self, id(self))
+            log.debug("Transfer from %s to %s [%#x] directly", src, self, id(self))
             return (
                 self._move_from(src, overwrite=overwrite)
                 if transfer == "move"
@@ -605,7 +603,7 @@ class DavResourcePath(ResourcePath):
         """
         with source.as_local() as local_uri:
             log.debug(
-                "Transfer from %s to %s [%d] via local file %s",
+                "Transfer from %s to %s [%#x] via local file %s",
                 redact_url(source.geturl()),
                 self,
                 id(self),
@@ -618,7 +616,7 @@ class DavResourcePath(ResourcePath):
         """Copy the contents of `source` to this resource. `source` must
         be a file.
         """
-        log.debug("_copy_from %s [%d] source=%s overwrite=%s", self, id(self), source, overwrite)
+        log.debug("_copy_from %s [%#x] source=%s overwrite=%s", self, id(self), source, overwrite)
 
         # Copy is only supported for files, not directories.
         if self.isdir():
@@ -641,7 +639,7 @@ class DavResourcePath(ResourcePath):
         source : `DavResourcePath`
             The source of the contents to move to `self`.
         """
-        log.debug("_move_from %s [%d] source=%s overwrite=%s", self, id(self), source, overwrite)
+        log.debug("_move_from %s [%#x] source=%s overwrite=%s", self, id(self), source, overwrite)
 
         # Move is only supported for files, not directories.
         if self.isdir():

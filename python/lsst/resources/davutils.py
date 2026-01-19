@@ -985,25 +985,22 @@ class DavClient:
         if self._authorizer is not None and url.startswith("https://"):
             self._authorizer.set_authorization(headers)
 
-        if log.level < logging.INFO:
+        if log.isEnabledFor(logging.DEBUG):
             annotation = ""
             if method == "GET" and "Range" in headers:
                 byte_range = headers.get("Range", "").removeprefix("bytes=")
                 annotation = f" (byte range: {byte_range})"
 
-            log.verbose("sending request %s %s%s", method, redact_url(url), annotation)
+            log.debug("sending request %s %s%s", method, redact_url(url), annotation)
 
         with time_this(
             log,
             msg="%s %s",
-            args=(
-                method,
-                url,
-            ),
+            args=(method, url),
             mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
-            resp = self._pool_manager.request(
+            return self._pool_manager.request(
                 method,
                 url,
                 body=body,
@@ -1011,8 +1008,6 @@ class DavClient:
                 preload_content=preload_content,
                 redirect=redirect,
             )
-
-        return resp
 
     def _get(
         self,
@@ -1501,7 +1496,7 @@ class DavClient:
         start: int,
         end: int | None,
         headers: dict[str, str] | None = None,
-        release_backend: bool = False,
+        release_backend: bool = True,
     ) -> tuple[str, bytes]:
         """Download partial content of file located at `url`.
 
@@ -1553,17 +1548,19 @@ class DavClient:
         # We were redirected to a backend server. Follow the redirection and
         # if requested add a "Connection: close" header to explicitly release
         # the backend server.
+        redirect_url = resp.headers.get("Location")
+        log.debug("GET request to %s got redirected to %s", url, redirect_url)
+
         backend_headers = {} if headers is None else dict(headers)
         backend_headers.update(range_headers)
         if release_backend:
             backend_headers.update({"Connection": "close"})
 
-        redirect_url = resp.headers.get("Location")
         final_url, resp = self._get(redirect_url, headers=backend_headers)
-        if resp.status in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
-            return final_url, resp.data
-        else:
+        if resp.status not in (HTTPStatus.OK, HTTPStatus.PARTIAL_CONTENT):
             raise ValueError(f"Unexpected error in HTTP GET {url}: status {resp.status} {resp.reason}")
+
+        return final_url, resp.data
 
     def _write_response_body_to_file(self, resp: HTTPResponse, filename: str, chunk_size: int) -> int:
         """Write the the response body to a local file.
@@ -1818,7 +1815,7 @@ class DavClient:
             raise ValueError(
                 f"Could not copy {resp.geturl()} to {destination_url}: status {resp.status} {resp.reason}"
             )
-        return
+        self._file_size_cache.invalidate(destination_url)
 
     def move(
         self, source_url: str, destination_url: str, overwrite: bool = False, create_parent: bool = True
@@ -1853,6 +1850,7 @@ class DavClient:
                 f"""Could not move file {resp.geturl()} to {destination_url}: status {resp.status} """
                 f"""{resp.reason}"""
             )
+        self._file_size_cache.invalidate(destination_url)
 
     def generate_presigned_get_url(self, url: str, expiration_time_seconds: int) -> str:
         """Return a pre-signed URL that can be used to retrieve this resource
@@ -2514,23 +2512,6 @@ class DavClientDCache(DavClientURLSigner):
             self._put(temporary_url, data=b"")
         finally:
             self._request("DELETE", temporary_url)
-
-    @override
-    def read_range(
-        self,
-        url: str,
-        start: int,
-        end: int | None,
-        headers: dict[str, str] | None = None,
-        release_backend: bool = False,
-    ) -> tuple[str, bytes]:
-        # Notify the dCache backend server that we are not issuing more
-        # partial reads requests for this resource, so that it stops the mover.
-        #
-        # dCache pools stop their mover when they detect the client closed
-        # the network connection or when a header "Connection: close" is
-        # included in a request sent directly to the pool.
-        return super().read_range(url=url, start=start, end=end, headers=headers, release_backend=True)
 
 
 class DavClientXrootD(DavClientURLSigner):
