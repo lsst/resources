@@ -1,3 +1,33 @@
+Resources v30.0.0 (2026-01-15)
+==============================
+
+New Features
+------------
+
+- Added ``walk_up`` parameter to ``ResourcePath.relative_to`` to match the behavior of ``Path.relative_to``.
+  Using ``walk_up=True`` allows ``..`` to be present in the returned string.
+  The default is `False` to remain compatible with previous versions.
+  This parameter can only be `True` for Python 3.12 and newer. (`DM-41256 <https://rubinobs.atlassian.net/browse/DM-41256>`_)
+- Added ``eups:`` URI scheme.
+  This scheme will use the EUPS ``$<PRODUCT>_DIR`` environment variables if set, else try to find the corresponding Python package and look for a ``resources`` directory inside it following the decisions made in `RFC-1090 <https://rubinobs.atlassian.net/browse/RFC-1090>`_.
+  Additionally, if a URI starts with ``$PRODUCT_DIR`` it is automatically converted to an EUPS URI. (`DM-50997 <https://rubinobs.atlassian.net/browse/DM-50997>`_)
+
+
+Bug Fixes
+---------
+
+- Fixed ``ResourcePath.write`` for schemeless URIs that had no directory component. (`DM-41256 <https://rubinobs.atlassian.net/browse/DM-41256>`_)
+- Fixed an issue where ``S3ResourcePath.transfer_from(S3ResourcePath)`` would fail when the source and destination were using different S3 endpoints or sets of credentials. (`DM-51384 <https://rubinobs.atlassian.net/browse/DM-51384>`_)
+- Two simultaneous copies without overwrite could both succeed in certain cases.
+  This race condition has now been eliminated. (`DM-51540 <https://rubinobs.atlassian.net/browse/DM-51540>`_)
+
+
+Miscellaneous Changes of Minor Interest
+---------------------------------------
+
+- Fixed bug where ``.parents()`` and ``.dirname()`` were incorrectly returning the fragment of the file. (`DM-51890 <https://rubinobs.atlassian.net/browse/DM-51890>`_)
+
+
 Resources v29.1.0 (2025-06-13)
 ==============================
 
