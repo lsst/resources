@@ -65,7 +65,7 @@ class EupsResourcePath(ProxiedResourcePath):
             # Must convert this path into a file URI.
             new_path = posixpath.join(os2posix(eups_path), os2posix(self.path.lstrip("/")))
             parsed = self._uri._replace(path=urllib.parse.quote(new_path), scheme="file", netloc="")
-            self._proxy = ResourcePath(parsed)
+            self._proxy = ResourcePath(parsed, forceDirectory=self.dirLike, forceAbsolute=True)
             return
 
         # If there is no _DIR env var we need to look for python package
@@ -89,7 +89,7 @@ class EupsResourcePath(ProxiedResourcePath):
             if proxy.exists():
                 self._proxy = proxy
                 if self.path:
-                    self._proxy = self._proxy.join(self.path.lstrip("/"))
+                    self._proxy = self._proxy.join(self.path.lstrip("/"), forceDirectory=self.dirLike)
                 log.debug(f"Found variant {variant}")
                 return
 

@@ -1,0 +1,25 @@
+[project]
+title = "lsst-resources"
+
+[project.python]
+package = "lsst-resources"
+
+[build]
+clean = true
+
+[sphinx]
+nitpick_ignore = [
+    ["py:obj", "lsst.daf.butler.core.datastore.DatastoreTransaction"],
+]
+nitpick_ignore_regex = [
+    ['py:(class|obj)', '.*ResourceHandle.U$'],
+    ['py:(class|obj)', 're.Pattern'],
+    ['py:(class|obj)', '.*MBulkResult$'],
+    ['py:(class|obj)', '.*ResourcePathExpression$'],
+]
+
+[sphinx.intersphinx.projects]
+astropy = "https://docs.astropy.org/en/stable"
+python = "https://docs.python.org/3"
+lsst = "https://pipelines.lsst.io/v/daily/"
+fsspec = "https://filesystem-spec.readthedocs.io/en/latest/"

@@ -25,3 +25,4 @@ mypy.log
 build/*
 dist/*
 python/*.dist-info/
+doc/api/

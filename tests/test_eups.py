@@ -94,6 +94,7 @@ class EupsReadTestCase(unittest.TestCase):
         self.assertTrue(d.dirLike)
 
         d = self.root_uri.join("config/", forceDirectory=True)
+        self.assertTrue(d._proxy.dirLike)  # Ensure that dir-ness propagates to proxy.
         self.assertTrue(d.exists(), f"Check directory {d} exists")
         self.assertTrue(d.isdir())
 
@@ -148,6 +149,12 @@ class EupsReadTestCase(unittest.TestCase):
         """
         resource = ResourcePath(f"{self.scheme}://{self.netloc}/")
         resources = set(ResourcePath.findFileResources([resource]))
+
+        # Make sure that walk() can run and knows this is a directory.
+        cfg = resource.join("config/")
+        _, dirs, files = next(cfg.walk())
+        self.assertEqual(dirs, [])
+        self.assertEqual(set(files), {"test.txt", "test2.yaml"})
 
         # Do not try to list all possible options. Files can move around
         # and cache files can appear.
