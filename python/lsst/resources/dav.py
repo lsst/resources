@@ -628,7 +628,7 @@ class DavResourcePath(ResourcePath):
         if not source.exists():
             raise FileNotFoundError(f"No file found at {source}")
 
-        self._client.copy(source._internal_url, self._internal_url, overwrite)
+        self._client.duplicate(source._internal_url, self._internal_url, overwrite)
 
     def _move_from(self, source: DavResourcePath, overwrite: bool = False) -> None:
         """Send a MOVE webDAV request to replace the contents of this resource
@@ -651,7 +651,7 @@ class DavResourcePath(ResourcePath):
         if not source.exists():
             raise FileNotFoundError(f"No file found at {source}")
 
-        self._client.move(source._internal_url, self._internal_url, overwrite)
+        self._client.rename(source._internal_url, self._internal_url, overwrite)
 
     @override
     def walk(
