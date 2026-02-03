@@ -989,6 +989,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
 - base_url: "dav://host4.example.org:5555/"
   user_name: "user"
   user_password: "password"
+  reuse_connection: false
 """
 
         config_file = self._create_config(config_contents)
@@ -1024,6 +1025,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
             self.assertEqual(config.base_url, "http://host4.example.org:5555/")
             self.assertEqual(config.user_name, "user")
             self.assertEqual(config.user_password, "password")
+            self.assertFalse(config.reuse_connection)
 
     def test_dav_repeated_configurations(self):
         """Ensure duplicated endpoint errors are detected in configuration

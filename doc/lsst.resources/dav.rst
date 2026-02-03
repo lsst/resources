@@ -128,6 +128,23 @@ WebDAV endpoint:
     reading and writing only by its owner. The contents of that file is
     automatically reloaded every time it is modified.
 
+``reuse_connection``
+    Configure this webDAV client to reuse the network connection to the server
+    for submitting subsequent requests. By default, the client attempts to
+    keep the network connection to the server open and to reuse it as long
+    as possible. However, the server may decide to close the connection after
+    serving each request.
+
+    Generally speaking, reusing secure HTTP connections to the server is
+    beneficial because of the time necessary to establish the underlying
+    TLS connection.
+
+    If this setting is set to ``false``, the client will close the network
+    connection after receiving the response to each request it sends to the
+    server.
+
+    Default: ``true`` (``boolean``).
+
 ``timeout_connect``
     Timeout in seconds to establish a network connection with the remote
     server.

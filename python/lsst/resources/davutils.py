@@ -214,6 +214,12 @@ class DavConfig:
     # to a file where the token can be found.
     DEFAULT_TOKEN: str | None = None
 
+    # If this option is set to True, the webdav client attempts to reuse
+    # the network connection to the server as long as possible. Note that
+    # the server can unitaleraly decide to close the connection.
+    # If disabled, the connection is closed after each request.
+    DEFAULT_REUSE_CONNECTION: bool = True
+
     # Default checksum algorithm to request the server to compute on every
     # file upload. Not al servers support this.
     # See RFC 3230 for details.
@@ -268,6 +274,7 @@ class DavConfig:
         self._user_cert: str | None = expand_vars(config.get("user_cert", DavConfig.DEFAULT_USER_CERT))
         self._user_key: str | None = expand_vars(config.get("user_key", DavConfig.DEFAULT_USER_KEY))
         self._token: str | None = expand_vars(config.get("token", DavConfig.DEFAULT_TOKEN))
+        self._reuse_connection: bool = config.get("reuse_connection", DavConfig.DEFAULT_REUSE_CONNECTION)
         self._enable_fsspec: bool = config.get("enable_fsspec", DavConfig.DEFAULT_ENABLE_FSSPEC)
         self._collect_memory_usage: bool = config.get(
             "collect_memory_usage", DavConfig.DEFAULT_COLLECT_MEMORY_USAGE
@@ -326,6 +333,10 @@ class DavConfig:
     @property
     def token(self) -> str | None:
         return self._token
+
+    @property
+    def reuse_connection(self) -> bool:
+        return self._reuse_connection
 
     @property
     def request_checksum(self) -> str | None:
@@ -399,7 +410,10 @@ class DavConfigPool:
             collect_memory_usage: false
 
           - base_url: "davs://webdav2.example.org:1234/"
+            user_name: "user"
+            user_password: "password"
             persistent_connections_per_host: 5
+            reuse_connection: false
             ...
 
         All settings are optional. If no settings are found in the
@@ -1017,10 +1031,17 @@ class DavClient:
         resp: `HTTPResponse`
             Response to the request as received from the server.
         """
-        # If this client is configured to use a bearer token for
-        # authentication, ensure we only set the token to requests over secure
-        # HTTP to avoid leaking the token.
+        # If this client is configured not to reuse the network connection
+        # with the server, add a "Connection: close" header to this request.
+        #
+        # However, if the caller has explicitly specified a "Connection"
+        # header, whatever its value, don't modify it.
         headers = {} if headers is None else dict(headers)
+        if "Connection" not in headers and not self._config.reuse_connection:
+            headers.update({"Connection": "close"})
+
+        # If an authorizer (basic or token) is configured for this client,
+        # allow it to set the "Authorization" header to this outgoing request.
         if self._authorizer is not None:
             self._authorizer.set_authorization(headers)
 
@@ -1953,8 +1974,7 @@ class DavClient:
 
         backend_headers = {} if headers is None else dict(headers)
         backend_headers.update(range_headers)
-        if release_backend:
-            backend_headers.update({"Connection": "close"})
+        backend_headers.update({"Connection": "close" if release_backend else "keep-alive"})
 
         final_url, resp = self.get(redirect_url, headers=backend_headers)
         match resp.status:
