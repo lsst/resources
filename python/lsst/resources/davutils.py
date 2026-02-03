@@ -39,7 +39,7 @@ except ImportError:
 
 import yaml
 from astropy import units as u
-from urllib3 import PoolManager
+from urllib3 import PoolManager, make_headers
 from urllib3.response import HTTPResponse
 from urllib3.util import Retry, Timeout, Url, parse_url
 
@@ -198,6 +198,11 @@ class DavConfig:
     # If None, the certificates trusted by the system are used.
     DEFAULT_TRUSTED_AUTHORITIES: str | None = None
 
+    # User name and password for the client to authenticate to the server.
+    # If specified, HTTP basic authentication is used on all requests.
+    DEFAULT_USER_NAME: str | None = None
+    DEFAULT_USER_PASSWORD: str | None = None
+
     # Path to the client certificate and associated private key the webdav
     # client must present to the server for authentication purposes.
     # If None, no client certificate is presented.
@@ -255,6 +260,10 @@ class DavConfig:
         )
         self._trusted_authorities: str | None = expand_vars(
             config.get("trusted_authorities", DavConfig.DEFAULT_TRUSTED_AUTHORITIES)
+        )
+        self._user_name: str | None = expand_vars(config.get("user_name", DavConfig.DEFAULT_USER_NAME))
+        self._user_password: str | None = expand_vars(
+            config.get("user_password", DavConfig.DEFAULT_USER_PASSWORD)
         )
         self._user_cert: str | None = expand_vars(config.get("user_cert", DavConfig.DEFAULT_USER_CERT))
         self._user_key: str | None = expand_vars(config.get("user_key", DavConfig.DEFAULT_USER_KEY))
@@ -338,6 +347,14 @@ class DavConfig:
         # That is typically the case when using a X.509 grid proxy as
         # client certificate.
         return self._user_cert if self._user_key is None else self._user_key
+
+    @property
+    def user_name(self) -> str | None:
+        return self._user_name
+
+    @property
+    def user_password(self) -> str | None:
+        return self._user_password
 
     @property
     def enable_fsspec(self) -> bool:
@@ -791,7 +808,7 @@ class DavClient:
         self._config: DavConfig = config
 
         # Make the authorizer for this client's requests.
-        self._authorizer: TokenAuthorizer | None = self._make_authorizer(config=self._config)
+        self._authorizer: Authorizer | None = self._make_authorizer(config=self._config)
 
         # Make the pool manager for this client to use for sending
         # requests to the server.
@@ -804,18 +821,26 @@ class DavClient:
         # This field is lazy initialized.
         self._accepts_ranges: bool | None = accepts_ranges
 
+        # Can this client use a COPY request to duplicate files within a
+        # single webDAV server?
+        # Subclasses can overwrite this setting according to the server
+        # capabilities and compliance to webDAV RFC.
+        self._can_duplicate: bool = True
+
         # Cache to store sizes of files this client has recently uploaded
         # to the server.
         self._file_size_cache = DavFileSizeCache()
 
-    def _make_authorizer(self, config: DavConfig) -> TokenAuthorizer | None:
+    def _make_authorizer(self, config: DavConfig) -> Authorizer | None:
         # If a token was specified in the configuration settings for this
         # endpoint, prefer it as the authentication method, even if other
         # authentication settings were also specified.
-        authorizer: TokenAuthorizer | None = None
         if config.token is not None:
-            authorizer = TokenAuthorizer(config.token)
-        return authorizer
+            return TokenAuthorizer(token=config.token)
+        elif config.user_name is not None and config.user_password is not None:
+            return BasicAuthorizer(user_name=config.user_name, user_password=config.user_password)
+
+        return None
 
     def _make_pool_manager(self, config: DavConfig) -> PoolManager:
         # Prepare the trusted authorities certificates
@@ -996,7 +1021,7 @@ class DavClient:
         # authentication, ensure we only set the token to requests over secure
         # HTTP to avoid leaking the token.
         headers = {} if headers is None else dict(headers)
-        if self._authorizer is not None and url.startswith("https://"):
+        if self._authorizer is not None:
             self._authorizer.set_authorization(headers)
 
         if log.isEnabledFor(logging.DEBUG):
@@ -2132,6 +2157,13 @@ class DavClient:
 
         return self._accepts_ranges
 
+    @property
+    def supports_duplicate(self) -> bool:
+        """Return True if the server this client interacts with implements
+        webDAV COPY method.
+        """
+        return self._can_duplicate
+
     def copy(self, source_url: str, destination_url: str, overwrite: bool = False) -> None:
         """Copy the file at `source_url` to `destination_url` in the same
         storage endpoint.
@@ -2568,6 +2600,12 @@ class DavClientDCache(DavClientURLSigner):
         self._propfind_pool_manager = pool_manager
         self._move_pool_manager = pool_manager
         self._mkcol_pool_manager = pool_manager
+
+        # dCache does not deliver macaroons when we are not using a secure
+        # channel to interact with the door. In that case, we can not use
+        # third party copy and dCache does not correctly support the COPY
+        # method as stated in RFC-4918.
+        self._can_duplicate = self._base_url.startswith("https://")
 
     @override
     def _mkcol(
@@ -3524,48 +3562,25 @@ class DavPropfindParser:
             raise ValueError(f"Unable to parse response for PROPFIND request: {decoded_body}")
 
 
-class TokenAuthorizer:
-    """Attach a bearer token 'Authorization' header to each request.
+class Authorizer:
+    """Base class for attaching an 'Authorization' header to a HTTP request."""
 
-    Parameters
-    ----------
-    token : `str`
-        Can be either the path to a local file which contains the
-        value of the token or the token itself. If `token` is a file
-        it must be protected so that only the owner can read and write it.
-    """
+    def set_authorization(self, headers: dict[str, str]) -> None:
+        """Add the 'Authorization' header to `headers`.
 
-    def __init__(self, token: str | None = None) -> None:
-        self._token = self._path = None
-        self._mtime: float = -1.0
-        if token is None:
-            return
+        Parameters
+        ----------
+        headers : `dict` [ `str`, `str` ]
+            Dict to augment with authorization information.
 
-        self._token = token
-        if os.path.isfile(token):
-            self._path = os.path.abspath(token)
-            if not self._is_protected(self._path):
-                raise PermissionError(
-                    f"""Authorization token file at {self._path} must be protected for access only """
-                    """by its owner"""
-                )
-            self._refresh()
-
-    def _refresh(self) -> None:
-        """Read the token file (if any) if its modification time is more recent
-        than the last time we read it.
+        Notes
+        -----
+        This method must be implemented by concrete subclasses.
         """
-        if self._path is None:
-            return
+        raise NotImplementedError
 
-        if (mtime := os.stat(self._path).st_mtime) > self._mtime:
-            log.debug("Reading authorization token from file %s", self._path)
-            self._mtime = mtime
-            with open(self._path) as f:
-                self._token = f.read().rstrip("\n")
-
-    def _is_protected(self, filepath: str) -> bool:
-        """Return true if the permissions of file at filepath only allow for
+    def _is_file_protected(self, filepath: str) -> bool:
+        """Return true if the permissions of file at `filepath` only allow for
         access by its owner.
 
         Parameters
@@ -3582,6 +3597,59 @@ class TokenAuthorizer:
         other_accessible = bool(mode & stat.S_IRWXO)
         return owner_accessible and not group_accessible and not other_accessible
 
+    def _read_if_modified_since(self, filename: str, timestamp: float) -> str | None:
+        """Read local file `filename` if its modification time is more
+        recent than `timestamp`.
+        """
+        if filename is None or os.stat(filename).st_mtime < timestamp:
+            return None
+
+        with open(filename) as f:
+            return f.read().rstrip("\n")
+
+
+class TokenAuthorizer(Authorizer):
+    """Attach a bearer token 'Authorization' header to each request.
+
+    Parameters
+    ----------
+    token : `str`
+        Can be either the path to a local file which contains the
+        value of the token or the token itself. If `token` is a file
+        it must be protected so that only the owner can read and write it.
+    """
+
+    def __init__(self, token: str | None = None) -> None:
+        self._token = self._token_path = None
+        self._last_read_time: float = -1.0
+        if token is None:
+            return
+
+        self._token = token
+        if os.path.isfile(token):
+            self._token_path = os.path.abspath(token)
+            if not self._is_file_protected(self._token_path):
+                raise PermissionError(
+                    f"""Authorization token file at {self._token_path} must be protected for access only """
+                    """by its owner"""
+                )
+            self._update_token()
+
+    def _update_token(self) -> None:
+        """Read the token file (if any) if its modification time is more recent
+        than the last time we read it.
+        """
+        if self._token_path is None:
+            return None
+
+        token = self._read_if_modified_since(self._token_path, self._last_read_time)
+        if token is None:
+            return
+
+        # Update the password and the last time we read it.
+        self._token = token
+        self._last_read_time = time.time()
+
     def set_authorization(self, headers: dict[str, str]) -> None:
         """Add the 'Authorization' header to `headers`.
 
@@ -3593,8 +3661,116 @@ class TokenAuthorizer:
         if self._token is None:
             return
 
-        self._refresh()
+        self._update_token()
         headers["Authorization"] = f"Bearer {self._token}"
+
+
+class BasicAuthorizer(Authorizer):
+    """Attach a 'Authorization' header to each request using Basic
+    authentication.
+
+    Parameters
+    ----------
+    user_name : `str`
+        Can be either the path to a local file which contains the
+        user name or the user name itself. If `user_name` is a file
+        it must be protected so that only the owner can read and write it.
+    user_password : `str`
+        Can be either the path to a local file which contains the
+        value of the password or the password itself. If `user_password` is a
+        file it must be protected so that only the owner can read and write it.
+    """
+
+    def __init__(self, user_name: str | None = None, user_password: str | None = None) -> None:
+        if user_name is None or user_password is None:
+            return
+
+        self._user_name: str | None = user_name
+        self._user_password: str | None = user_password
+        self._user_password_path: str | None = None
+        self._last_read_time: float = -1.0
+        self._header_value: str = ""
+
+        if os.path.isfile(self._user_password):
+            # The value in `user_password` is the path to a file. Check
+            # the file is protected and read its contents.
+            self._user_password_path = os.path.abspath(self._user_password)
+            if not self._is_file_protected(self._user_password_path):
+                raise PermissionError(
+                    f"""Password file at {self._user_password_path} must be protected for access only """
+                    """by its owner"""
+                )
+            self._update_password()
+        else:
+            self._update_header_value()
+
+    def _update_header_value(self) -> None:
+        """Compute the value of the 'Authorization' header using HTTP basic
+        authorization.
+        """
+        basic_auth_header = make_headers(basic_auth=f"{self._user_name}:{self._user_password}")
+        self._header_value = basic_auth_header["authorization"]
+
+    def _update_password(self) -> None:
+        """Update the password of this authorizer if the file it is stored in
+        has been modified since the last time we read it.
+        """
+        if self._user_password_path is None:
+            return None
+
+        password = self._read_if_modified_since(self._user_password_path, self._last_read_time)
+        if password is None:
+            return
+
+        # Update the password, the last time we read it and re-compute the
+        # value of the "Authorization" header.
+        self._last_read_time = time.time()
+        self._user_password = password
+        self._update_header_value()
+
+    def set_authorization(self, headers: dict[str, str]) -> None:
+        """Add the 'Authorization' header to `headers`.
+
+        Parameters
+        ----------
+        headers : `dict` [ `str`, `str` ]
+            Dict to augment with authorization information.
+        """
+        if self._user_name is None or self._user_password is None:
+            return
+
+        self._update_password()
+        headers["Authorization"] = self._header_value
+
+
+def is_file_protected_TO_REMOVE(filepath: str) -> bool:
+    """Return true if the permissions of file at filepath only allow for
+    access by its owner.
+
+    Parameters
+    ----------
+    filepath : `str`
+        Path of a local file.
+    """
+    if not os.path.isfile(filepath):
+        return False
+
+    mode = stat.S_IMODE(os.stat(filepath).st_mode)
+    owner_accessible = bool(mode & stat.S_IRWXU)
+    group_accessible = bool(mode & stat.S_IRWXG)
+    other_accessible = bool(mode & stat.S_IRWXO)
+    return owner_accessible and not group_accessible and not other_accessible
+
+
+def read_if_modified_since_TO_REMOVE(filename: str, timestamp: float) -> str | None:
+    """Read local file `filename` if its modification time is more
+    recent than `timestamp`.
+    """
+    if filename is None or os.stat(filename).st_mtime < timestamp:
+        return None
+
+    with open(filename) as f:
+        return f.read().rstrip("\n")
 
 
 def expand_vars(path: str | None) -> str | None:

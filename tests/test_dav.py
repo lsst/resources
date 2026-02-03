@@ -986,6 +986,9 @@ class DavConfigPoolTestCase(unittest.TestCase):
   persistent_connections_per_host: 1
 - base_url: "davs://host3.example.org:4321/"
   token: "ABCDEF"
+- base_url: "dav://host4.example.org:5555/"
+  user_name: "user"
+  user_password: "password"
 """
 
         config_file = self._create_config(config_contents)
@@ -1015,6 +1018,12 @@ class DavConfigPoolTestCase(unittest.TestCase):
             self.assertEqual(config.base_url, "https://host3.example.org:4321/")
             self.assertEqual(config.token, "ABCDEF")
             self.assertEqual(config.retries, DavConfig.DEFAULT_RETRIES)
+
+            # Tests for base URL 'dav://host4.example.org:5555/'
+            config = config_pool.get_config_for_url("dav://host4.example.org:5555/")
+            self.assertEqual(config.base_url, "http://host4.example.org:5555/")
+            self.assertEqual(config.user_name, "user")
+            self.assertEqual(config.user_password, "password")
 
     def test_dav_repeated_configurations(self):
         """Ensure duplicated endpoint errors are detected in configuration

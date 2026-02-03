@@ -83,6 +83,26 @@ WebDAV endpoint:
     the private key and the user certificate are both in the same file
     specified in the value for ``user_cert``.
 
+``user_name``
+    Name of the user the webDAV client must use when the server requires
+    basic access authentication. It must be accompaigned by the
+    ``user_password`` setting (see below).
+
+    This setting is ignored if ``token`` is specified (see below).
+
+``user_password``
+    Password the client must use to build the basic authentication header when
+    sending requests to the server. The value of this setting can be the
+    password itself or the path to a local file where the password is stored.
+
+    If you specify a value for ``user_password`` which is the path to a local
+    file (recommended), that file must be protected for reading and writing
+    only by its owner. The contents of that file is automatically reloaded
+    every time it is modified.
+
+    This setting is ignored if ``token`` is specified (see below) or if
+    ``user_name`` is not specified.
+
 ``trusted_authorities``
     Path to a local directory or certificate bundle file where the
     certificates of the trusted certificate authorities can be found.
@@ -106,7 +126,7 @@ WebDAV endpoint:
     If you specify a value for ``token`` which is the path to a local file
     which contains the actual token, that file must be protected for
     reading and writing only by its owner. The contents of that file is
-    automatically reloaded when every time it is modified.
+    automatically reloaded every time it is modified.
 
 ``timeout_connect``
     Timeout in seconds to establish a network connection with the remote
