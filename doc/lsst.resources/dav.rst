@@ -230,6 +230,13 @@ WebDAV endpoint:
 
     Default: ``false`` (``boolean``).
 
+``frontend_base_urls``
+    If specified, the WebDAV client randomly selects one frontend base URL in
+    this list and uses it to send the request. If not specified, all the
+    requests are sent using the ``base_url`` of this endpoint. See the examples
+    section below for the accepted syntax.
+
+    Accepted values: list of strings.
 
 Configuration Examples
 ----------------------
@@ -275,6 +282,19 @@ In this example we configure `~lsst.resources.ResourcePath` to request the
 dCache server to compute and record the MD5 checksum when a file is uploaded,
 in addition to the ADLER32 checksum dCache always computes and records for
 each file.
+
+You can also specify a set of frontend servers the client can use to send
+requests to an endpoint:
+
+.. code-block:: yaml
+
+    - base_url: "dav://dcache.example.org:9090/"
+      user_name: "myuser"
+      user_password: "${HOME}/path/to/protected/password/file"
+      frontend_base_urls:
+        - "dav://frontend1.example.org:4242/"
+        - "dav://frontend2.example.org:4242/"
+        - "dav://frontend3.example.org:4242/"
 
 XRootD
 ^^^^^^

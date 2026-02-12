@@ -89,7 +89,7 @@ def normalize_url(url: str, preserve_scheme: bool = False, preserve_path: bool =
     Returns
     -------
     url : `str`
-        Normalized URL (e.g. 'https://example.org:1234/path/dir').
+        Normalized URL (e.g. 'https://example.org:1234/path/to/dir').
     """
     parsed = parse_url(url)
     if parsed.scheme is None:
@@ -276,6 +276,7 @@ class DavConfig:
         self._token: str | None = expand_vars(config.get("token", DavConfig.DEFAULT_TOKEN))
         self._reuse_connection: bool = config.get("reuse_connection", DavConfig.DEFAULT_REUSE_CONNECTION)
         self._enable_fsspec: bool = config.get("enable_fsspec", DavConfig.DEFAULT_ENABLE_FSSPEC)
+        self._frontend_urls: list[str] = self._init_frontend_urls(config=config)
         self._collect_memory_usage: bool = config.get(
             "collect_memory_usage", DavConfig.DEFAULT_COLLECT_MEMORY_USAGE
         )
@@ -289,6 +290,33 @@ class DavConfig:
                     f"""Value for checksum algorithm {self._request_checksum} for storage endpoint """
                     f"""{self._base_url} is not among the accepted values: {DavConfig.ACCEPTED_CHECKSUMS}"""
                 )
+
+    def _init_frontend_urls(self, config: dict | None = None) -> list[str]:
+        if config is None:
+            return []
+
+        # Initialize the URLs of the frontend servers, if present in
+        # the configuration.
+        frontend_urls: list[str] = []
+        for url in config.get("frontend_base_urls", []):
+            # Expand environment variables in this URL
+            if (expanded_url := expand_vars(url)) is not None:
+                frontend_urls.append(normalize_url(expanded_url, preserve_path=False))
+
+        # Eliminate duplicate URLs.
+        frontend_urls = list(set(frontend_urls))
+
+        # Check that the scheme of this client's base URL is identical to
+        # the scheme of the frontend server URLs.
+        base_url_scheme = parse_url(self._base_url).scheme
+        for url in frontend_urls:
+            if base_url_scheme != parse_url(url).scheme:
+                raise ValueError(
+                    f"""inconsistent scheme in frontend URL {url} for endpoint """
+                    f"""with base URL {self._base_url}"""
+                )
+
+        return frontend_urls
 
     @property
     def base_url(self) -> str:
@@ -374,6 +402,10 @@ class DavConfig:
     @property
     def collect_memory_usage(self) -> bool:
         return self._collect_memory_usage
+
+    @property
+    def frontend_urls(self) -> list[str]:
+        return self._frontend_urls
 
 
 class DavConfigPool:
@@ -992,6 +1024,35 @@ class DavClient:
 
         return str(resp.retries.history[-1].redirect_location)
 
+    def _rewrite_url_for_frontend(self, url: str) -> str:
+        """Return a URL to reach one of the frontend servers that serves
+        requests sent against `url`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        url: `str`
+            URL to reach one of this client's frontend servers. If `url` does
+            not target this client's frontend servers, the returned value
+            is `url` unmodified.
+        """
+        # Do nothing if this URL does not match this client's base URL. This
+        # happens, for instance, when `url` is a redirection to a backend
+        # server, so we don't want to rewrite it.
+        #
+        # Also, don't rewrite the URL if we don't have frontends configured
+        # for this client.
+        if not self._config.frontend_urls or not url.startswith(self._base_url):
+            return url
+
+        # Randomly select one of the configured frontends and return a modified
+        # URL which uses the selected frontend instead of the original one.
+        return random.choice(self._config.frontend_urls) + url.removeprefix(self._base_url)
+
     def _request(
         self,
         method: str,
@@ -1031,6 +1092,10 @@ class DavClient:
         resp: `HTTPResponse`
             Response to the request as received from the server.
         """
+        # Retrieve the URL we must use to send this request to one of this
+        # client's configured frontend servers.
+        url = self._rewrite_url_for_frontend(url)
+
         # If this client is configured not to reuse the network connection
         # with the server, add a "Connection: close" header to this request.
         #

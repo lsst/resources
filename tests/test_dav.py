@@ -990,6 +990,10 @@ class DavConfigPoolTestCase(unittest.TestCase):
   user_name: "user"
   user_password: "password"
   reuse_connection: false
+  frontend_base_urls:
+  - "dav://frontend1.example.org:5555/"
+  - "dav://frontend2.example.org:5555/"
+  - "dav://frontend3.example.org:5555/"
 """
 
         config_file = self._create_config(config_contents)
@@ -1026,6 +1030,21 @@ class DavConfigPoolTestCase(unittest.TestCase):
             self.assertEqual(config.user_name, "user")
             self.assertEqual(config.user_password, "password")
             self.assertFalse(config.reuse_connection)
+            for i in range(1, 3):
+                url = f"http://frontend{i}.example.org:5555/"
+                self.assertTrue(url in config.frontend_urls)
+
+        # Test that the schemes of the base URL and the frontend URLs of a
+        # given endpoint are checked and must be identical.
+        config_contents: str = r"""
+- base_url: "dav://host5.example.org:5555/"
+  frontend_base_urls:
+  - "davs://frontend1.example.org:5555/"
+"""
+        config_file = self._create_config(config_contents)
+        with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_WEBDAV_CONFIG": config_file}, clear=True):
+            with self.assertRaises(ValueError):
+                DavConfigPool("LSST_RESOURCES_WEBDAV_CONFIG")
 
     def test_dav_repeated_configurations(self):
         """Ensure duplicated endpoint errors are detected in configuration
