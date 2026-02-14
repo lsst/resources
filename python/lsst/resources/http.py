@@ -129,7 +129,7 @@ class HttpResourcePathConfig:
 
     # Default number of connections to persist with both the front end and
     # back end servers.
-    DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS: int = 2
+    DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS: int = 10
     DEFAULT_BACKEND_PERSISTENT_CONNECTIONS: int = 1
 
     # Accepted digest algorithms
