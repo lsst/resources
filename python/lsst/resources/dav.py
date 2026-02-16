@@ -248,35 +248,6 @@ class DavResourcePath(ResourcePath):
         """Retrieve metadata about this resource."""
         return self._client.stat(self._internal_url)
 
-    def _exists_and_size(self) -> tuple[bool, bool, int]:
-        """Return frequently used metadata of resource at `url`.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-
-        Returns
-        -------
-        is_dir: `bool`
-           True if the resource at `url` exists and is a directory.
-        is_file: `bool`
-           True if the resource at `url` exists and is a file.
-        size: `int`
-           The size in bytes of the resource at `url` if it exists. The size
-           of a directory is always zero.
-
-        Notes
-        -----
-        The returned is_dir and is_file cannot be both True.
-        """
-        return self._client.exists_and_size(self._internal_url)
-
-    def _exists_and_is_file(self) -> bool:
-        """Return True if this resource exists and is a file."""
-        _, is_file, _ = self._exists_and_size()
-        return is_file
-
     @override
     def __str__(self) -> str:
         """Return this resource's redacted URL."""
@@ -290,11 +261,11 @@ class DavResourcePath(ResourcePath):
         if not self.isdir():
             raise NotADirectoryError(f"Can not create a directory for file-like URI {self}")
 
-        is_dir, is_file, _ = self._exists_and_size()
-        if is_dir:
+        stat = self._stat()
+        if stat.is_dir:
             return
 
-        if is_file:
+        if stat.is_file:
             # A file exists at this path.
             raise NotADirectoryError(
                 f"Can not create a directory for {self} because a file already exists at that URL"
@@ -310,8 +281,7 @@ class DavResourcePath(ResourcePath):
         """Check that this resource exists."""
         log.debug("exists %s [%#x]", self, id(self))
 
-        is_dir, is_file, _ = self._exists_and_size()
-        return is_dir or is_file
+        return self._stat().exists
 
     @override
     def size(self) -> int:
@@ -356,15 +326,15 @@ class DavResourcePath(ResourcePath):
             return data
 
         # This is a partial read. Retrieve the file size.
-        _, is_file, file_size = self._exists_and_size()
-        if not is_file:
+        stat = self._stat()
+        if not stat.is_file:
             raise FileNotFoundError(f"No file found at {self}")
 
-        if size == 0 or file_size == 0:
+        if size == 0 or stat.size == 0:
             return b""
 
         # Read the requested chunk of data and release the backend server.
-        end_range = min(file_size, size) - 1
+        end_range = min(stat.size, size) - 1
         _, data = self._client.read_range(self._internal_url, start=0, end=end_range, release_backend=True)
         return data
 
@@ -436,7 +406,7 @@ class DavResourcePath(ResourcePath):
         if self.isdir():
             raise ValueError(f"Method write() is not implemented for directory {self}")
 
-        if not overwrite and self._exists_and_is_file():
+        if not overwrite and self._stat().is_file:
             raise FileExistsError(f"File {self} exists and overwrite has been disabled")
 
         self._client.write(self._internal_url, data)
@@ -451,12 +421,12 @@ class DavResourcePath(ResourcePath):
         """
         log.debug("remove %s [%#x]", self, id(self))
 
-        is_dir, is_file, _ = self._exists_and_size()
-        if not is_dir and not is_file:
+        stat = self._stat()
+        if not stat.exists:
             # There is no resource at this uri. There is nothing to do.
             return
 
-        if is_dir:
+        if stat.is_dir:
             entries = self._client.read_dir(self._internal_url)
             if len(entries) > 0:
                 raise IsADirectoryError(f"Directory {self} is not empty")
@@ -772,14 +742,14 @@ class DavResourcePath(ResourcePath):
         log.debug("DavResourcePath._openImpl: %s mode: %s", self, mode)
 
         if mode in ("rb", "r") and self._client.accepts_ranges(self._internal_url):
-            is_dir, is_file, file_size = self._exists_and_size()
-            if is_dir:
+            stat = self._stat()
+            if stat.is_dir:
                 raise OSError(f"open is not implemented for directory {self}")
 
-            if not is_file:
+            if not stat.is_file:
                 raise FileNotFoundError(f"No such file {self}")
 
-            with DavReadResourceHandle(mode, log.logger, self, file_size) as handle:
+            with DavReadResourceHandle(mode, log.logger, uri=self, file_size=stat.size) as handle:
                 if mode == "r":
                     # cast because the protocol is compatible, but does not
                     # have BytesIO in the inheritance tree

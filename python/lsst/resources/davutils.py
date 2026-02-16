@@ -1270,7 +1270,7 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-        headers : `bool``
+        headers : `bool`
             If the target URL is not found, raise an exception. Otherwise
             just return the response.
         pool_manager : `PoolManager`, optional
@@ -1332,7 +1332,7 @@ class DavClient:
         self,
         url: str,
         headers: dict[str, str] | None = None,
-        body: str | None = None,
+        body: str = "",
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
         """Send a webDAV PROPFIND request and return the response unmodified.
@@ -1414,7 +1414,7 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-        headers : `bool``
+        headers : `bool`
             If the target URL is not found, raise an exception. Otherwise
             just return the response.
         """
@@ -1509,7 +1509,7 @@ class DavClient:
         self,
         url: str,
         headers: dict[str, str] | None = None,
-        body: str | None = None,
+        body: str = "",
         depth: str = "0",
     ) -> HTTPResponse:
         """Send a HTTP PROPFIND request and return the unmodified response on
@@ -1524,17 +1524,6 @@ class DavClient:
         body : `str`, optional
             Request body.
         """
-        if body is None:
-            # Request only the DAV live properties we are explicitly interested
-            # in namely 'resourcetype', 'getcontentlength', 'getlastmodified'
-            # and 'displayname'.
-            body = (
-                """<?xml version="1.0" encoding="utf-8"?>"""
-                """<D:propfind xmlns:D="DAV:"><D:prop>"""
-                """<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:displayname/>"""
-                """</D:prop></D:propfind>"""
-            )
-
         headers = {} if headers is None else dict(headers)
         headers.update(
             {
@@ -1667,8 +1656,7 @@ class DavClient:
         result: `bool`
            True if there is an object at `url`.
         """
-        is_dir, is_file, _ = self.exists_and_size(url)
-        return is_dir or is_file
+        return self.stat(url).exists
 
     def size(self, url: str) -> int:
         """Return the size in bytes of resource at `url`.
@@ -1689,11 +1677,11 @@ class DavClient:
         if (size := self._file_size_cache.get_size(url)) is not None:
             return size
 
-        is_dir, is_file, file_size = self.exists_and_size(url)
-        if not is_dir and not is_file:
+        stat = self.stat(url)
+        if not stat.exists:
             raise FileNotFoundError(f"No file or directory found at {url}")
-
-        return file_size
+        else:
+            return stat.size
 
     def is_dir(self, url: str) -> bool:
         """Return True if a directory exists at `url`.
@@ -1708,36 +1696,7 @@ class DavClient:
         result: `bool`
            True if there is a directory at `url`.
         """
-        is_dir, _, _ = self.exists_and_size(url)
-        return is_dir
-
-    def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
-        """Return some metadata of resource at `url`.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-
-        Returns
-        -------
-        is_dir: `bool`
-           True if the resource at `url` exists and is a directory.
-        is_file: `bool`
-           True if the resource at `url` exists and is a file.
-        size: `int`
-           The size in bytes of the resource at `url` if it exists. The size
-           of a directory is always zero.
-
-        Notes
-        -----
-        The main purpose of this method is to allow subclasses to specialize
-        the retrieval of the metadata of resource at `url`.
-
-        The returned is_dir and is_file cannot be both True.
-        """
-        stat = self.stat(url)
-        return stat.is_dir, stat.is_file, stat.size
+        return self.stat(url).is_dir
 
     def mkcol(self, url: str) -> None:
         """Create a directory at `url`.
@@ -1767,7 +1726,7 @@ class DavClient:
                 )
 
     def stat(self, url: str) -> DavFileMetadata:
-        """Return the properties of file or directory located at `url`.
+        """Return some properties of file or directory located at `url`.
 
         Parameters
         ----------
@@ -1776,12 +1735,29 @@ class DavClient:
 
         Returns
         -------
-        result: `DavResourceMetadata``
+        result: `DavResourceMetadata`
             Details of the resources at `url`. If no resource was found at
             that URL no exception is raised. Instead the returned details allow
             for detecting that the resource does not exist.
+
+            The returned value should include fields to determine
+            if there is a file or a directory at that `url` and if so, its
+            size and kind (file or directory). Other fields may also be
+            included depending on the implementation of the webDAV protocol
+            by the server.
         """
-        resp = self.propfind(url)
+        # Request the minimum set of DAV properties.
+        body = (
+            """<?xml version="1.0" encoding="utf-8"?>"""
+            """<D:propfind xmlns:D="DAV:">"""
+            """<D:prop>"""
+            """<D:resourcetype/>"""
+            """<D:getcontentlength/>"""
+            """<D:getlastmodified/>"""
+            """</D:prop>"""
+            """</D:propfind>"""
+        )
+        resp = self.propfind(url, body=body, depth="0")
         match resp.status:
             case HTTPStatus.NOT_FOUND:
                 href = url.replace(self._base_url, "", 1)
@@ -1805,7 +1781,7 @@ class DavClient:
 
         Returns
         -------
-        result: `dict``
+        result: `dict`
             For an existing file, the returned value has the form:
 
             .. code-block:: json
@@ -1844,8 +1820,7 @@ class DavClient:
                  "name": name,
                  "size": None,
                  "type": None,
-                 "last_modified":
-                    datetime.datetime(1, 1, 1, 0, 0),
+                 "last_modified": datetime.datetime(1, 1, 1, 0, 0),
                  "checksums": {},
                }
 
@@ -1854,9 +1829,9 @@ class DavClient:
         The format of the returned directory is inspired and compatible with
         `fsspec`.
 
-        The size of existing directories is always zero. The `checksums``
-        dictionary may be empty if the storage endpoint does not compute
-        and store the checksum of the files it stores.
+        The size of existing directories is always zero. The `checksums`
+        dictionary is empty for directories and may be empty for files if the
+        server does not compute and store the checksum of the files it stores.
         """
         result: dict[str, Any] = {
             "name": name if name is not None else url,
@@ -1869,18 +1844,14 @@ class DavClient:
         if not metadata.exists:
             return result
 
-        if metadata.is_dir:
-            result.update({"type": "directory", "size": 0})
-        else:
-            result.update(
-                {
-                    "type": "file",
-                    "size": metadata.size,
-                    "checksums": metadata.checksums,
-                }
-            )
-
-        result.update({"last_modified": metadata.last_modified})
+        result.update(
+            {
+                "type": "directory" if metadata.is_dir else "file",
+                "size": metadata.size,
+                "last_modified": metadata.last_modified,
+                "checksums": metadata.checksums,
+            }
+        )
         return result
 
     def move(self, source_url: str, destination_url: str, overwrite: bool = False) -> HTTPResponse:
@@ -1922,7 +1893,13 @@ class DavClient:
         result: `list[DavResourceMetadata]`
             List of details of each file or directory within `url`.
         """
-        resp = self.propfind(url, depth="1")
+        body = (
+            """<?xml version="1.0" encoding="utf-8"?>"""
+            """<D:propfind xmlns:D="DAV:"><D:prop>"""
+            """<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:displayname/>"""
+            """</D:prop></D:propfind>"""
+        )
+        resp = self.propfind(url, body=body, depth="1")
         match resp.status:
             case HTTPStatus.MULTI_STATUS:
                 pass
@@ -2717,24 +2694,10 @@ class DavClientDCache(DavClientURLSigner):
         self,
         url: str,
         headers: dict[str, str] | None = None,
-        body: str | None = None,
+        body: str = "",
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
         """Inherits doc string."""
-        if body is None:
-            # Request only the DAV live properties we are explicitly interested
-            # in namely 'resourcetype', 'getcontentlength', 'getlastmodified'
-            # and 'displayname'.
-            #
-            # In addition, request dCache-specific checksums.
-            body = (
-                """<?xml version="1.0" encoding="utf-8"?>"""
-                """<D:propfind xmlns:D="DAV:" xmlns:dcache="http://www.dcache.org/2013/webdav"><D:prop>"""
-                """<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:displayname/>"""
-                """<dcache:Checksums/>"""
-                """</D:prop></D:propfind>"""
-            )
-
         return self._request(
             "PROPFIND", url=url, headers=headers, body=body, pool_manager=self._propfind_pool_manager
         )
@@ -2806,98 +2769,6 @@ class DavClientDCache(DavClientURLSigner):
                     return None
             case _:
                 raise unexpected_status_error("PUT", redirect_url, resp)
-
-    @override
-    def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
-        """Return some metadata of resource at `url`.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-
-        Returns
-        -------
-        is_dir: `bool`
-           True if the resource at `url` exists and is a directory.
-        is_file: `bool`
-           True if the resource at `url` exists and is a file.
-        size: `int`
-           The size in bytes of the resource at `url` if it exists. The size
-           of a directory is always zero.
-
-        Notes
-        -----
-        The main purpose of this method is to allow subclasses to specialize
-        the retrieval of the metadata of resource at `url`.
-
-        The returned is_dir and is_file cannot be both True.
-        """
-        # Send a PROPFIND request requiring only a minimal set of DAV
-        # properties. We could also use a HEAD request for implementing this
-        # method but  dCache does not allow us to reuse the network connection
-        # after serving a HEAD request. It allows for connection reuse when
-        # serving PROPFIND requests, so we prefer to use that method here.
-        body = (
-            """<?xml version="1.0" encoding="utf-8"?>"""
-            """<D:propfind xmlns:D="DAV:" xmlns:dcache="http://www.dcache.org/2013/webdav">"""
-            """<D:prop><D:resourcetype/><D:getcontentlength/></D:prop></D:propfind>"""
-        )
-        resp = self.propfind(url, body=body)
-        match resp.status:
-            case HTTPStatus.MULTI_STATUS:
-                property = self._propfind_parser.parse(resp.data)[0]
-                metadata = DavFileMetadata.from_property(base_url=self._base_url, property=property)
-                return metadata.is_dir, metadata.is_file, metadata.size
-            case _:
-                return False, False, 0
-
-    def _exists_and_size_via_head(self, url: str) -> tuple[bool, bool, int]:
-        """Return some metadata of resource at `url`.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-
-        Returns
-        -------
-        is_dir: `bool`
-           True if the resource at `url` exists and is a directory.
-        is_file: `bool`
-           True if the resource at `url` exists and is a file.
-        size: `int`
-           The size in bytes of the resource at `url` if it exists. The size
-           of a directory is always zero.
-
-        Notes
-        -----
-        The main purpose of this method is to allow subclasses to specialize
-        the retrieval of the metadata of resource at `url`.
-
-        The returned is_dir and is_file cannot be both True.
-        """
-        # dCache responds "200 OK" to a HEAD request against an existing
-        # file or directory.
-        #
-        # When the target URL is a directory, there is no
-        # "Content-Length" header in the response and the value of header
-        # "Content-Type" is like "text/html;charset=utf-8".
-        #
-        # When the target is a file, the header "Content-Length" is
-        # present in the response and its value is the size of the file.
-        resp = self.head(url)
-        if resp.status != HTTPStatus.OK:
-            # There is no resource at url
-            return False, False, 0
-
-        if "Content-Length" not in resp.headers:
-            # The resource at url is a directory
-            return True, False, 0
-
-        # The resource at url is a file. Retrieve its size.
-        size = int(resp.headers.get("Content-Length"))
-        return False, True, size
 
     @override
     def download(self, url: str, filename: str, chunk_size: int) -> int:
@@ -3067,6 +2938,50 @@ class DavClientDCache(DavClientURLSigner):
             self.put(temporary_url, data=b"")
         finally:
             self.delete(temporary_url)
+
+    @override
+    def info(self, url: str, name: str | None = None) -> dict[str, Any]:
+        """Inherits doc string."""
+        result: dict[str, Any] = {
+            "name": name if name is not None else url,
+            "type": None,
+            "size": None,
+            "last_modified": datetime.min,
+            "checksums": {},
+        }
+
+        # Request live DAV properties as well as the checksums that dCache
+        # recorded about this file.
+        body = (
+            """<?xml version="1.0" encoding="utf-8"?>"""
+            """<D:propfind xmlns:D="DAV:" xmlns:dcache="http://www.dcache.org/2013/webdav">"""
+            """<D:prop>"""
+            """<D:resourcetype/>"""
+            """<D:getcontentlength/>"""
+            """<D:getlastmodified/>"""
+            """<D:displayname/>"""
+            """<dcache:Checksums/>"""
+            """</D:prop>"""
+            """</D:propfind>"""
+        )
+        resp = self.propfind(url, body=body, depth="0")
+        match resp.status:
+            case HTTPStatus.NOT_FOUND:
+                return result
+            case HTTPStatus.MULTI_STATUS:
+                property = self._propfind_parser.parse(resp.data)[0]
+                metadata = DavFileMetadata.from_property(base_url=self._base_url, property=property)
+                result.update(
+                    {
+                        "type": "directory" if metadata.is_dir else "file",
+                        "size": metadata.size,
+                        "last_modified": metadata.last_modified,
+                        "checksums": metadata.checksums,
+                    }
+                )
+                return result
+            case _:
+                raise unexpected_status_error("PROPFIND", url, resp)
 
 
 class DavClientXrootD(DavClientURLSigner):
@@ -3255,11 +3170,11 @@ class DavClientXrootD(DavClientURLSigner):
             case HTTPStatus.METHOD_NOT_ALLOWED:
                 # XRootD returns "405 Method Not Allowed" when either a file
                 # or a directory already exists at `url`
-                is_dir, is_file, _ = self.exists_and_size(url)
-                if is_dir:
+                stat = self.stat(url)
+                if stat.is_dir:
                     # A directory exists at `url`. Nothing more to do.
                     return
-                elif is_file:
+                elif stat.is_file:
                     raise NotADirectoryError(
                         f"Can not create a directory because a file already exists at {resp.geturl()}"
                     )
@@ -3269,28 +3184,8 @@ class DavClientXrootD(DavClientURLSigner):
                 )
 
     @override
-    def exists_and_size(self, url: str) -> tuple[bool, bool, int]:
-        """Return some metadata of resource at `url`.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-
-        Returns
-        -------
-        is_dir: `bool`
-           True if the resource at `url` exists and is a directory.
-        is_file: `bool`
-           True if the resource at `url` exists and is a file.
-        size: `int`
-           The size in bytes of the resource at `url` if it exists. The size
-           of a directory is always zero.
-
-        Notes
-        -----
-        The returned is_dir and is_file cannot be both True.
-        """
+    def stat(self, url: str) -> DavFileMetadata:
+        """Inherits doc string."""
         # XRootD v5.9.1 responds "200 OK" to a HEAD request against an
         # existing file. When the target URL is a directory, it also responds
         # "200 OK". In both cases the response header "Content-Length"
@@ -3305,13 +3200,18 @@ class DavClientXrootD(DavClientURLSigner):
         # When the target URL is a directory and we ask for a digest, the
         # server responds "409 Conflict". We use this behavior to
         # discriminate between a file and a directory.
-        resp = self.head(url, headers={"Want-Digest": "adler32"})
+        #
+        # Note that XRootD does not include the "Last-Modified" header in the
+        # response to a HEAD request so we cannot include the last modified
+        # time in the value returned by this method.
+        resp = self._head(url, headers={"Want-Digest": "adler32"})
         match resp.status:
             case HTTPStatus.OK:
                 # There is a file at target URL
                 if "Content-Length" in resp.headers:
+                    href = url.replace(self._base_url, "", 1)
                     size = int(resp.headers.get("Content-Length"))
-                    return False, True, size
+                    return DavFileMetadata(self._base_url, href=href, exists=True, is_dir=False, size=size)
                 else:
                     raise ValueError(
                         f"""Expecting Content-Length header to be present in """
@@ -3320,10 +3220,11 @@ class DavClientXrootD(DavClientURLSigner):
                     )
             case HTTPStatus.CONFLICT:
                 # There is a directory at target URL
-                return True, False, 0
+                href = url.replace(self._base_url, "", 1)
+                return DavFileMetadata(self._base_url, href=href, exists=True, is_dir=True)
             case HTTPStatus.NOT_FOUND:
-                # There is no file nor directory at target URL
-                return False, False, 0
+                # There is neither a file nor a directory at target URL
+                return DavFileMetadata(base_url=url, exists=False)
             case _:
                 raise unexpected_status_error("HEAD", url, resp)
 
