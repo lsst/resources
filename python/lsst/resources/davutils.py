@@ -27,7 +27,13 @@ import uuid
 import xml.etree.ElementTree as eTree
 from datetime import datetime
 from http import HTTPStatus
-from typing import Any, BinaryIO, override
+from typing import Any, BinaryIO
+
+try:
+    from typing import override  # Python 3.12+
+except ImportError:
+    from typing_extensions import override  # Python 3.11
+
 from urllib.parse import parse_qsl, urlparse, urlunparse
 
 try:

@@ -23,7 +23,12 @@ import re
 import threading
 import urllib
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, BinaryIO, cast, override
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
+
+try:
+    from typing import override  # Python 3.12+
+except ImportError:
+    from typing_extensions import override  # Python 3.11
 
 try:
     import fsspec
