@@ -83,6 +83,26 @@ WebDAV endpoint:
     the private key and the user certificate are both in the same file
     specified in the value for ``user_cert``.
 
+``user_name``
+    Name of the user the webDAV client must use when the server requires
+    basic access authentication. It must be accompaigned by the
+    ``user_password`` setting (see below).
+
+    This setting is ignored if ``token`` is specified (see below).
+
+``user_password``
+    Password the client must use to build the basic authentication header when
+    sending requests to the server. The value of this setting can be the
+    password itself or the path to a local file where the password is stored.
+
+    If you specify a value for ``user_password`` which is the path to a local
+    file (recommended), that file must be protected for reading and writing
+    only by its owner. The contents of that file is automatically reloaded
+    every time it is modified.
+
+    This setting is ignored if ``token`` is specified (see below) or if
+    ``user_name`` is not specified.
+
 ``trusted_authorities``
     Path to a local directory or certificate bundle file where the
     certificates of the trusted certificate authorities can be found.
@@ -106,7 +126,24 @@ WebDAV endpoint:
     If you specify a value for ``token`` which is the path to a local file
     which contains the actual token, that file must be protected for
     reading and writing only by its owner. The contents of that file is
-    automatically reloaded when every time it is modified.
+    automatically reloaded every time it is modified.
+
+``reuse_connection``
+    Configure this webDAV client to reuse the network connection to the server
+    for submitting subsequent requests. By default, the client attempts to
+    keep the network connection to the server open and to reuse it as long
+    as possible. However, the server may decide to close the connection after
+    serving each request.
+
+    Generally speaking, reusing secure HTTP connections to the server is
+    beneficial because of the time necessary to establish the underlying
+    TLS connection.
+
+    If this setting is set to ``false``, the client will close the network
+    connection after receiving the response to each request it sends to the
+    server.
+
+    Default: ``true`` (``boolean``).
 
 ``timeout_connect``
     Timeout in seconds to establish a network connection with the remote
@@ -126,7 +163,7 @@ WebDAV endpoint:
     Number of times to retry requests before failing. Retry happens only
     under certain conditions.
 
-    Default: 3 (``int``).
+    Default: 4 (``int``).
 
 ``retry_backoff_min``
     Minimal retry backoff (in seconds) for the client to compute
@@ -147,23 +184,26 @@ WebDAV endpoint:
     Default: 3.0 seconds (``float``).
 
 ``buffer_size``
-    Size of the buffer (in mebibytes, i.e. 1024*1024 bytes) the WebDAV
-    client of this endpoint will use when sending requests and receiving
-    responses.
+    Size of the internal buffer (in mebibytes, i.e. 1024*1024 bytes) the
+    WebDAV client of this endpoint will use when sending requests and
+    receiving responses.
 
     Default: 5 mebibytes (``int``).
 
-``persistent_connections_frontend``
+``block_size``
+    Size of the block (in mebibytes, i.e. 1024*1024 bytes) the WebDAV
+    client of this endpoint will use when making partial read requests.
+    Each partial read request will attempt to retrieve at least this number
+    of bytes unless the size of the file is lower.
+
+    Default: 1 mebibytes (``int``).
+
+``persistent_connections_per_host``
     Maximum number of network connections to persist against each one of
-    the hosts in the server frontend.
+    the hosts of this endpoint. If more than this number of network
+    connections are needed they will be established and discarded after use.
 
-    Default: 50 (``int``).
-
-``persistent_connections_backend``
-    Maximum number of network connections to persist against each one of
-    the hosts in the server backend.
-
-    Default: 100 (``int``).
+    Default: 20 (``int``).
 
 ``enable_fsspec``
     If specified, expose a `fsspec <https://filesystem-spec.read>`_-compatible,
@@ -190,6 +230,13 @@ WebDAV endpoint:
 
     Default: ``false`` (``boolean``).
 
+``frontend_base_urls``
+    If specified, the WebDAV client randomly selects one frontend base URL in
+    this list and uses it to send the request. If not specified, all the
+    requests are sent using the ``base_url`` of this endpoint. See the examples
+    section below for the accepted syntax.
+
+    Accepted values: list of strings.
 
 Configuration Examples
 ----------------------
@@ -235,6 +282,19 @@ In this example we configure `~lsst.resources.ResourcePath` to request the
 dCache server to compute and record the MD5 checksum when a file is uploaded,
 in addition to the ADLER32 checksum dCache always computes and records for
 each file.
+
+You can also specify a set of frontend servers the client can use to send
+requests to an endpoint:
+
+.. code-block:: yaml
+
+    - base_url: "dav://dcache.example.org:9090/"
+      user_name: "myuser"
+      user_password: "${HOME}/path/to/protected/password/file"
+      frontend_base_urls:
+        - "dav://frontend1.example.org:4242/"
+        - "dav://frontend2.example.org:4242/"
+        - "dav://frontend3.example.org:4242/"
 
 XRootD
 ^^^^^^

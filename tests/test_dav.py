@@ -72,12 +72,12 @@ class GenericDavTestCase(GenericTestCase, unittest.TestCase):
             "dav://host.example.org/some/path": "dav://host.example.org/",
             "dav://host.example.org:12345": "dav://host.example.org:12345/",
             "dav://host.example.org:12345/some/path": "dav://host.example.org:12345/",
-            "dav://user:password@host.example.org": "dav://user:password@host.example.org/",
-            "dav://user:password@host.example.org/some/path": "dav://user:password@host.example.org/",
-            "dav://user:password@host.example.org:12345/some/path": "dav://user:password@host.example.org:12345/",
-            "dav://user:password@host.example.org/some/path#fragment": "dav://user:password@host.example.org/",
-            "dav://user:password@host.example.org/some/path?param=value": "dav://user:password@host.example.org/",
-            "dav://user:password@host.example.org/some/path;parameters": "dav://user:password@host.example.org/",
+            "dav://user:pwd@host.example.org": "dav://user:pwd@host.example.org/",
+            "dav://user:pwd@host.example.org/some/path": "dav://user:pwd@host.example.org/",
+            "dav://user:pwd@host.example.org:12345/some/path": "dav://user:pwd@host.example.org:12345/",
+            "dav://user:pwd@host.example.org/some/path#fragment": "dav://user:pwd@host.example.org/",
+            "dav://user:pwd@host.example.org/some/path?param=value": "dav://user:pwd@host.example.org/",
+            "dav://user:pwd@host.example.org/some/path;parameters": "dav://user:pwd@host.example.org/",
         }
         for path, expected in root_uri_test_cases.items():
             self.assertEqual(ResourcePath(expected), ResourcePath(path).root_uri())
@@ -278,17 +278,26 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         os.remove(local_file)
 
     def test_dav_as_local(self):
-        contents = str.encode("12345")
-        remote_file = self.tmpdir.join(self._get_file_name())
-        self.assertIsNone(remote_file.write(data=contents, overwrite=True))
-        self.assertTrue(remote_file.exists())
-        self.assertEqual(remote_file.size(), len(contents))
+        # Generate a file with random data and upload to a remote file.
+        original_file, original_file_size = self._generate_file()
+        original_digest = self._compute_digest_for_file(original_file)
 
+        with open(original_file, "rb") as file:
+            remote_file = self.tmpdir.join(self._get_file_name())
+            self.assertIsNone(remote_file.write(data=file, overwrite=True))
+            self.assertTrue(remote_file.exists())
+            remote_file_size = remote_file.size()
+            self.assertEqual(remote_file_size, original_file_size)
+
+        # Download the remote file to a temporary local file, check that
+        # the sizes and contents of the original file and the downloaded files
+        # match.
         with remote_file._as_local() as local_uri:
             self.assertTrue(local_uri.isTemporary)
             self.assertTrue(os.path.exists(local_uri.ospath))
-            self.assertTrue(os.stat(local_uri.ospath).st_size, len(contents))
-            self.assertEqual(local_uri.read(), contents)
+            self.assertTrue(os.stat(local_uri.ospath).st_size, remote_file_size)
+            self.assertEqual(original_digest, self._compute_digest(local_uri.read()))
+
         self.assertFalse(local_uri.exists())
 
     def test_dav_size(self):
@@ -330,7 +339,8 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
     def test_dav_transfer_from(self):
         # Transfer from local file via "copy", with and without overwrite
-        remote_file = self.tmpdir.join(self._get_file_name())
+        depth = random.randint(1, 5)
+        remote_file = self.tmpdir.join(self._get_file_name(depth))
         local_file, _ = self._generate_file()
         source_file = ResourcePath(local_file)
         self.assertIsNone(remote_file.transfer_from(source_file, transfer="copy", overwrite=True))
@@ -341,7 +351,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Transfer from remote file via "copy", with and without overwrite
         source_file = remote_file
-        target_file = self.tmpdir.join(self._get_file_name())
+        target_file = self.tmpdir.join(self._get_file_name(depth=random.randint(1, 5)))
         self.assertIsNone(target_file.transfer_from(source_file, transfer="copy", overwrite=True))
         self.assertTrue(target_file.exists())
         self.assertEqual(target_file.size(), source_file.size())
@@ -370,7 +380,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # must succeed
         source_file = target_file
         source_size = source_file.size()
-        target_file = self.tmpdir.join(self._get_file_name())
+        target_file = self.tmpdir.join(self._get_file_name(depth=random.randint(1, 5)))
         self.assertIsNone(target_file.transfer_from(source_file, transfer="move", overwrite=True))
         self.assertTrue(target_file.exists())
         self.assertEqual(target_file.size(), source_size)
@@ -390,16 +400,15 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             handle.seek(1)
             self.assertEqual(handle.read(4).decode("utf-8"), data[1:5])
 
-        # If we read the whole file, ensure we cache its contents
+        # Ensure that reading the whole file content through a handle works
         with remote_file.open("rb") as handle:
-            handle.read()
-            self.assertIsNotNone(handle._cache)
+            content = handle.read(-1)
+            self.assertEqual(remote_file.size(), len(content))
 
             handle.seek(1)
             self.assertEqual(handle.read(4).decode("utf-8"), data[1:5])
 
         # Upload a multi-megabyte file and ensure a partial read succeeds
-        # without caching the entire file.
         data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE)
         self.assertIsNone(remote_file.write(data, overwrite=True))
         file_size: int = remote_file.size()
@@ -410,7 +419,6 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             handle.seek(file_offset)
             self.assertEqual(handle.tell(), data.tell())
             self.assertEqual(handle.read(bytes_to_read), data.read(bytes_to_read))
-            self.assertIsNone(handle._cache)
 
         # Test readinto()
         with remote_file.open("rb") as handle:
@@ -530,7 +538,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Ensure that the file system raises with methods not implemented.
         with self.assertRaises(NotImplementedError):
-            fsys.fsid()
+            fsys.mkdir("a/b/c")
 
         not_implemented_methods = [
             fsys.mkdir,
@@ -621,8 +629,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Create a local zip file composed of a random number of identical
         # files.
         local_file, local_file_size = self._generate_file()
-        with open(local_file, "rb") as lf:
-            local_file_digest = self._compute_digest(lf.read())
+        local_file_digest = self._compute_digest_for_file(local_file)
 
         num_members = random.randint(10, 20)
         basename = os.path.basename(local_file)
@@ -656,18 +663,21 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             with zf.open(random_member) as member:
                 self.assertEqual(local_file_digest, self._compute_digest(member.read()))
 
-        # Concurrently read all the members of the remote zip file
-        def download_zip_member(zfile: ZipFile, zinfo: ZipInfo) -> tuple[int, str]:
-            # Download member of `zfile` designated by `zinfo` and return
-            # its size in bytes and a checksum of its contents.
-            with zfile.open(zinfo.filename) as member:
-                data = member.read()
-                return len(data), self._compute_digest(data)
+        # Concurrently read all the members of the remote Zip file
+        def download_zip_member(uri: ResourcePath, zinfo: ZipInfo) -> tuple[int, str]:
+            # Download the member of Zip file at `uri` designated by `zinfo`
+            # and return its size in bytes and a checksum of its contents.
+            with uri.open("rb") as fd:
+                with ZipFile(fd).open(zinfo.filename) as member:
+                    data = member.read()
+                    return len(data), self._compute_digest(data)
 
         with remote_zip_file.open("rb") as fd:
-            zfile = ZipFile(fd)
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
-            futures = [executor.submit(download_zip_member, zfile, zinfo) for zinfo in zfile.infolist()]
+            zfile_components = ZipFile(fd).infolist()
+            futures = [
+                executor.submit(download_zip_member, remote_zip_file, zinfo) for zinfo in zfile_components
+            ]
 
         # Gather results and check they match the expected values
         for future in concurrent.futures.as_completed(futures):
@@ -796,9 +806,23 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         return cls._get_name(prefix="dir")
 
     @classmethod
-    def _get_file_name(cls) -> str:
-        """Return a randomly selected name for a file"""
-        return cls._get_name(prefix="file")
+    def _get_file_name(cls, depth: int = 0) -> str:
+        """Return a randomly selected name for a file.
+
+        Parameters
+        ----------
+        depth : `int`
+            Number of intermediate directory names to prefix the filename
+            with.
+        """
+        file_name = cls._get_name(prefix="file")
+        if depth == 0:
+            return file_name
+
+        # Generate names for intermediate directories
+        components = [cls._get_dir_name() for _ in range(depth)]
+        components.append(file_name)
+        return "/".join(components)
 
     def _generate_file(self, remove_when_done=True) -> tuple[str, int]:
         """Create a local file of random size with random contents.
@@ -851,6 +875,12 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 return f"{zlib.adler32(data):08x}"
             case _:
                 raise ValueError(f"unsupported checksum algorithm {algorithm}")
+
+    @classmethod
+    def _compute_digest_for_file(cls, filename: str, algorithm: str = "sha256") -> str:
+        """Compute a hash of the contents of file `filename`."""
+        with open(filename, "rb") as file:
+            return cls._compute_digest(file.read(), algorithm)
 
     @classmethod
     def _is_server_running(cls, port: int) -> bool:
@@ -924,10 +954,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
             self.assertEqual(config.timeout_read, DavConfig.DEFAULT_TIMEOUT_READ)
             self.assertEqual(config.token, DavConfig.DEFAULT_TOKEN)
             self.assertEqual(
-                config.persistent_connections_frontend, DavConfig.DEFAULT_PERSISTENT_CONNECTIONS_FRONTEND
-            )
-            self.assertEqual(
-                config.persistent_connections_backend, DavConfig.DEFAULT_PERSISTENT_CONNECTIONS_BACKEND
+                config.persistent_connections_per_host, DavConfig.DEFAULT_PERSISTENT_CONNECTIONS_PER_HOST
             )
 
     def test_dav_configuration_file_does_not_exist(self):
@@ -941,8 +968,7 @@ class DavConfigPoolTestCase(unittest.TestCase):
         """Ensure the specified configuration file is used."""
         config_contents: str = r"""
 - base_url: "davs://host1.example.org:1234/"
-  persistent_connections_frontend: 10
-  persistent_connections_backend: 100
+  persistent_connections_per_host: 10
   timeout_connect: 20.0
   timeout_read: 120.0
   retries: 3
@@ -952,14 +978,22 @@ class DavConfigPoolTestCase(unittest.TestCase):
   user_key: "${X509_USER_PROXY}"
   trusted_authorities: "/etc/grid-security/certificates"
   buffer_size: 5
+  block_size: 18
   enable_fsspec: false
   collect_memory_usage: false
   request_checksum: "md5"
 - base_url: "davs://host2.example.org:4321/"
-  persistent_connections_frontend: 1
-  persistent_connections_backend: 2
+  persistent_connections_per_host: 1
 - base_url: "davs://host3.example.org:4321/"
   token: "ABCDEF"
+- base_url: "dav://host4.example.org:5555/"
+  user_name: "user"
+  user_password: "password"
+  reuse_connection: false
+  frontend_base_urls:
+  - "dav://frontend1.example.org:5555/"
+  - "dav://frontend2.example.org:5555/"
+  - "dav://frontend3.example.org:5555/"
 """
 
         config_file = self._create_config(config_contents)
@@ -976,18 +1010,41 @@ class DavConfigPoolTestCase(unittest.TestCase):
             self.assertFalse(config.enable_fsspec)
             self.assertFalse(config.collect_memory_usage)
             self.assertEqual(config.request_checksum, "md5")
+            self.assertEqual(config.persistent_connections_per_host, 10)
+            self.assertEqual(config.block_size, 18 * 1024 * 1024)
 
             # Tests for base URL 'davs://host2.example.org:4321/'
             config = config_pool.get_config_for_url("davs://host2.example.org:4321")
             self.assertEqual(config.base_url, "https://host2.example.org:4321/")
-            self.assertEqual(config.persistent_connections_frontend, 1)
-            self.assertEqual(config.persistent_connections_backend, 2)
+            self.assertEqual(config.persistent_connections_per_host, 1)
 
             # Tests for base URL 'davs://host3.example.org:4321/'
             config = config_pool.get_config_for_url("davs://host3.example.org:4321")
             self.assertEqual(config.base_url, "https://host3.example.org:4321/")
             self.assertEqual(config.token, "ABCDEF")
             self.assertEqual(config.retries, DavConfig.DEFAULT_RETRIES)
+
+            # Tests for base URL 'dav://host4.example.org:5555/'
+            config = config_pool.get_config_for_url("dav://host4.example.org:5555/")
+            self.assertEqual(config.base_url, "http://host4.example.org:5555/")
+            self.assertEqual(config.user_name, "user")
+            self.assertEqual(config.user_password, "password")
+            self.assertFalse(config.reuse_connection)
+            for i in range(1, 3):
+                url = f"http://frontend{i}.example.org:5555/"
+                self.assertTrue(url in config.frontend_urls)
+
+        # Test that the schemes of the base URL and the frontend URLs of a
+        # given endpoint are checked and must be identical.
+        config_contents: str = r"""
+- base_url: "dav://host5.example.org:5555/"
+  frontend_base_urls:
+  - "davs://frontend1.example.org:5555/"
+"""
+        config_file = self._create_config(config_contents)
+        with unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_WEBDAV_CONFIG": config_file}, clear=True):
+            with self.assertRaises(ValueError):
+                DavConfigPool("LSST_RESOURCES_WEBDAV_CONFIG")
 
     def test_dav_repeated_configurations(self):
         """Ensure duplicated endpoint errors are detected in configuration
