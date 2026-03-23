@@ -34,7 +34,7 @@ try:
 except ImportError:
     from typing_extensions import override  # Python 3.11
 
-from urllib.parse import parse_qsl, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 try:
     import fsspec
@@ -120,22 +120,19 @@ def redact_url(url: str) -> str:
     redacted_url : `str`
         For instance, when called with an URL like:
 
-            davs://host.example.org:1234/a/b/c/file.data?key1=value1&key2=value2&authz=token#fragment
+            https://host.example.org:1234/a/b/c/file.data?key1=value1&key2=value2&authz=token#fragment
 
         the returned value would be:
 
-            davs://host.example.org:1234/a/b/c/file.data?key1=value1&key2=value2&authz=[...]#fragment
+            https://host.example.org:1234/a/b/c/file.data?key1=value1&key2=value2&authz=....#fragment
     """
     parsed_url = urlparse(url)
-    redacted_query: list[str] = []
+    redacted_query: list[tuple[str, str]] = []
     for pair in parse_qsl(parsed_url.query):
-        if pair[0] == "authz":
-            redacted_query.append("authz=[...]")
-        else:
-            redacted_query.append(f"{pair[0]}={pair[1]}")
+        redacted_query.append((pair[0], "...." if pair[0] == "authz" else pair[1]))
 
-    redacted_url = parsed_url._replace(query="&".join(redacted_query))
-    return str(urlunparse(redacted_url))
+    redacted_url = parsed_url._replace(query=urlencode(redacted_query))
+    return urlunparse(redacted_url)
 
 
 class DavConfig:
@@ -2007,10 +2004,10 @@ class DavClient:
         # header to the frontend.
         final_url, resp = self.get(url, headers=frontend_headers, redirect=False)
         match resp.status:
-            case HTTPStatus.OK | HTTPStatus.PARTIAL_CONTENT:
+            case HTTPStatus.PARTIAL_CONTENT:
                 return final_url, resp.data
             case status if status not in resp.REDIRECT_STATUSES:
-                raise unexpected_status_error("GET", url, resp)
+                raise unexpected_status_error("GET (with 'Range' header)", url, resp)
             case _:
                 pass
 
@@ -2026,10 +2023,10 @@ class DavClient:
 
         final_url, resp = self.get(redirect_url, headers=backend_headers)
         match resp.status:
-            case HTTPStatus.OK | HTTPStatus.PARTIAL_CONTENT:
+            case HTTPStatus.PARTIAL_CONTENT:
                 return final_url, resp.data
             case _:
-                raise unexpected_status_error("GET", redirect_url, resp)
+                raise unexpected_status_error("GET (with 'Range' header)", redirect_url, resp)
 
     def _write_response_body_to_file(self, resp: HTTPResponse, filename: str, chunk_size: int) -> int:
         """Write the the response body to a local file.
@@ -3589,15 +3586,39 @@ class Authorizer:
         other_accessible = bool(mode & stat.S_IRWXO)
         return owner_accessible and not group_accessible and not other_accessible
 
-    def _read_if_modified_since(self, filename: str, timestamp: float) -> str | None:
+    def _read_if_modified_since(
+        self, filename: str | None, timestamp: float
+    ) -> tuple[str, float] | tuple[None, None]:
         """Read local file `filename` if its modification time is more
         recent than `timestamp`.
-        """
-        if filename is None or os.stat(filename).st_mtime < timestamp:
-            return None
 
-        with open(filename) as f:
-            return f.read().rstrip("\n")
+        Parameters
+        ----------
+        filename : `str`, optional
+            Path of a local file.
+
+        timestamp: `float`, optional
+            Timestamp to compare against the last modification time of
+            `filename`. The contents of file at `filename` is only read if its
+            modification time is more recent than `timestamp`.
+
+        Returns
+        -------
+        result: `tuple[str, float]`
+            tuple of (contents of file `filename`, timestamp of the read
+            operation).
+
+            If `filename` is `None`, the returned value is `tuple[None, None]`.
+        """
+        if filename is None:
+            return (None, None)
+
+        if os.stat(filename).st_mtime < timestamp:
+            return (None, None)
+
+        with open(filename) as file:
+            time_of_last_read = time.time()
+            return (file.read().rstrip("\n"), time_of_last_read)
 
 
 class TokenAuthorizer(Authorizer):
@@ -3613,7 +3634,7 @@ class TokenAuthorizer(Authorizer):
 
     def __init__(self, token: str | None = None) -> None:
         self._token = self._token_path = None
-        self._last_read_time: float = -1.0
+        self._time_of_last_read: float = -1.0
         if token is None:
             return
 
@@ -3634,14 +3655,15 @@ class TokenAuthorizer(Authorizer):
         if self._token_path is None:
             return None
 
-        token = self._read_if_modified_since(self._token_path, self._last_read_time)
-        if token is None:
+        token, time_of_last_read = self._read_if_modified_since(self._token_path, self._time_of_last_read)
+        if token is None or time_of_last_read is None:
             return
 
-        # Update the password and the last time we read it.
+        # Update the token value and the last time we read it.
         self._token = token
-        self._last_read_time = time.time()
+        self._time_of_last_read = time_of_last_read
 
+    @override
     def set_authorization(self, headers: dict[str, str]) -> None:
         """Add the 'Authorization' header to `headers`.
 
@@ -3680,7 +3702,7 @@ class BasicAuthorizer(Authorizer):
         self._user_name: str | None = user_name
         self._user_password: str | None = user_password
         self._user_password_path: str | None = None
-        self._last_read_time: float = -1.0
+        self._time_of_last_read: float = -1.0
         self._header_value: str = ""
 
         if os.path.isfile(self._user_password):
@@ -3710,16 +3732,19 @@ class BasicAuthorizer(Authorizer):
         if self._user_password_path is None:
             return None
 
-        password = self._read_if_modified_since(self._user_password_path, self._last_read_time)
-        if password is None:
+        password, time_of_last_read = self._read_if_modified_since(
+            self._user_password_path, self._time_of_last_read
+        )
+        if password is None or time_of_last_read is None:
             return
 
         # Update the password, the last time we read it and re-compute the
         # value of the "Authorization" header.
-        self._last_read_time = time.time()
         self._user_password = password
+        self._time_of_last_read = time_of_last_read
         self._update_header_value()
 
+    @override
     def set_authorization(self, headers: dict[str, str]) -> None:
         """Add the 'Authorization' header to `headers`.
 
@@ -3733,36 +3758,6 @@ class BasicAuthorizer(Authorizer):
 
         self._update_password()
         headers["Authorization"] = self._header_value
-
-
-def is_file_protected_TO_REMOVE(filepath: str) -> bool:
-    """Return true if the permissions of file at filepath only allow for
-    access by its owner.
-
-    Parameters
-    ----------
-    filepath : `str`
-        Path of a local file.
-    """
-    if not os.path.isfile(filepath):
-        return False
-
-    mode = stat.S_IMODE(os.stat(filepath).st_mode)
-    owner_accessible = bool(mode & stat.S_IRWXU)
-    group_accessible = bool(mode & stat.S_IRWXG)
-    other_accessible = bool(mode & stat.S_IRWXO)
-    return owner_accessible and not group_accessible and not other_accessible
-
-
-def read_if_modified_since_TO_REMOVE(filename: str, timestamp: float) -> str | None:
-    """Read local file `filename` if its modification time is more
-    recent than `timestamp`.
-    """
-    if filename is None or os.stat(filename).st_mtime < timestamp:
-        return None
-
-    with open(filename) as f:
-        return f.read().rstrip("\n")
 
 
 def expand_vars(path: str | None) -> str | None:

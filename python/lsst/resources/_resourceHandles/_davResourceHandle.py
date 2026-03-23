@@ -36,8 +36,8 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         Logger to used when writing messages.
     uri : `lsst.resources.dav.DavResourcePath`
         URI of remote resource.
-    stat : `DavFileMetadata`
-        Information about this resource.
+    file_size : `int`
+        Size of the remote file, in bytes.
     newline : `str` or `None`, optional
         When doing multiline operations, break the stream on given character.
         Defaults to newline. If a file is opened in binary mode, this argument
@@ -51,7 +51,6 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         log: logging.Logger,
         uri: DavResourcePath,
         file_size: int,
-        encoding: str | None = None,
         *,
         newline: AnyStr | None = None,
     ) -> None:
@@ -59,7 +58,6 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         self._uri: DavResourcePath = uri
         self._client: DavClient = self._uri._client
         self._filesize: int = file_size
-        self._encoding: str | None = "locale" if encoding is None else encoding
         self._closed = CloseStatus.OPEN
         self._current_position = 0
         self._cache: DavReadAheadCache = DavReadAheadCache(

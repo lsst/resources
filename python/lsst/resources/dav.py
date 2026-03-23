@@ -47,7 +47,6 @@ from .davutils import (
     DavFileMetadata,
     normalize_path,
     normalize_url,
-    redact_url,
 )
 from .utils import get_tempdir
 
@@ -252,11 +251,6 @@ class DavResourcePath(ResourcePath):
     def _stat(self) -> DavFileMetadata:
         """Retrieve metadata about this resource."""
         return self._client.stat(self._internal_url)
-
-    @override
-    def __str__(self) -> str:
-        """Return this resource's redacted URL."""
-        return redact_url(self.geturl())
 
     @override
     def mkdir(self) -> None:
@@ -522,7 +516,7 @@ class DavResourcePath(ResourcePath):
             destination_exists = self.exists()
             log.debug(
                 "Transferring %s [exists: %s] -> %s [exists: %s] (transfer=%s)",
-                redact_url(src.geturl()),
+                src.geturl(),
                 src.exists(),
                 self,
                 destination_exists,
@@ -579,7 +573,7 @@ class DavResourcePath(ResourcePath):
         with source.as_local() as local_uri:
             log.debug(
                 "Transfer from %s to %s [%#x] via local file %s",
-                redact_url(source.geturl()),
+                source.geturl(),
                 self,
                 id(self),
                 local_uri,
