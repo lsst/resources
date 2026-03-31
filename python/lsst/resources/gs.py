@@ -169,6 +169,7 @@ class GSResourcePath(ResourcePath):
             if not self.bucket.exists(retry=_RETRY_POLICY):
                 raise FileNotFoundError(f"Resource {self} does not exist")
             return ResourceInfo(
+                uri=str(self),
                 size=0,
                 last_modified=None,
                 creation_time=None,
@@ -179,6 +180,7 @@ class GSResourcePath(ResourcePath):
             if not self.exists():
                 raise FileNotFoundError(f"Resource {self} does not exist")
             return ResourceInfo(
+                uri=str(self),
                 size=0,
                 last_modified=None,
                 creation_time=None,
@@ -203,6 +205,7 @@ class GSResourcePath(ResourcePath):
         updated = self.blob.updated
         created = self.blob.time_created
         return ResourceInfo(
+            uri=str(self),
             size=size,
             last_modified=updated.astimezone(datetime.UTC) if updated is not None else None,
             creation_time=created.astimezone(datetime.UTC) if created is not None else None,

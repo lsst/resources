@@ -1037,6 +1037,7 @@ class HttpResourcePath(ResourcePath):
             raise FileNotFoundError(f"Resource {self} does not exist")
 
         return ResourceInfo(
+            uri=str(self),
             size=prop.size,
             last_modified=prop.last_modified,
             creation_time=None,
@@ -1094,6 +1095,7 @@ class HttpResourcePath(ResourcePath):
                 last_modified = last_modified.astimezone(datetime.UTC)
 
         return ResourceInfo(
+            uri=str(self),
             size=size,
             last_modified=last_modified,
             creation_time=None,

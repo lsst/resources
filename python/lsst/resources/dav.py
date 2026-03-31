@@ -298,6 +298,7 @@ class DavResourcePath(ResourcePath):
             raise FileNotFoundError(f"Resource {self} does not exist")
 
         return ResourceInfo(
+            uri=str(self),
             size=stat.size,
             last_modified=stat.last_modified,
             creation_time=None,

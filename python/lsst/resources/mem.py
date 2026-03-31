@@ -33,6 +33,7 @@ class InMemoryResourcePath(ResourcePath):
     def get_info(self) -> ResourceInfo:
         """Return placeholder metadata for an in-memory resource."""
         return ResourceInfo(
+            uri=str(self),
             size=-1,
             last_modified=None,
             creation_time=None,

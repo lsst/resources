@@ -390,6 +390,7 @@ class S3ResourcePath(ResourcePath):
             if not bucketExists(self._bucket, self.client):
                 raise FileNotFoundError(f"Resource {self} does not exist")
             return ResourceInfo(
+                uri=str(self),
                 size=0,
                 last_modified=None,
                 creation_time=None,
@@ -400,6 +401,7 @@ class S3ResourcePath(ResourcePath):
             if not self.exists():
                 raise FileNotFoundError(f"Resource {self} does not exist")
             return ResourceInfo(
+                uri=str(self),
                 size=0,
                 last_modified=None,
                 creation_time=None,
@@ -433,6 +435,7 @@ class S3ResourcePath(ResourcePath):
                 last_modified = last_modified.astimezone(datetime.UTC)
 
         return ResourceInfo(
+            uri=str(self),
             size=response["ContentLength"],
             last_modified=last_modified,
             creation_time=None,

@@ -137,6 +137,10 @@ def _patch_environ(new_values: dict[str, str]) -> Iterator[None]:
 class ResourceInfo:
     """Information about this resource."""
 
+    uri: str
+    """URI in string form  of the resource from which this information is
+    derived.
+    """
     size: int
     """Size of the file in bytes. A directory returns 0."""
     last_modified: datetime.datetime | None
