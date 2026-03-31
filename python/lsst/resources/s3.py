@@ -409,7 +409,11 @@ class S3ResourcePath(ResourcePath):
             )
 
         try:
-            response = self.client.head_object(Bucket=self._bucket, Key=self.relativeToPathRoot)
+            response = self.client.head_object(
+                Bucket=self._bucket,
+                Key=self.relativeToPathRoot,
+                ChecksumMode="ENABLED",
+            )
         except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
             raise FileNotFoundError(f"No such resource: {self}") from err
         except ClientError as err:
