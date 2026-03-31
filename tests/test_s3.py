@@ -9,6 +9,7 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import datetime
 import os
 import time
 import unittest
@@ -16,7 +17,7 @@ from inspect import signature
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
-from lsst.resources import ResourcePath
+from lsst.resources import ResourceInfo, ResourcePath
 from lsst.resources.s3 import S3ResourcePath
 from lsst.resources.s3utils import clean_test_environment_for_s3
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
@@ -203,6 +204,18 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
         self.assertFalse(get_path.exists())
         with self.assertRaises(FileNotFoundError):
             get_path.size()
+
+    def test_get_info(self):
+        remote = self.root_uri.join("test-info.dat")
+        remote.write(b"abc")
+
+        info = remote.get_info()
+        self.assertIsInstance(info, ResourceInfo)
+        self.assertEqual(info.size, 3)
+        self.assertIsNone(info.creation_time)
+        self.assertIsInstance(info.checksums, dict)
+        self.assertEqual(info.last_modified.tzinfo, datetime.UTC)
+        self.assertGreaterEqual(info.last_modified.timestamp(), 0)
 
     def _check_presigned_url(self, url: str, expiration_time_seconds: int):
         parsed = urlparse(url)

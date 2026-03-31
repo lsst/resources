@@ -19,7 +19,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 
-from ._resourcePath import ResourceHandleProtocol, ResourcePath, ResourcePathExpression
+from ._resourcePath import ResourceHandleProtocol, ResourceInfo, ResourcePath, ResourcePathExpression
 from .utils import TransactionProtocol
 
 try:
@@ -125,6 +125,10 @@ class ProxiedResourcePath(ABC, ResourcePath):
     def size(self) -> int:
         proxy = self._get_proxy()
         return proxy.size()
+
+    def get_info(self) -> ResourceInfo:
+        proxy = self._get_proxy()
+        return proxy.get_info()
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
         proxy = self._get_proxy()

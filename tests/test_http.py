@@ -24,6 +24,7 @@ import unittest
 import unittest.mock
 import warnings
 from collections.abc import Callable
+from datetime import UTC
 from threading import Thread
 from typing import cast
 
@@ -38,7 +39,7 @@ import responses
 import responses.matchers
 
 import lsst.resources
-from lsst.resources import ResourcePath
+from lsst.resources import ResourceInfo, ResourcePath
 from lsst.resources._resourceHandles._httpResourceHandle import (
     HttpReadResourceHandle,
     parse_content_range_header,
@@ -48,6 +49,7 @@ from lsst.resources.http import (
     HttpResourcePath,
     HttpResourcePathConfig,
     SessionStore,
+    _get_dav_and_server_headers,
     _is_protected,
 )
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
@@ -127,6 +129,31 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         self.assertEqual(replacement._extra_headers, {"Authorization": "Bearer my-token"})
         copy = ResourcePath(path, forceDirectory=True)
         self.assertEqual(copy._extra_headers, {"Authorization": "Bearer my-token"})
+
+    @responses.activate
+    def test_get_info(self):
+        _get_dav_and_server_headers.cache_clear()
+        url = "http://test.example/something.txt"
+        responses.add(responses.OPTIONS, "http://test.example/", status=200)
+        responses.add(
+            responses.HEAD,
+            url,
+            status=200,
+            headers={
+                "Content-Length": "123",
+                "Last-Modified": "Wed, 12 Mar 2025 10:11:13 GMT",
+                "Digest": "md5=abc123, sha-256=def456",
+            },
+        )
+
+        info = ResourcePath(url).get_info()
+        self.assertIsInstance(info, ResourceInfo)
+        self.assertEqual(info.size, 123)
+        self.assertIsNone(info.creation_time)
+        self.assertEqual(info.last_modified.tzinfo, UTC)
+        self.assertEqual(info.last_modified.year, 2025)
+        self.assertEqual(info.checksums, {"md5": "abc123", "sha-256": "def456"})
+        self.assertEqual(len(responses.calls), 2)
 
 
 class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):

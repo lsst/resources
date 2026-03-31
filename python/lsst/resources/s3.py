@@ -15,6 +15,7 @@ __all__ = ("S3ResourcePath",)
 
 import concurrent.futures
 import contextlib
+import datetime
 import io
 import logging
 import os
@@ -33,7 +34,14 @@ from lsst.utils.timer import time_this
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
-from ._resourcePath import _EXECUTOR_TYPE, MBulkResult, ResourcePath, _get_executor_class, _patch_environ
+from ._resourcePath import (
+    _EXECUTOR_TYPE,
+    MBulkResult,
+    ResourceInfo,
+    ResourcePath,
+    _get_executor_class,
+    _patch_environ,
+)
 from .s3utils import (
     _get_s3_connection_parameters,
     _s3_disable_bucket_validation,
@@ -374,6 +382,62 @@ class S3ResourcePath(ResourcePath):
         if not exists:
             raise FileNotFoundError(f"Resource {self} does not exist")
         return sz
+
+    @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata about this S3 resource."""
+        if self.is_root:
+            if not bucketExists(self._bucket, self.client):
+                raise FileNotFoundError(f"Resource {self} does not exist")
+            return ResourceInfo(
+                size=0,
+                last_modified=None,
+                creation_time=None,
+                checksums={},
+            )
+
+        if self.dirLike:
+            if not self.exists():
+                raise FileNotFoundError(f"Resource {self} does not exist")
+            return ResourceInfo(
+                size=0,
+                last_modified=None,
+                creation_time=None,
+                checksums={},
+            )
+
+        try:
+            response = self.client.head_object(Bucket=self._bucket, Key=self.relativeToPathRoot)
+        except (self.client.exceptions.NoSuchKey, self.client.exceptions.NoSuchBucket) as err:
+            raise FileNotFoundError(f"No such resource: {self}") from err
+        except ClientError as err:
+            translate_client_error(err, self)
+            raise
+
+        checksums = {}
+        for response_key, checksum_name in (
+            ("ChecksumCRC32", "crc32"),
+            ("ChecksumCRC32C", "crc32c"),
+            ("ChecksumCRC64NVME", "crc64nvme"),
+            ("ChecksumSHA1", "sha1"),
+            ("ChecksumSHA256", "sha256"),
+        ):
+            if value := response.get(response_key):
+                checksums[checksum_name] = value
+
+        last_modified = response.get("LastModified")
+        if last_modified is not None:
+            if getattr(last_modified, "tzinfo", None) is None:
+                last_modified = last_modified.replace(tzinfo=datetime.UTC)
+            else:
+                last_modified = last_modified.astimezone(datetime.UTC)
+
+        return ResourceInfo(
+            size=response["ContentLength"],
+            last_modified=last_modified,
+            creation_time=None,
+            checksums=checksums,
+        )
 
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
     def remove(self) -> None:

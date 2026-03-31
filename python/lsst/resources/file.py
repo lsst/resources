@@ -15,6 +15,7 @@ __all__ = ("FileResourcePath",)
 
 import contextlib
 import copy
+import datetime
 import logging
 import os
 import os.path
@@ -27,7 +28,7 @@ from collections.abc import Iterator
 from typing import IO, TYPE_CHECKING
 
 from ._resourceHandles._fileResourceHandle import FileResourceHandle
-from ._resourcePath import ResourcePath
+from ._resourcePath import ResourceInfo, ResourcePath
 from .utils import NoTransaction, ensure_directory_is_writeable, os2posix, posix2os
 
 try:
@@ -75,6 +76,22 @@ class FileResourcePath(ResourcePath):
         else:
             sz = 0
         return sz
+
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata about this file."""
+        stat_result = os.stat(self.ospath)
+        creation_timestamp = getattr(stat_result, "st_birthtime", None)
+        creation_time = (
+            datetime.datetime.fromtimestamp(creation_timestamp, tz=datetime.UTC)
+            if creation_timestamp is not None
+            else None
+        )
+        return ResourceInfo(
+            size=0 if stat.S_ISDIR(stat_result.st_mode) else stat_result.st_size,
+            last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
+            creation_time=creation_time,
+            checksums={},
+        )
 
     def remove(self) -> None:
         """Remove the resource."""

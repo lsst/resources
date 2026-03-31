@@ -14,10 +14,13 @@ from __future__ import annotations
 __all__ = ("PackageResourcePath",)
 
 import contextlib
+import datetime
 import logging
+import os
 import re
 from collections.abc import Iterator
 from importlib import resources
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,7 +32,7 @@ if TYPE_CHECKING:
         AbstractFileSystem = type
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
-from ._resourcePath import ResourcePath, ResourcePathExpression
+from ._resourcePath import ResourceInfo, ResourcePath, ResourcePathExpression
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +81,49 @@ class PackageResourcePath(ResourcePath):
         if ref is None:
             return False
         return ref.is_file() or ref.is_dir()
+
+    def get_info(self) -> ResourceInfo:
+        """Return metadata about the resource without reading its contents."""
+        ref = self._get_ref()
+        if ref is None or not (ref.is_file() or ref.is_dir()):
+            raise FileNotFoundError(f"Unable to locate resource {self}.")
+
+        if ref.is_dir():
+            return ResourceInfo(
+                size=0,
+                last_modified=None,
+                creation_time=None,
+                checksums={},
+            )
+
+        stat_result: os.stat_result | None = None
+        if isinstance(ref, Path):
+            stat_result = ref.stat()
+        else:
+            stat_method = getattr(ref, "stat", None)
+            if callable(stat_method):
+                stat_result = stat_method()
+
+        if stat_result is None:
+            return ResourceInfo(
+                size=-1,
+                last_modified=None,
+                creation_time=None,
+                checksums={},
+            )
+
+        creation_timestamp = getattr(stat_result, "st_birthtime", None)
+        creation_time = (
+            datetime.datetime.fromtimestamp(creation_timestamp, tz=datetime.UTC)
+            if creation_timestamp is not None
+            else None
+        )
+        return ResourceInfo(
+            size=stat_result.st_size,
+            last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
+            creation_time=creation_time,
+            checksums={},
+        )
 
     def read(self, size: int = -1) -> bytes:
         ref = self._get_ref()

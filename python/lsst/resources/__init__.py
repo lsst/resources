@@ -14,6 +14,7 @@
 
 __all__ = (
     "ResourceHandleProtocol",
+    "ResourceInfo",
     "ResourcePath",
     "ResourcePathExpression",
 )
@@ -22,5 +23,5 @@ __all__ = (
 from ._resourceHandles import ResourceHandleProtocol
 
 # Should only expose ResourcePath and its input type alias
-from ._resourcePath import ResourcePath, ResourcePathExpression
+from ._resourcePath import ResourceInfo, ResourcePath, ResourcePathExpression
 from .version import *

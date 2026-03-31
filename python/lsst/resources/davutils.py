@@ -25,7 +25,7 @@ import threading
 import time
 import uuid
 import xml.etree.ElementTree as eTree
-from datetime import datetime
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any, BinaryIO
 
@@ -3461,7 +3461,7 @@ class DavProperty:
 
         # Last modified timestamp is of the form:
         # 'Wed, 12 Mar 2025 10:11:13 GMT'
-        return datetime.strptime(self._getlastmodified, "%a, %d %b %Y %H:%M:%S %Z")
+        return datetime.strptime(self._getlastmodified, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=UTC)
 
     @property
     def size(self) -> int:

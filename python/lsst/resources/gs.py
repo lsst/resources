@@ -16,6 +16,7 @@ from __future__ import annotations
 __all__ = ("GSResourcePath",)
 
 import contextlib
+import datetime
 import logging
 import re
 from collections.abc import Iterator
@@ -71,7 +72,7 @@ except ImportError:
 
 from lsst.utils.timer import time_this
 
-from ._resourcePath import ResourcePath
+from ._resourcePath import ResourceInfo, ResourcePath
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -161,6 +162,52 @@ class GSResourcePath(ResourcePath):
         if size is None:
             raise FileNotFoundError(f"Resource {self} does not exist")
         return size
+
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata about this GCS resource."""
+        if self.is_root:
+            if not self.bucket.exists(retry=_RETRY_POLICY):
+                raise FileNotFoundError(f"Resource {self} does not exist")
+            return ResourceInfo(
+                size=0,
+                last_modified=None,
+                creation_time=None,
+                checksums={},
+            )
+
+        if self.dirLike:
+            if not self.exists():
+                raise FileNotFoundError(f"Resource {self} does not exist")
+            return ResourceInfo(
+                size=0,
+                last_modified=None,
+                creation_time=None,
+                checksums={},
+            )
+
+        try:
+            self.blob.reload(retry=_RETRY_POLICY)
+        except NotFound:
+            raise FileNotFoundError(f"Resource {self} does not exist") from None
+
+        size = self.blob.size
+        if size is None:
+            raise FileNotFoundError(f"Resource {self} does not exist")
+
+        checksums = {}
+        if self.blob.md5_hash:
+            checksums["md5"] = self.blob.md5_hash
+        if self.blob.crc32c:
+            checksums["crc32c"] = self.blob.crc32c
+
+        updated = self.blob.updated
+        created = self.blob.time_created
+        return ResourceInfo(
+            size=size,
+            last_modified=updated.astimezone(datetime.UTC) if updated is not None else None,
+            creation_time=created.astimezone(datetime.UTC) if created is not None else None,
+            checksums=checksums,
+        )
 
     def remove(self) -> None:
         try:

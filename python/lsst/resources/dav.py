@@ -39,7 +39,7 @@ except ImportError:
 
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._davResourceHandle import DavReadResourceHandle
-from ._resourcePath import ResourcePath, ResourcePathExpression
+from ._resourcePath import ResourceInfo, ResourcePath, ResourcePathExpression
 from .davutils import (
     DavClient,
     DavClientPool,
@@ -289,11 +289,20 @@ class DavResourcePath(ResourcePath):
 
         return 0 if self.isdir() else self._client.size(self._internal_url)
 
-    def info(self) -> dict[str, Any]:
-        """Return metadata details about this resource."""
-        log.debug("info %s [%#x]", self, id(self))
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata details about this resource."""
+        log.debug("get_info %s [%#x]", self, id(self))
 
-        return self._client.info(self._internal_url, name=str(self))
+        stat = self._stat()
+        if not stat.exists:
+            raise FileNotFoundError(f"Resource {self} does not exist")
+
+        return ResourceInfo(
+            size=stat.size,
+            last_modified=stat.last_modified,
+            creation_time=None,
+            checksums=dict(stat.checksums),
+        )
 
     @override
     def read(self, size: int = -1) -> bytes:
