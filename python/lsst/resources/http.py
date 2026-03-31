@@ -1038,6 +1038,7 @@ class HttpResourcePath(ResourcePath):
 
         return ResourceInfo(
             uri=str(self),
+            is_file=prop.is_file,
             size=prop.size,
             last_modified=prop.last_modified,
             creation_time=None,
@@ -1096,6 +1097,7 @@ class HttpResourcePath(ResourcePath):
 
         return ResourceInfo(
             uri=str(self),
+            is_file=not self.dirLike,
             size=size,
             last_modified=last_modified,
             creation_time=None,

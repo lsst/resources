@@ -391,6 +391,7 @@ class S3ResourcePath(ResourcePath):
                 raise FileNotFoundError(f"Resource {self} does not exist")
             return ResourceInfo(
                 uri=str(self),
+                is_file=False,
                 size=0,
                 last_modified=None,
                 creation_time=None,
@@ -402,6 +403,7 @@ class S3ResourcePath(ResourcePath):
                 raise FileNotFoundError(f"Resource {self} does not exist")
             return ResourceInfo(
                 uri=str(self),
+                is_file=False,
                 size=0,
                 last_modified=None,
                 creation_time=None,
@@ -440,6 +442,7 @@ class S3ResourcePath(ResourcePath):
 
         return ResourceInfo(
             uri=str(self),
+            is_file=True,
             size=response["ContentLength"],
             last_modified=last_modified,
             creation_time=None,

@@ -148,6 +148,7 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
 
         info = ResourcePath(url).get_info()
         self.assertIsInstance(info, ResourceInfo)
+        self.assertTrue(info.is_file)
         self.assertEqual(info.size, 123)
         self.assertIsNone(info.creation_time)
         self.assertEqual(info.last_modified.tzinfo, UTC)

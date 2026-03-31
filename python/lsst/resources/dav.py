@@ -299,6 +299,7 @@ class DavResourcePath(ResourcePath):
 
         return ResourceInfo(
             uri=str(self),
+            is_file=stat.is_file,
             size=stat.size,
             last_modified=stat.last_modified,
             creation_time=None,

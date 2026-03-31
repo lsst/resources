@@ -88,6 +88,7 @@ class FileResourcePath(ResourcePath):
         )
         return ResourceInfo(
             uri=str(self),
+            is_file=not stat.S_ISDIR(stat_result.st_mode),
             size=0 if stat.S_ISDIR(stat_result.st_mode) else stat_result.st_size,
             last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
             creation_time=creation_time,

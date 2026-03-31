@@ -682,6 +682,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
         uri.write(content.encode())
 
         info = uri.get_info()
+        self.assertTrue(info.is_file)
         self.assertEqual(info.size, len(content))
         assert info.last_modified is not None
         self.assertGreaterEqual(info.last_modified.timestamp(), now.timestamp() - 1.0)
@@ -692,6 +693,7 @@ class GenericReadWriteTestCase(_GenericTestCase):
             # directories.
             dirinfo = dir_uri.get_info()
             self.assertEqual(dirinfo.uri, str(dir_uri))
+            self.assertFalse(dirinfo.is_file)
             self.assertEqual(dirinfo.size, 0)
             self.assertEqual(dirinfo.checksums, {})
 

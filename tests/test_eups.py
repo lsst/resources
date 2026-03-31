@@ -15,7 +15,7 @@ import sys
 import unittest
 import unittest.mock
 
-from lsst.resources import ResourcePath
+from lsst.resources import ResourceInfo, ResourcePath
 from lsst.resources.eups import EupsResourcePath
 from lsst.resources.tests import GenericTestCase
 
@@ -140,6 +140,21 @@ class EupsReadTestCase(unittest.TestCase):
         with uri.open("r") as buffer:
             content = buffer.read()
         self.assertEqual(uri.read().decode(), content)
+
+    def test_get_info(self):
+        file_uri = self.root_uri.join("config/test.txt")
+        info = file_uri.get_info()
+        self.assertIsInstance(info, ResourceInfo)
+        self.assertEqual(info.uri, str(file_uri))
+        self.assertTrue(info.is_file)
+        self.assertGreater(info.size, 0)
+
+        dir_uri = self.root_uri.join("config/", forceDirectory=True)
+        dirinfo = dir_uri.get_info()
+        self.assertIsInstance(dirinfo, ResourceInfo)
+        self.assertEqual(dirinfo.uri, str(dir_uri))
+        self.assertFalse(dirinfo.is_file)
+        self.assertEqual(dirinfo.size, 0)
 
     def test_walk(self):
         """Test that we can find file resources.

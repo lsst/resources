@@ -14,6 +14,7 @@ from __future__ import annotations
 __all__ = ("ProxiedResourcePath",)
 
 import contextlib
+import dataclasses
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -128,7 +129,7 @@ class ProxiedResourcePath(ABC, ResourcePath):
 
     def get_info(self) -> ResourceInfo:
         proxy = self._get_proxy()
-        return proxy.get_info()
+        return dataclasses.replace(proxy.get_info(), uri=str(self))
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
         proxy = self._get_proxy()

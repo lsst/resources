@@ -698,6 +698,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         metadata = subdir.get_info()
         self.assertIsInstance(metadata, ResourceInfo)
 
+        self.assertFalse(metadata.is_file)
         self.assertEqual(metadata.size, 0)
         self.assertIsNone(metadata.creation_time)
         self.assertEqual(len(metadata.checksums), 0)
@@ -718,6 +719,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         metadata = remote_file.get_info()
         self.assertIsInstance(metadata, ResourceInfo)
+        self.assertTrue(metadata.is_file)
         self.assertEqual(metadata.size, local_file_size)
         self.assertIsNone(metadata.creation_time)
         self.assertEqual(metadata.last_modified.tzinfo, datetime.UTC)

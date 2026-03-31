@@ -212,6 +212,7 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
 
         info = remote.get_info()
         self.assertIsInstance(info, ResourceInfo)
+        self.assertTrue(info.is_file)
         self.assertEqual(info.size, 3)
         self.assertIsNone(info.creation_time)
         self.assertIsInstance(info.checksums, dict)

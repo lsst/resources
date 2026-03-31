@@ -92,6 +92,7 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
             info = target.get_info()
             self.assertIsInstance(info, ResourceInfo)
             self.assertTrue(info.uri.endswith(".txt"))
+            self.assertTrue(info.is_file)
             self.assertEqual(info.size, 3)
             self.assertEqual(info.checksums, {})
             self.assertEqual(info.last_modified.tzinfo, datetime.UTC)
@@ -99,6 +100,7 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
 
             dirinfo = target.parent().get_info()
             self.assertEqual(dirinfo.uri, str(target.parent()))
+            self.assertFalse(dirinfo.is_file)
             self.assertEqual(dirinfo.size, 0)
             self.assertGreaterEqual(dirinfo.last_modified.timestamp(), 0)
             self.assertEqual(dirinfo.checksums, {})

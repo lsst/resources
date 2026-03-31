@@ -91,6 +91,7 @@ class PackageResourcePath(ResourcePath):
         if ref.is_dir():
             return ResourceInfo(
                 uri=str(self),
+                is_file=False,
                 size=0,
                 last_modified=None,
                 creation_time=None,
@@ -108,6 +109,7 @@ class PackageResourcePath(ResourcePath):
         if stat_result is None:
             return ResourceInfo(
                 uri=str(self),
+                is_file=True,
                 size=-1,
                 last_modified=None,
                 creation_time=None,
@@ -122,6 +124,7 @@ class PackageResourcePath(ResourcePath):
         )
         return ResourceInfo(
             uri=str(self),
+            is_file=True,
             size=stat_result.st_size,
             last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
             creation_time=creation_time,
