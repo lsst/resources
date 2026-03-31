@@ -85,15 +85,23 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
         self.assertEqual(via_root.ospath, "/root/b.txt")
 
     def test_get_info(self):
+        now = datetime.datetime.now(tz=datetime.UTC)
         with ResourcePath.temporary_uri(suffix=".txt") as target:
             target.write(b"abc")
 
             info = target.get_info()
             self.assertIsInstance(info, ResourceInfo)
+            self.assertTrue(info.uri.endswith(".txt"))
             self.assertEqual(info.size, 3)
             self.assertEqual(info.checksums, {})
             self.assertEqual(info.last_modified.tzinfo, datetime.UTC)
-            self.assertGreaterEqual(info.last_modified.timestamp(), 0)
+            self.assertGreaterEqual(info.last_modified.timestamp(), now.timestamp() - 1.0)
+
+            dirinfo = target.parent().get_info()
+            self.assertEqual(dirinfo.uri, str(target.parent()))
+            self.assertEqual(dirinfo.size, 0)
+            self.assertGreaterEqual(dirinfo.last_modified.timestamp(), 0)
+            self.assertEqual(dirinfo.checksums, {})
 
 
 TEST_UMASK = 0o0333

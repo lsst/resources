@@ -206,6 +206,7 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
             get_path.size()
 
     def test_get_info(self):
+        now = datetime.datetime.now(tz=datetime.UTC)
         remote = self.root_uri.join("test-info.dat")
         remote.write(b"abc")
 
@@ -216,7 +217,7 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
         self.assertIsInstance(info.checksums, dict)
         self.assertIn("crc32", info.checksums)  # Only appears if ChecksumMode=ENABLED
         self.assertEqual(info.last_modified.tzinfo, datetime.UTC)
-        self.assertGreaterEqual(info.last_modified.timestamp(), 0)
+        self.assertGreaterEqual(info.last_modified.timestamp(), now.timestamp() - 1.0)
 
     def _check_presigned_url(self, url: str, expiration_time_seconds: int):
         parsed = urlparse(url)
