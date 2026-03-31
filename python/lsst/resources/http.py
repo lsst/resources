@@ -998,27 +998,13 @@ class HttpResourcePath(ResourcePath):
         """Return the size of the remote resource in bytes."""
         if self.dirLike:
             return 0
-
-        if not self.is_webdav_endpoint:
-            return self.get_info().size
-
-        # The remote is a webDAV server: send a PROPFIND request to retrieve
-        # the size of the resource. Sizes are only meaningful for files.
-        resp = self._propfind()
-        if resp.status_code == requests.codes.multi_status:  # 207
-            prop = _parse_propfind_response_body(resp.text)[0]
-            if prop.is_file:
-                return prop.size
-            elif prop.is_directory:
-                raise IsADirectoryError(
-                    f"Resource {self} is reported by server as a directory but has a file path"
-                )
-            else:
-                raise FileNotFoundError(f"Resource {self} does not exist")
-        else:  # 404 Not Found
-            raise FileNotFoundError(
-                f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
+        info = self.get_info()
+        print(info, self.dirLike)
+        if not info.is_file and self.dirLike is False:
+            raise IsADirectoryError(
+                f"Resource {self} is reported by server as a directory but has a file path"
             )
+        return info.size
 
     def get_info(self) -> ResourceInfo:
         """Return lightweight metadata about this HTTP resource."""
