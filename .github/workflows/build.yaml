@@ -68,9 +68,26 @@ jobs:
         run: |
           uv pip install --system --no-deps -v -e .
 
+      - name: Start fake-gcs-server
+        run: |
+          docker run -d --name fake-gcs-server -p 4443:4443 \
+            fsouza/fake-gcs-server -scheme http -filesystem-root /tmp/fake-gcs-server
+
+          for i in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:4443/storage/v1/b >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs fake-gcs-server
+          exit 1
+
       - name: Run tests
         env:
           S3_ENDPOINT_URL: "https://google.com"
+          STORAGE_EMULATOR_HOST: "http://127.0.0.1:4443"
+          GOOGLE_CLOUD_PROJECT: "test-project"
         run: |
           pytest -r a -v -n 3 --cov=lsst.resources\
                  --cov=tests --cov-report=xml --cov-report=term --cov-branch \

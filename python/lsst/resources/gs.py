@@ -112,6 +112,24 @@ _client = None
 """Cached client connection."""
 
 
+def _coerce_gcs_datetime(value: datetime.datetime | str | None) -> datetime.datetime | None:
+    """Convert GCS timestamp values to timezone-aware UTC datetimes.
+
+    Some emulators return RFC3339 timestamps with an explicit UTC offset
+    instead of a trailing ``Z``, which the google-cloud-storage property
+    accessors do not always accept.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=datetime.UTC)
+        return value.astimezone(datetime.UTC)
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.datetime.fromisoformat(value).astimezone(datetime.UTC)
+
+
 def _get_client() -> storage.Client:
     global _client
     if storage is None:
@@ -146,6 +164,10 @@ class GSResourcePath(ResourcePath):
 
     def exists(self) -> bool:
         if self.is_root:
+            return self.bucket.exists(retry=_RETRY_POLICY)
+        if self.dirLike:
+            # GCS does not have concrete directory objects; treat any
+            # directory-like path within an existing bucket as existing.
             return self.bucket.exists(retry=_RETRY_POLICY)
         return self.blob.exists(retry=_RETRY_POLICY)
 
@@ -204,14 +226,22 @@ class GSResourcePath(ResourcePath):
         if self.blob.crc32c:
             checksums["crc32c"] = self.blob.crc32c
 
-        updated = self.blob.updated
-        created = self.blob.time_created
+        try:
+            updated = _coerce_gcs_datetime(self.blob.updated)
+        except ValueError:
+            updated = _coerce_gcs_datetime(self.blob._properties.get("updated"))
+
+        try:
+            created = _coerce_gcs_datetime(self.blob.time_created)
+        except ValueError:
+            created = _coerce_gcs_datetime(self.blob._properties.get("timeCreated"))
+
         return ResourceInfo(
             uri=str(self),
             is_file=True,
             size=size,
-            last_modified=updated.astimezone(datetime.UTC) if updated is not None else None,
-            creation_time=created.astimezone(datetime.UTC) if created is not None else None,
+            last_modified=updated,
+            creation_time=created,
             checksums=checksums,
         )
 
@@ -248,12 +278,9 @@ class GSResourcePath(ResourcePath):
         if not self.dirLike:
             raise NotADirectoryError(f"Can not create a 'directory' for a file-like URI {self}")
 
-        if self.is_root:
-            # The root must already exist.
-            return
-
-        # Should this method do anything at all?
-        self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
+        # GCS does not have directory objects, so mkdir is a no-op once the
+        # bucket exists.
+        return
 
     @contextlib.contextmanager
     def _as_local(
