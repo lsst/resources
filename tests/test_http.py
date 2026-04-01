@@ -142,7 +142,7 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
             headers={
                 "Content-Length": "123",
                 "Last-Modified": "Wed, 12 Mar 2025 10:11:13 GMT",
-                "Digest": "md5=abc123, sha-256=def456",
+                "Digest": "md5=rL0Y20zC+Fzt72VPzMSk2A==, sha-256=def456",
             },
         )
 
@@ -153,7 +153,7 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         self.assertIsNone(info.creation_time)
         self.assertEqual(info.last_modified.tzinfo, UTC)
         self.assertEqual(info.last_modified.year, 2025)
-        self.assertEqual(info.checksums, {"md5": "abc123", "sha-256": "def456"})
+        self.assertEqual(info.checksums, {"md5": "rL0Y20zC+Fzt72VPzMSk2A==", "sha-256": "def456"})
         self.assertEqual(len(responses.calls), 2)
 
 
