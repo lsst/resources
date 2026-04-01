@@ -289,21 +289,22 @@ class DavResourcePath(ResourcePath):
 
         return 0 if self.isdir() else self._client.size(self._internal_url)
 
+    @override
     def get_info(self) -> ResourceInfo:
         """Return lightweight metadata details about this resource."""
         log.debug("get_info %s [%#x]", self, id(self))
 
-        stat = self._stat()
-        if not stat.exists:
+        info = self._client.info(self._internal_url)
+        if info["type"] is None:
             raise FileNotFoundError(f"Resource {self} does not exist")
 
         return ResourceInfo(
             uri=str(self),
-            is_file=stat.is_file,
-            size=stat.size,
-            last_modified=stat.last_modified,
+            is_file=info["type"] == "file",
+            size=info["size"],
+            last_modified=info["last_modified"],
             creation_time=None,
-            checksums=dict(stat.checksums),
+            checksums=info["checksums"],
         )
 
     @override
