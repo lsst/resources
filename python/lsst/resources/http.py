@@ -999,7 +999,9 @@ class HttpResourcePath(ResourcePath):
         if self.dirLike:
             return 0
         info = self.get_info()
-        print(info, self.dirLike)
+        # dirLike can be None if we are unsure. Only flag if we are certain
+        # we have been told this is a directory but webDAV reports it as a
+        # file.
         if not info.is_file and self.dirLike is False:
             raise IsADirectoryError(
                 f"Resource {self} is reported by server as a directory but has a file path"

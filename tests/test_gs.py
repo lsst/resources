@@ -38,6 +38,7 @@ import time
 import unittest
 import uuid
 from collections import deque
+from collections.abc import Iterator
 from threading import Thread
 from unittest import mock
 
@@ -59,7 +60,7 @@ def _find_free_port() -> int:
 
 
 @contextlib.contextmanager
-def _reset_gs_client() -> None:
+def _reset_gs_client() -> Iterator[None]:
     old_client = GSResourcePath._client
     old_global_client = gs_module._client
     GSResourcePath._client = None

@@ -138,7 +138,7 @@ class ResourceInfo:
     """Information about this resource."""
 
     uri: str
-    """URI in string form  of the resource from which this information is
+    """URI in string form of the resource from which this information is
     derived.
     """
     is_file: bool
