@@ -110,7 +110,7 @@ class PackageResourcePath(ResourcePath):
             return ResourceInfo(
                 uri=str(self),
                 is_file=True,
-                size=-1,
+                size=0,
                 last_modified=None,
                 creation_time=None,
                 checksums={},

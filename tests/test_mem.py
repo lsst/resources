@@ -41,7 +41,7 @@ class MemoryReadTestCase(unittest.TestCase):
         info = self.root_uri.get_info()
         self.assertTrue(info.is_file)
         self.assertEqual(info.uri, str(self.root_uri))
-        self.assertEqual(info.size, -1)
+        self.assertEqual(info.size, 0)
         self.assertEqual(info.checksums, {})
         self.assertIsNone(info.last_modified)
         self.assertIsNone(info.creation_time)

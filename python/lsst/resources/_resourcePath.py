@@ -144,7 +144,8 @@ class ResourceInfo:
     is_file: bool
     """Indicate whether the resource is a file or a directory."""
     size: int
-    """Size of the file in bytes. A directory returns 0."""
+    """Size of the file in bytes. A directory or a URI that has no concept
+    of size returns 0."""
     last_modified: datetime.datetime | None
     """Modification date of the resource, if known."""
     creation_time: datetime.datetime | None
