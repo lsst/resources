@@ -899,8 +899,7 @@ class HttpResourcePath(ResourcePath):
             delattr(self, "_data_session")
 
     def _init_server_properties(self) -> None:
-        """
-        Initialize instance variables '_is_webdav' and '_server' by
+        """Initialize instance variables '_is_webdav' and '_server' by
         sending a single OPTIONS request to the remote server and
         saving the results.
         """

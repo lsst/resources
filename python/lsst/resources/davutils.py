@@ -759,8 +759,7 @@ class DavFileSizeCache:
             self._cache.pop(url, None)
 
     def update_size(self, url: str, size: int | None, timeout: float | None = None) -> None:
-        """
-        Update the cache with an entry for `url` which has a size of `size`
+        """Update the cache with an entry for `url` which has a size of `size`
         bytes. This entry is considered valid for a period of `timeout`
         seconds from now.
 
@@ -960,9 +959,8 @@ class DavClient:
         )
 
     def get_server_details(self, url: str) -> dict[str, str]:
-        """
-        Retrieve the details of the server and check it advertises compliance
-        to class 1 of webDAV protocol.
+        """Retrieve the details of the server and check it advertises
+        compliance to class 1 of webDAV protocol.
 
         Parameters
         ----------

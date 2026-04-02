@@ -139,8 +139,7 @@ class DavGlobals:
         self._reset()
 
     def _reset(self) -> None:
-        """
-        Initialize all the globals.
+        """Initialize all the globals.
 
         This method is a helper for reinitializing globals in tests.
         """
