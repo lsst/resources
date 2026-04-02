@@ -197,8 +197,8 @@ class DavReadAheadCache:
     Parameters
     ----------
     client : `lsst.resources.davutils.DavClient`
-        webDAV client to interact with the server to download data.
-    backend_url : `str`
+        The webDAV client to interact with the server to download data.
+    url : `str`
         URL of the resource to download data from.
     filesize : `int`
         Size in bytes of the remote file.

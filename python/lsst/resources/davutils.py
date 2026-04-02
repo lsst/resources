@@ -107,13 +107,15 @@ def normalize_url(url: str, preserve_scheme: bool = False, preserve_path: bool =
 
 
 def redact_url(url: str) -> str:
-    """Return a modified `url` with authorization query redacted. The
-    goal is that this method should be used for logging URLs to avoid
+    """Return a modified `url` with authorization query redacted.
+
+    The goal is that this method should be used for logging URLs to avoid
     leaking authorization tokens.
 
     Parameters
     ----------
     url : `str`
+        URL to redact.
 
     Returns
     -------
@@ -817,7 +819,17 @@ class DavFileSizeCache:
 
 
 def unexpected_status_error(method: str, url: str, resp: HTTPResponse) -> Exception:
-    """Raise an exception from `resp`."""
+    """Raise an exception from `resp`.
+
+    Parameters
+    ----------
+    method : `str`
+        The method name triggering the error.
+    url : `str`
+        The URL that cause the error.
+    resp : `resp`
+        The error response.
+    """
     message = f"Unexpected response to HTTP request {method} {redact_url(url)}: {resp.status} {resp.reason}"
     body = resp.data.decode()
     if len(body) > 0:
@@ -1491,7 +1503,7 @@ class DavClient:
         ----------
         url : `str`
             Target URL.
-        headers : `dict[str, str]`, optional
+        headers : `dict` [`str`, `str`], optional
             Headers to sent with the request.
 
         Returns
@@ -1524,6 +1536,8 @@ class DavClient:
             Headers to sent with the request.
         body : `str`, optional
             Request body.
+        depth : `str`, optional
+            ???.
         """
         headers = {} if headers is None else dict(headers)
         headers.update(
@@ -1560,7 +1574,7 @@ class DavClient:
         Returns
         -------
         size : `int | None`
-            size in bytes of the file uploaded. Can be `None` if the size
+            The size in bytes of the file uploaded. Can be `None` if the size
             could not be retrieved.
         """
         # Send a PUT request with empty body and handle redirection. This
@@ -1870,7 +1884,7 @@ class DavClient:
         Returns
         -------
         resp : `HTTPResponse`
-            unmodified response received from the server.
+            The unmodified response received from the server.
         """
         headers = {
             "Destination": destination_url,
@@ -1971,6 +1985,8 @@ class DavClient:
             Ending byte offset of the range to download.
         headers : `dict[str,str]`, optional
             Specific headers to sent with the GET request.
+        release_backend : `bool`, optional
+            Whether or not to close the connection to the backend.
 
         Returns
         -------
@@ -2118,7 +2134,7 @@ class DavClient:
         Returns
         -------
         size : `int | None`
-            size in bytes of the file uploaded. Can be `None` if the size
+            The size in bytes of the file uploaded. Can be `None` if the size
             could not be retrieved.
 
         Notes
@@ -2296,9 +2312,11 @@ class DavClient:
             URL of the source file.
         destination_url : `str`
             URL of the destination file. Its parent directory must exist.
-        overwrite : `bool`
+        overwrite : `bool`, optional
             If True and a file exists at `destination_url` it will be
             overwritten. Otherwise an exception is raised.
+        create_parent : `bool`, optional
+            Whether to create the parent.
         """
         # Create the destination's parent directory first because MOVE may
         # fail if it does not exist, depending on the server implementation
@@ -2710,7 +2728,7 @@ class DavClientDCache(DavClientURLSigner):
         headers: dict[str, str] | None = None,
         data: BinaryIO | bytes = b"",
     ) -> int | None:
-        """Inherits doc string."""
+        # Docstring inherited.
         # Send a PUT request with empty body to the dCache frontend server to
         # get redirected to the backend.
         #
@@ -2875,14 +2893,13 @@ class DavClientDCache(DavClientURLSigner):
         ----------
         url : `str`
             Target URL.
-
-        data: `bytes`
+        data : `bytes`
             Sequence of bytes to upload.
 
         Returns
         -------
         size : `int | None`
-            size in bytes of the file uploaded. Can be `None` if the size
+            The size in bytes of the file uploaded. Can be `None` if the size
             could not be retrieved.
 
         Notes
@@ -2942,7 +2959,7 @@ class DavClientDCache(DavClientURLSigner):
 
     @override
     def info(self, url: str, name: str | None = None) -> dict[str, Any]:
-        """Inherits doc string."""
+        # Docstring inherited.
         result: dict[str, Any] = {
             "name": name if name is not None else url,
             "type": None,
@@ -3012,7 +3029,7 @@ class DavClientXrootD(DavClientURLSigner):
         headers: dict[str, str] | None = None,
         data: BinaryIO | bytes = b"",
     ) -> int | None:
-        """Inherits doc string."""
+        # Docstring inherited.
         # Send a PUT request with empty body to the XRootD frontend server to
         # get redirected to the backend.
         frontend_headers = {} if headers is None else dict(headers)
@@ -3118,14 +3135,13 @@ class DavClientXrootD(DavClientURLSigner):
         ----------
         url : `str`
             Target URL.
-
-        data: `bytes`
+        data : `bytes`
             Sequence of bytes to upload.
 
         Returns
         -------
         size : `int | None`
-            size in bytes of the file uploaded. Can be `None` if the size
+            The size in bytes of the file uploaded. Can be `None` if the size
             could not be retrieved.
 
         Notes
@@ -3186,7 +3202,7 @@ class DavClientXrootD(DavClientURLSigner):
 
     @override
     def stat(self, url: str) -> DavFileMetadata:
-        """Inherits doc string."""
+        # Docstring inherited.
         # XRootD v5.9.1 responds "200 OK" to a HEAD request against an
         # existing file. When the target URL is a directory, it also responds
         # "200 OK". In both cases the response header "Content-Length"
@@ -3785,6 +3801,8 @@ def dump_response(method: str, resp: HTTPResponse, dump_body: bool = False) -> N
         Method name to include in log output.
     resp : `HTTPResponse`
         Response to dump.
+    dump_body : `bool`, optional
+        Whether or not to issue a debug log message.
     """
     log.debug("%s %s", method, resp.geturl())
     log.debug("   %s %s", resp.status, resp.reason)
