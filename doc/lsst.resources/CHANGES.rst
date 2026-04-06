@@ -1,3 +1,12 @@
+Resources v30.0.6 (2026-04-06)
+==============================
+
+New Features
+------------
+
+- Added a ``ResourcePath.get_info()`` method to provide a general interface for obtaining information about a resource including the size, modification date, and any checksums available. (`DM-52947 <https://rubinobs.atlassian.net/browse/DM-52947>`_)
+- Made a significant improvement in the performance of the WebDAV interface. (`DM-53001 <https://rubinobs.atlassian.net/browse/DM-53001>`_)
+
 Resources v30.0.0 (2026-01-15)
 ==============================
 
