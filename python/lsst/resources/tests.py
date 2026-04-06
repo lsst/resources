@@ -690,12 +690,11 @@ class GenericReadWriteTestCase(_GenericTestCase):
 
         for dir_uri in (uri.parent(), uri.root_uri()):
             # File URIs can return values for modification dates for
-            # directories.
+            # directories. S3 URIs can return checksums for directories.
             dirinfo = dir_uri.get_info()
             self.assertEqual(dirinfo.uri, str(dir_uri))
             self.assertFalse(dirinfo.is_file)
             self.assertEqual(dirinfo.size, 0)
-            self.assertEqual(dirinfo.checksums, {})
 
         newdir = self.tmpdir.join("newdir/", forceDirectory=True)
         with self.assertRaises(FileNotFoundError):

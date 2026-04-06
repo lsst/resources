@@ -397,17 +397,6 @@ class S3ResourcePath(ResourcePath):
                 checksums={},
             )
 
-        if self.dirLike:
-            if not self.exists():
-                raise FileNotFoundError(f"Resource {self} does not exist")
-            return ResourceInfo(
-                uri=str(self),
-                is_file=False,
-                size=0,
-                last_modified=None,
-                checksums={},
-            )
-
         try:
             response = self.client.head_object(
                 Bucket=self._bucket,
@@ -438,10 +427,17 @@ class S3ResourcePath(ResourcePath):
             else:
                 last_modified = last_modified.astimezone(datetime.UTC)
 
+        # For ResourcePath usage a dirLike object with zero size is a directory
+        # but in the general case anyone can create an object with a trailing
+        # `/` and treat it as a file. For self-consistency with ResourcePath
+        # call it a file if it has size > 0 even if dirLike.
+        size = response["ContentLength"]
+        is_file = (self.dirLike is not True) or (size > 0)
+
         return ResourceInfo(
             uri=str(self),
-            is_file=True,
-            size=response["ContentLength"],
+            is_file=is_file,
+            size=size,
             last_modified=last_modified,
             checksums=checksums,
         )
