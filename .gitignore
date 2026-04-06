@@ -3,6 +3,7 @@
 *.bck
 *.pyc
 .eggs
+.env
 *.egg-info
 version.py
 _build.*

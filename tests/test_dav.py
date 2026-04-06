@@ -10,6 +10,7 @@
 # license that can be found in the LICENSE file.
 
 import concurrent
+import datetime
 import hashlib
 import io
 import os.path
@@ -23,9 +24,8 @@ import time
 import unittest
 import zlib
 from collections.abc import Callable
-from datetime import datetime
 from threading import Thread
-from typing import Any, cast
+from typing import cast
 from zipfile import ZipFile, ZipInfo
 
 try:
@@ -40,7 +40,7 @@ except ImportError:
     fsspec = None
     AbstractFileSystem = type
 
-from lsst.resources import ResourcePath
+from lsst.resources import ResourceInfo, ResourcePath
 from lsst.resources._resourceHandles._davResourceHandle import (
     DavReadResourceHandle,
 )
@@ -685,31 +685,24 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertEqual(member_size, local_file_size)
             self.assertEqual(member_digest, local_file_digest)
 
-    def test_dav_info(self):
-        def check_metadata_fields(metadata: dict[str, Any]):
-            for field in ("name", "size", "type", "last_modified", "checksums"):
-                self.assertTrue(field in metadata)
-
-        # Retrieve and check metadata details about an non-existing object
+    def test_dav_get_info(self):
+        # Missing resources now raise instead of returning a partial dict.
         subdir = self.tmpdir.join("inexistent", forceDirectory=True)
-        metadata = subdir.info()
-        check_metadata_fields(metadata)
-        self.assertEqual(metadata["size"], None)
-        self.assertEqual(metadata["type"], None)
-        self.assertEqual(len(metadata["checksums"]), 0)
-        self.assertEqual(metadata["last_modified"], datetime.min)
+        with self.assertRaises(FileNotFoundError):
+            subdir.get_info()
 
         # Retrieve and check metadata details about an existing directory
         subdir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
         self.assertIsNone(subdir.mkdir())
         self.assertTrue(subdir.exists())
-        metadata = subdir.info()
-        check_metadata_fields(metadata)
+        metadata = subdir.get_info()
+        self.assertIsInstance(metadata, ResourceInfo)
 
-        self.assertEqual(metadata["size"], 0)
-        self.assertEqual(metadata["type"], "directory")
-        self.assertEqual(len(metadata["checksums"]), 0)
-        self.assertEqual(metadata["last_modified"], subdir._stat().last_modified)
+        self.assertFalse(metadata.is_file)
+        self.assertEqual(metadata.size, 0)
+        self.assertEqual(len(metadata.checksums), 0)
+        self.assertEqual(metadata.last_modified.tzinfo, datetime.UTC)
+        self.assertEqual(metadata.last_modified, subdir._stat().last_modified)
 
         # Retrieve and check metadata details about existing file
         local_file, local_file_size = self._generate_file()
@@ -723,13 +716,14 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertIsNone(remote_file.write(file, overwrite=True))
             self.assertEqual(os.stat(local_file).st_size, remote_file.size())
 
-        metadata = remote_file.info()
-        check_metadata_fields(metadata)
-        self.assertEqual(metadata["size"], local_file_size)
-        self.assertEqual(metadata["type"], "file")
-        self.assertEqual(metadata["last_modified"], remote_file._stat().last_modified)
+        metadata = remote_file.get_info()
+        self.assertIsInstance(metadata, ResourceInfo)
+        self.assertTrue(metadata.is_file)
+        self.assertEqual(metadata.size, local_file_size)
+        self.assertEqual(metadata.last_modified.tzinfo, datetime.UTC)
+        self.assertEqual(metadata.last_modified, remote_file._stat().last_modified)
 
-        checksums = metadata["checksums"]
+        checksums = metadata.checksums
         if "md5" in checksums:
             self.assertEqual(checksums["md5"], md5_checksum)
         if "adler32" in checksums:

@@ -16,7 +16,7 @@ __all__ = ("InMemoryResourcePath",)
 import contextlib
 from collections.abc import Iterator
 
-from ._resourcePath import ResourcePath
+from ._resourcePath import ResourceInfo, ResourcePath
 
 
 class InMemoryResourcePath(ResourcePath):
@@ -29,6 +29,16 @@ class InMemoryResourcePath(ResourcePath):
     def exists(self) -> bool:
         """Test for existence and always return False."""
         return True
+
+    def get_info(self) -> ResourceInfo:
+        """Return placeholder metadata for an in-memory resource."""
+        return ResourceInfo(
+            uri=str(self),
+            is_file=True,
+            size=0,
+            last_modified=None,
+            checksums={},
+        )
 
     @contextlib.contextmanager
     def _as_local(

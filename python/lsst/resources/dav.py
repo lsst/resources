@@ -39,7 +39,7 @@ except ImportError:
 
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._davResourceHandle import DavReadResourceHandle
-from ._resourcePath import ResourcePath, ResourcePathExpression
+from ._resourcePath import ResourceInfo, ResourcePath, ResourcePathExpression
 from .davutils import (
     DavClient,
     DavClientPool,
@@ -139,8 +139,7 @@ class DavGlobals:
         self._reset()
 
     def _reset(self) -> None:
-        """
-        Initialize all the globals.
+        """Initialize all the globals.
 
         This method is a helper for reinitializing globals in tests.
         """
@@ -289,11 +288,22 @@ class DavResourcePath(ResourcePath):
 
         return 0 if self.isdir() else self._client.size(self._internal_url)
 
-    def info(self) -> dict[str, Any]:
-        """Return metadata details about this resource."""
-        log.debug("info %s [%#x]", self, id(self))
+    @override
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata details about this resource."""
+        log.debug("get_info %s [%#x]", self, id(self))
 
-        return self._client.info(self._internal_url, name=str(self))
+        info = self._client.info(self._internal_url)
+        if info["type"] is None:
+            raise FileNotFoundError(f"Resource {self} does not exist")
+
+        return ResourceInfo(
+            uri=str(self),
+            is_file=info["type"] == "file",
+            size=info["size"],
+            last_modified=info["last_modified"],
+            checksums=info["checksums"],
+        )
 
     @override
     def read(self, size: int = -1) -> bytes:

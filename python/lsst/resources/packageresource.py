@@ -29,7 +29,8 @@ if TYPE_CHECKING:
         AbstractFileSystem = type
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
-from ._resourcePath import ResourcePath, ResourcePathExpression
+from ._resourcePath import ResourceInfo, ResourcePath, ResourcePathExpression
+from .file import _path_to_info
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,25 @@ class PackageResourcePath(ResourcePath):
         if ref is None:
             return False
         return ref.is_file() or ref.is_dir()
+
+    def get_info(self) -> ResourceInfo:
+        """Return metadata about the resource without reading its contents."""
+        ref = self._get_ref()
+        if ref is None or not (ref.is_file() or ref.is_dir()):
+            raise FileNotFoundError(f"Unable to locate resource {self}.")
+
+        info = _path_to_info(str(self), ref)
+
+        if info is None:
+            # Edge case such as file in Zip.
+            return ResourceInfo(
+                uri=str(self),
+                is_file=True,
+                size=0,
+                last_modified=None,
+                checksums={},
+            )
+        return info
 
     def read(self, size: int = -1) -> bytes:
         ref = self._get_ref()

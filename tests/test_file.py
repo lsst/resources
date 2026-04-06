@@ -10,13 +10,14 @@
 # license that can be found in the LICENSE file.
 
 import contextlib
+import datetime
 import os
 import pathlib
 import unittest
 import unittest.mock
 import urllib.parse
 
-from lsst.resources import ResourcePath, ResourcePathExpression
+from lsst.resources import ResourceInfo, ResourcePath, ResourcePathExpression
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
@@ -82,6 +83,27 @@ class FileTestCase(GenericTestCase, unittest.TestCase):
         root = ResourcePath(self._make_uri("/root"))
         via_root = ResourcePath("b.txt", root=root)
         self.assertEqual(via_root.ospath, "/root/b.txt")
+
+    def test_get_info(self):
+        now = datetime.datetime.now(tz=datetime.UTC)
+        with ResourcePath.temporary_uri(suffix=".txt") as target:
+            target.write(b"abc")
+
+            info = target.get_info()
+            self.assertIsInstance(info, ResourceInfo)
+            self.assertTrue(info.uri.endswith(".txt"))
+            self.assertTrue(info.is_file)
+            self.assertEqual(info.size, 3)
+            self.assertEqual(info.checksums, {})
+            self.assertEqual(info.last_modified.tzinfo, datetime.UTC)
+            self.assertGreaterEqual(info.last_modified.timestamp(), now.timestamp() - 1.0)
+
+            dirinfo = target.parent().get_info()
+            self.assertEqual(dirinfo.uri, str(target.parent()))
+            self.assertFalse(dirinfo.is_file)
+            self.assertEqual(dirinfo.size, 0)
+            self.assertGreaterEqual(dirinfo.last_modified.timestamp(), 0)
+            self.assertEqual(dirinfo.checksums, {})
 
 
 TEST_UMASK = 0o0333

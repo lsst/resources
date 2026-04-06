@@ -12,6 +12,7 @@ from __future__ import annotations
 
 __all__ = ["GenericReadWriteTestCase", "GenericTestCase"]
 
+import datetime
 import logging
 import os
 import pathlib
@@ -668,6 +669,36 @@ class GenericReadWriteTestCase(_GenericTestCase):
         uri2 = ResourcePath(uri)
         self.assertEqual(uri, uri2)
         self.assertEqual(id(uri), id(uri2))
+
+    def test_get_info_generic(self) -> None:
+        """Test generic get_info properties."""
+        now = datetime.datetime.now(tz=datetime.UTC)
+        uri = self.tmpdir.join("test.txt")
+
+        with self.assertRaises(FileNotFoundError):
+            uri.get_info()
+
+        content = "abcdefghijklmnopqrstuv\n"
+        uri.write(content.encode())
+
+        info = uri.get_info()
+        self.assertTrue(info.is_file)
+        self.assertEqual(info.size, len(content))
+        assert info.last_modified is not None
+        self.assertGreaterEqual(info.last_modified.timestamp(), now.timestamp() - 1.0)
+        self.assertIsInstance(info.checksums, dict)  # Checksums are backend dependent.
+
+        for dir_uri in (uri.parent(), uri.root_uri()):
+            # File URIs can return values for modification dates for
+            # directories. S3 URIs can return checksums for directories.
+            dirinfo = dir_uri.get_info()
+            self.assertEqual(dirinfo.uri, str(dir_uri))
+            self.assertFalse(dirinfo.is_file)
+            self.assertEqual(dirinfo.size, 0)
+
+        newdir = self.tmpdir.join("newdir/", forceDirectory=True)
+        with self.assertRaises(FileNotFoundError):
+            newdir.get_info()
 
     def test_mkdir(self) -> None:
         newdir = self.tmpdir.join("newdir/seconddir", forceDirectory=True)

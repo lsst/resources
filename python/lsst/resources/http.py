@@ -14,6 +14,7 @@ from __future__ import annotations
 __all__ = ("HttpResourcePath",)
 
 import contextlib
+import datetime
 import enum
 import functools
 import io
@@ -27,6 +28,7 @@ import re
 import ssl
 import stat
 from collections.abc import Iterator
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 try:
@@ -58,7 +60,7 @@ from lsst.utils.timer import time_this
 
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle, parse_content_range_header
-from ._resourcePath import ResourcePath
+from ._resourcePath import ResourceInfo, ResourcePath
 from .utils import _get_num_workers, get_tempdir
 
 if TYPE_CHECKING:
@@ -897,8 +899,7 @@ class HttpResourcePath(ResourcePath):
             delattr(self, "_data_session")
 
     def _init_server_properties(self) -> None:
-        """
-        Initialize instance variables '_is_webdav' and '_server' by
+        """Initialize instance variables '_is_webdav' and '_server' by
         sending a single OPTIONS request to the remote server and
         saving the results.
         """
@@ -996,71 +997,97 @@ class HttpResourcePath(ResourcePath):
         """Return the size of the remote resource in bytes."""
         if self.dirLike:
             return 0
+        info = self.get_info()
+        # dirLike can be None if we are unsure. Only flag if we are certain
+        # we have been told this is a directory but webDAV reports it as a
+        # file.
+        if not info.is_file and self.dirLike is False:
+            raise IsADirectoryError(
+                f"Resource {self} is reported by server as a directory but has a file path"
+            )
+        return info.size
 
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata about this HTTP resource."""
         if not self.is_webdav_endpoint:
-            # The remote is a plain HTTP server. Send a HEAD request to
-            # retrieve the size of the resource.
             resp = self._head_non_webdav_url()
-            if resp.status_code == requests.codes.ok:  # 200
-                if "Content-Length" in resp.headers:
-                    return int(resp.headers["Content-Length"])
-                else:
-                    raise ValueError(
-                        f"Response to HEAD request to {self} does not contain 'Content-Length' header"
-                    )
-            elif resp.status_code == requests.codes.partial_content:
-                # 206 Partial Content, returned from a GET request with a Range
-                # header (used to emulate HEAD for presigned S3 URLs).
-                # In this case Content-Length is the length of the Range and
-                # not the full length of the file, so we have to parse
-                # Content-Range instead.
-                content_range_header = resp.headers.get("Content-Range")
-                if content_range_header is None:
-                    raise ValueError(
-                        f"Response to GET request to {self} did not contain 'Content-Range' header"
-                    )
-                content_range = parse_content_range_header(content_range_header)
-                size = content_range.total
-                if size is None:
-                    raise ValueError(f"Content-Range header for {self} did not include a total file size")
-                return size
-            elif resp.status_code == requests.codes.range_not_satisfiable:
-                # 416 Range Not Satisfiable, which can occur on a GET for a 0
-                # byte file since we asked for 1 byte Range which is longer
-                # than the file.
-                #
-                # Servers are supposed to include a Content-Range header in
-                # this case, but Google's S3 implementation doesn't.  Any
-                # non-zero file size should have been handled by the 206 and
-                # 200 cases above, so assume we have a zero here.
-                return 0
-            elif resp.status_code == requests.codes.not_found:
-                raise FileNotFoundError(
-                    f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
-                )
-            else:
-                raise ValueError(
-                    f"Unexpected response for HEAD request for {self}, status: {resp.status_code} "
-                    f"{resp.reason}"
-                )
+            return self._get_info_from_non_webdav_head(resp)
 
-        # The remote is a webDAV server: send a PROPFIND request to retrieve
-        # the size of the resource. Sizes are only meaningful for files.
         resp = self._propfind()
-        if resp.status_code == requests.codes.multi_status:  # 207
-            prop = _parse_propfind_response_body(resp.text)[0]
-            if prop.is_file:
-                return prop.size
-            elif prop.is_directory:
-                raise IsADirectoryError(
-                    f"Resource {self} is reported by server as a directory but has a file path"
-                )
-            else:
-                raise FileNotFoundError(f"Resource {self} does not exist")
-        else:  # 404 Not Found
+        if resp.status_code != requests.codes.multi_status:
             raise FileNotFoundError(
                 f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
             )
+
+        prop = _parse_propfind_response_body(resp.text)[0]
+        if not prop.exists:
+            raise FileNotFoundError(f"Resource {self} does not exist")
+
+        return ResourceInfo(
+            uri=str(self),
+            is_file=prop.is_file,
+            size=prop.size,
+            last_modified=prop.last_modified,
+            checksums=dict(prop.checksums),
+        )
+
+    def _get_info_from_non_webdav_head(self, resp: requests.Response) -> ResourceInfo:
+        """Build `ResourceInfo` from a non-WebDAV HEAD-like response."""
+        if not self._is_successful_non_webdav_head_request(resp):
+            if resp.status_code == requests.codes.not_found:
+                raise FileNotFoundError(
+                    f"Resource {self} does not exist, status: {resp.status_code} {resp.reason}"
+                )
+            raise ValueError(
+                f"Unexpected response for HEAD request for {self}, status: {resp.status_code} {resp.reason}"
+            )
+
+        if self.dirLike:
+            size = 0
+        elif resp.status_code == requests.codes.ok:  # 200
+            if "Content-Length" not in resp.headers:
+                raise ValueError(
+                    f"Response to HEAD request to {self} does not contain 'Content-Length' header"
+                )
+            size = int(resp.headers["Content-Length"])
+        elif resp.status_code == requests.codes.partial_content:
+            # 206 Partial Content, returned from a GET request with a Range
+            # header (used to emulate HEAD for presigned S3 URLs).
+            content_range_header = resp.headers.get("Content-Range")
+            if content_range_header is None:
+                raise ValueError(f"Response to GET request to {self} did not contain 'Content-Range' header")
+            content_range = parse_content_range_header(content_range_header)
+            size_total = content_range.total
+            if size_total is None:
+                raise ValueError(f"Content-Range header for {self} did not include a total file size")
+            size = size_total
+        else:
+            # 416 Range Not Satisfiable can occur on a GET for a 0-byte file.
+            size = 0
+
+        checksums = {}
+        digest_header = resp.headers.get("Digest")
+        if digest_header is not None:
+            for digest in digest_header.split(","):
+                algorithm, separator, value = digest.strip().partition("=")
+                if separator:
+                    checksums[algorithm.lower()] = value
+
+        last_modified = None
+        if last_modified_header := resp.headers.get("Last-Modified"):
+            last_modified = parsedate_to_datetime(last_modified_header)
+            if last_modified.tzinfo is None:
+                last_modified = last_modified.replace(tzinfo=datetime.UTC)
+            else:
+                last_modified = last_modified.astimezone(datetime.UTC)
+
+        return ResourceInfo(
+            uri=str(self),
+            is_file=not self.dirLike,
+            size=size,
+            last_modified=last_modified,
+            checksums=checksums,
+        )
 
     def _head_non_webdav_url(self) -> requests.Response:
         """Return a response from a HTTP HEAD request for a non-WebDAV HTTP
@@ -2230,6 +2257,22 @@ class DavProperty:
     @property
     def size(self) -> int:
         return self._getcontentlength
+
+    @property
+    def last_modified(self) -> datetime.datetime | None:
+        if not self._getlastmodified:
+            return None
+
+        last_modified = parsedate_to_datetime(self._getlastmodified)
+        if last_modified.tzinfo is None:
+            last_modified = last_modified.replace(tzinfo=datetime.UTC)
+        else:
+            last_modified = last_modified.astimezone(datetime.UTC)
+        return last_modified
+
+    @property
+    def checksums(self) -> dict[str, str]:
+        return {}
 
     @property
     def name(self) -> str:

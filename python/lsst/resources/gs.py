@@ -16,6 +16,7 @@ from __future__ import annotations
 __all__ = ("GSResourcePath",)
 
 import contextlib
+import datetime
 import logging
 import re
 from collections.abc import Iterator
@@ -71,7 +72,7 @@ except ImportError:
 
 from lsst.utils.timer import time_this
 
-from ._resourcePath import ResourcePath
+from ._resourcePath import ResourceInfo, ResourcePath
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -111,6 +112,24 @@ _client = None
 """Cached client connection."""
 
 
+def _coerce_gcs_datetime(value: datetime.datetime | str | None) -> datetime.datetime | None:
+    """Convert GCS timestamp values to timezone-aware UTC datetimes.
+
+    Some emulators return RFC3339 timestamps with an explicit UTC offset
+    instead of a trailing ``Z``, which the google-cloud-storage property
+    accessors do not always accept.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=datetime.UTC)
+        return value.astimezone(datetime.UTC)
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.datetime.fromisoformat(value).astimezone(datetime.UTC)
+
+
 def _get_client() -> storage.Client:
     global _client
     if storage is None:
@@ -146,6 +165,10 @@ class GSResourcePath(ResourcePath):
     def exists(self) -> bool:
         if self.is_root:
             return self.bucket.exists(retry=_RETRY_POLICY)
+        if self.dirLike:
+            # GCS does not have concrete directory objects; treat any
+            # directory-like path within an existing bucket as existing.
+            return self.bucket.exists(retry=_RETRY_POLICY)
         return self.blob.exists(retry=_RETRY_POLICY)
 
     def size(self) -> int:
@@ -161,6 +184,58 @@ class GSResourcePath(ResourcePath):
         if size is None:
             raise FileNotFoundError(f"Resource {self} does not exist")
         return size
+
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata about this GCS resource."""
+        if self.is_root:
+            if not self.bucket.exists(retry=_RETRY_POLICY):
+                raise FileNotFoundError(f"Resource {self} does not exist")
+            return ResourceInfo(
+                uri=str(self),
+                is_file=False,
+                size=0,
+                last_modified=None,
+                checksums={},
+            )
+
+        if self.dirLike:
+            if not self.exists():
+                raise FileNotFoundError(f"Resource {self} does not exist")
+            return ResourceInfo(
+                uri=str(self),
+                is_file=False,
+                size=0,
+                last_modified=None,
+                checksums={},
+            )
+
+        try:
+            self.blob.reload(retry=_RETRY_POLICY)
+        except NotFound:
+            raise FileNotFoundError(f"Resource {self} does not exist") from None
+
+        size = self.blob.size
+        if size is None:
+            raise FileNotFoundError(f"Resource {self} does not exist")
+
+        checksums = {}
+        if self.blob.md5_hash:
+            checksums["md5"] = self.blob.md5_hash
+        if self.blob.crc32c:
+            checksums["crc32c"] = self.blob.crc32c
+
+        try:
+            updated = _coerce_gcs_datetime(self.blob.updated)
+        except ValueError:
+            updated = _coerce_gcs_datetime(self.blob._properties.get("updated"))
+
+        return ResourceInfo(
+            uri=str(self),
+            is_file=True,
+            size=size,
+            last_modified=updated,
+            checksums=checksums,
+        )
 
     def remove(self) -> None:
         try:
@@ -195,12 +270,9 @@ class GSResourcePath(ResourcePath):
         if not self.dirLike:
             raise NotADirectoryError(f"Can not create a 'directory' for a file-like URI {self}")
 
-        if self.is_root:
-            # The root must already exist.
-            return
-
-        # Should this method do anything at all?
-        self.blob.upload_from_string(b"", retry=_RETRY_POLICY)
+        # GCS does not have directory objects, so mkdir is a no-op once the
+        # bucket exists.
+        return
 
     @contextlib.contextmanager
     def _as_local(

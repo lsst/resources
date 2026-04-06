@@ -37,6 +37,14 @@ class MemoryReadTestCase(unittest.TestCase):
             with self.root_uri.as_local():
                 pass
 
+    def test_get_info(self) -> None:
+        info = self.root_uri.get_info()
+        self.assertTrue(info.is_file)
+        self.assertEqual(info.uri, str(self.root_uri))
+        self.assertEqual(info.size, 0)
+        self.assertEqual(info.checksums, {})
+        self.assertIsNone(info.last_modified)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,11 +11,13 @@
 
 from __future__ import annotations
 
-__all__ = ("ResourcePath", "ResourcePathExpression")
+__all__ = ("ResourceInfo", "ResourcePath", "ResourcePathExpression")
 
 import concurrent.futures
 import contextlib
 import copy
+import dataclasses
+import datetime
 import io
 import locale
 import logging
@@ -129,6 +131,27 @@ def _patch_environ(new_values: dict[str, str]) -> Iterator[None]:
             del os.environ[k]
             if k in old_values:
                 os.environ[k] = old_values[k]
+
+
+@dataclasses.dataclass(frozen=True)
+class ResourceInfo:
+    """Information about this resource."""
+
+    uri: str
+    """URI in string form of the resource from which this information is
+    derived.
+    """
+    is_file: bool
+    """Indicate whether the resource is a file or a directory."""
+    size: int
+    """Size of the file in bytes. A directory or a URI that has no concept
+    of size returns 0."""
+    last_modified: datetime.datetime | None
+    """Modification date of the resource, if known."""
+    checksums: dict[str, Any]
+    """Checksums for this file. Supported checksum implementations are
+    backend dependent.
+    """
 
 
 class ResourcePath:  # numpydoc ignore=PR02
@@ -1930,6 +1953,17 @@ class ResourcePath:  # numpydoc ignore=PR02
         # ResourcePath is constructed using the "clone" version of the
         # ResourcePath constructor by passing in a ResourcePath object.
         pass
+
+    def get_info(self) -> ResourceInfo:
+        """Return lightweight metadata about this resource.
+
+        Returns
+        -------
+        info : `ResourceInfo`
+            The information about this resource that can be obtained from
+            the backend. Will not read the file contents.
+        """
+        raise NotImplementedError("")
 
 
 ResourcePathExpression = str | urllib.parse.ParseResult | ResourcePath | Path
