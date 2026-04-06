@@ -302,7 +302,6 @@ class DavResourcePath(ResourcePath):
             is_file=info["type"] == "file",
             size=info["size"],
             last_modified=info["last_modified"],
-            creation_time=None,
             checksums=info["checksums"],
         )
 

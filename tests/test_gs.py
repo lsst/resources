@@ -180,7 +180,6 @@ class GSReadWriteTestCase(unittest.TestCase):
         self.assertIsInstance(info, ResourceInfo)
         self.assertTrue(info.is_file)
         self.assertEqual(info.size, 3)
-        self.assertIsNotNone(info.creation_time)
         self.assertIsNotNone(info.last_modified)
         self.assertIsInstance(info.checksums, dict)
 

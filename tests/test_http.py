@@ -150,7 +150,6 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         self.assertIsInstance(info, ResourceInfo)
         self.assertTrue(info.is_file)
         self.assertEqual(info.size, 123)
-        self.assertIsNone(info.creation_time)
         self.assertEqual(info.last_modified.tzinfo, UTC)
         self.assertEqual(info.last_modified.year, 2025)
         self.assertEqual(info.checksums, {"md5": "rL0Y20zC+Fzt72VPzMSk2A==", "sha-256": "def456"})

@@ -394,7 +394,6 @@ class S3ResourcePath(ResourcePath):
                 is_file=False,
                 size=0,
                 last_modified=None,
-                creation_time=None,
                 checksums={},
             )
 
@@ -406,7 +405,6 @@ class S3ResourcePath(ResourcePath):
                 is_file=False,
                 size=0,
                 last_modified=None,
-                creation_time=None,
                 checksums={},
             )
 
@@ -445,7 +443,6 @@ class S3ResourcePath(ResourcePath):
             is_file=True,
             size=response["ContentLength"],
             last_modified=last_modified,
-            creation_time=None,
             checksums=checksums,
         )
 

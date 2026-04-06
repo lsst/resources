@@ -148,8 +148,6 @@ class ResourceInfo:
     of size returns 0."""
     last_modified: datetime.datetime | None
     """Modification date of the resource, if known."""
-    creation_time: datetime.datetime | None
-    """Creation date of the resource, if known."""
     checksums: dict[str, Any]
     """Checksums for this file. Supported checksum implementations are
     backend dependent.

@@ -1028,7 +1028,6 @@ class HttpResourcePath(ResourcePath):
             is_file=prop.is_file,
             size=prop.size,
             last_modified=prop.last_modified,
-            creation_time=None,
             checksums=dict(prop.checksums),
         )
 
@@ -1087,7 +1086,6 @@ class HttpResourcePath(ResourcePath):
             is_file=not self.dirLike,
             size=size,
             last_modified=last_modified,
-            creation_time=None,
             checksums=checksums,
         )
 

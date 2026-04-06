@@ -37,7 +37,6 @@ class InMemoryResourcePath(ResourcePath):
             is_file=True,
             size=0,
             last_modified=None,
-            creation_time=None,
             checksums={},
         )
 

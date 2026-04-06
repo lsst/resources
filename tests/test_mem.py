@@ -44,7 +44,6 @@ class MemoryReadTestCase(unittest.TestCase):
         self.assertEqual(info.size, 0)
         self.assertEqual(info.checksums, {})
         self.assertIsNone(info.last_modified)
-        self.assertIsNone(info.creation_time)
 
 
 if __name__ == "__main__":

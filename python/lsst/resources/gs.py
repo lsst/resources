@@ -195,7 +195,6 @@ class GSResourcePath(ResourcePath):
                 is_file=False,
                 size=0,
                 last_modified=None,
-                creation_time=None,
                 checksums={},
             )
 
@@ -207,7 +206,6 @@ class GSResourcePath(ResourcePath):
                 is_file=False,
                 size=0,
                 last_modified=None,
-                creation_time=None,
                 checksums={},
             )
 
@@ -231,17 +229,11 @@ class GSResourcePath(ResourcePath):
         except ValueError:
             updated = _coerce_gcs_datetime(self.blob._properties.get("updated"))
 
-        try:
-            created = _coerce_gcs_datetime(self.blob.time_created)
-        except ValueError:
-            created = _coerce_gcs_datetime(self.blob._properties.get("timeCreated"))
-
         return ResourceInfo(
             uri=str(self),
             is_file=True,
             size=size,
             last_modified=updated,
-            creation_time=created,
             checksums=checksums,
         )
 

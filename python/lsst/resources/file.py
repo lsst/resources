@@ -80,18 +80,11 @@ class FileResourcePath(ResourcePath):
     def get_info(self) -> ResourceInfo:
         """Return lightweight metadata about this file."""
         stat_result = os.stat(self.ospath)
-        creation_timestamp = getattr(stat_result, "st_birthtime", None)
-        creation_time = (
-            datetime.datetime.fromtimestamp(creation_timestamp, tz=datetime.UTC)
-            if creation_timestamp is not None
-            else None
-        )
         return ResourceInfo(
             uri=str(self),
             is_file=not stat.S_ISDIR(stat_result.st_mode),
             size=0 if stat.S_ISDIR(stat_result.st_mode) else stat_result.st_size,
             last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
-            creation_time=creation_time,
             checksums={},
         )
 

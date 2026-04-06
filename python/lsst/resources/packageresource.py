@@ -94,7 +94,6 @@ class PackageResourcePath(ResourcePath):
                 is_file=False,
                 size=0,
                 last_modified=None,
-                creation_time=None,
                 checksums={},
             )
 
@@ -112,22 +111,14 @@ class PackageResourcePath(ResourcePath):
                 is_file=True,
                 size=0,
                 last_modified=None,
-                creation_time=None,
                 checksums={},
             )
 
-        creation_timestamp = getattr(stat_result, "st_birthtime", None)
-        creation_time = (
-            datetime.datetime.fromtimestamp(creation_timestamp, tz=datetime.UTC)
-            if creation_timestamp is not None
-            else None
-        )
         return ResourceInfo(
             uri=str(self),
             is_file=True,
             size=stat_result.st_size,
             last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
-            creation_time=creation_time,
             checksums={},
         )
 

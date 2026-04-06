@@ -214,7 +214,6 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
         self.assertIsInstance(info, ResourceInfo)
         self.assertTrue(info.is_file)
         self.assertEqual(info.size, 3)
-        self.assertIsNone(info.creation_time)
         self.assertIsInstance(info.checksums, dict)
         self.assertIn("crc32", info.checksums)  # Only appears if ChecksumMode=ENABLED
         self.assertEqual(info.last_modified.tzinfo, datetime.UTC)
