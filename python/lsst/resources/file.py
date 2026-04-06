@@ -25,6 +25,7 @@ import shutil
 import stat
 import urllib.parse
 from collections.abc import Iterator
+from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from ._resourceHandles._fileResourceHandle import FileResourceHandle
@@ -39,10 +40,35 @@ except ImportError:
     AbstractFileSystem = type
 
 if TYPE_CHECKING:
+    from importlib.resources.abc import Traversable
+
     from .utils import TransactionProtocol
 
 
 log = logging.getLogger(__name__)
+
+
+def _path_to_info(uri: str, path: str | Path | Traversable) -> ResourceInfo | None:
+    """Given a path to a local file, return a `ResourceInfo`."""
+    if isinstance(path, Path):
+        stat_result = path.stat()
+    elif isinstance(path, str):
+        stat_result = os.stat(path)
+    elif (stat_method := getattr(path, "stat", None)) and callable(stat_method):
+        # Edge case triggered by importlib.resources.
+        stat_result = stat_method()
+        if not isinstance(stat_result, os.stat_result):
+            raise RuntimeError(f"Unexpected stat result from {path}.stat()")
+    else:
+        return None
+
+    return ResourceInfo(
+        uri=uri,
+        is_file=not stat.S_ISDIR(stat_result.st_mode),
+        size=0 if stat.S_ISDIR(stat_result.st_mode) else stat_result.st_size,
+        last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
+        checksums={},
+    )
 
 
 class FileResourcePath(ResourcePath):
@@ -79,14 +105,10 @@ class FileResourcePath(ResourcePath):
 
     def get_info(self) -> ResourceInfo:
         """Return lightweight metadata about this file."""
-        stat_result = os.stat(self.ospath)
-        return ResourceInfo(
-            uri=str(self),
-            is_file=not stat.S_ISDIR(stat_result.st_mode),
-            size=0 if stat.S_ISDIR(stat_result.st_mode) else stat_result.st_size,
-            last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
-            checksums={},
-        )
+        info = _path_to_info(str(self), self.ospath)
+        if info is None:
+            raise RuntimeError(f"Unexpected internal failure obtaining file info for {self}")
+        return info
 
     def remove(self) -> None:
         """Remove the resource."""

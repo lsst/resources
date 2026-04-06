@@ -14,13 +14,10 @@ from __future__ import annotations
 __all__ = ("PackageResourcePath",)
 
 import contextlib
-import datetime
 import logging
-import os
 import re
 from collections.abc import Iterator
 from importlib import resources
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,6 +30,7 @@ if TYPE_CHECKING:
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourceInfo, ResourcePath, ResourcePathExpression
+from .file import _path_to_info
 
 log = logging.getLogger(__name__)
 
@@ -88,24 +86,10 @@ class PackageResourcePath(ResourcePath):
         if ref is None or not (ref.is_file() or ref.is_dir()):
             raise FileNotFoundError(f"Unable to locate resource {self}.")
 
-        if ref.is_dir():
-            return ResourceInfo(
-                uri=str(self),
-                is_file=False,
-                size=0,
-                last_modified=None,
-                checksums={},
-            )
+        info = _path_to_info(str(self), ref)
 
-        stat_result: os.stat_result | None = None
-        if isinstance(ref, Path):
-            stat_result = ref.stat()
-        else:
-            stat_method = getattr(ref, "stat", None)
-            if callable(stat_method):
-                stat_result = stat_method()
-
-        if stat_result is None:
+        if info is None:
+            # Edge case such as file in Zip.
             return ResourceInfo(
                 uri=str(self),
                 is_file=True,
@@ -113,14 +97,7 @@ class PackageResourcePath(ResourcePath):
                 last_modified=None,
                 checksums={},
             )
-
-        return ResourceInfo(
-            uri=str(self),
-            is_file=True,
-            size=stat_result.st_size,
-            last_modified=datetime.datetime.fromtimestamp(stat_result.st_mtime, tz=datetime.UTC),
-            checksums={},
-        )
+        return info
 
     def read(self, size: int = -1) -> bytes:
         ref = self._get_ref()
