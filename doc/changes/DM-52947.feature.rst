@@ -1,1 +1,0 @@
-Added a ``ResourcePath.get_info()`` method to provide a general interface for obtaining information about a resource including the size, modification date, and any checksums available.
