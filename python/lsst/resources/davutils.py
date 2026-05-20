@@ -1075,6 +1075,7 @@ class DavClient:
         preload_content: bool = True,
         redirect: bool = True,
         pool_manager: PoolManager | None = None,
+        **kwargs: dict[Any, Any],
     ) -> HTTPResponse:
         """Send a generic HTTP request and return the response.
 
@@ -1099,6 +1100,9 @@ class DavClient:
         pool_manager : `PoolManager`, optional
             Pool manager to use for sending this request. If not provided,
             this client's pool manager is used.
+        kwargs : `dict[Any, Any]`, optional
+            Keyword arguments to pass unmodified to
+            `urllib3.PoolManager.request()`.
 
         Returns
         -------
@@ -1148,6 +1152,7 @@ class DavClient:
                 headers=headers,
                 preload_content=preload_content,
                 redirect=redirect,
+                **kwargs,
             )
 
     def _options(
@@ -1405,6 +1410,25 @@ class DavClient:
         -----
         This method is intended for subclasses to override when needed.
         """
+        # Disable retries when we know the request is not idempotent. In
+        # particular, when the body of the request is an `io.BufferedReader`,
+        # any attempt to use that body may totally or partially consume it.
+        # That means that in case of a retry, the last successful attempt may
+        # end up uploading an incomplete body and, as a consequence, the
+        # resulting uploaded file may be either incomplete or have a length
+        # of zero.
+        #
+        # So we only retry a PUT request when the body is an instance of
+        # `bytes`.
+        #
+        # Note that we cannot set `retries` to False since that setting would
+        # also disable redirection. To disable retries only, we must explicitly
+        # set the `retries` keyword argument to integer value zero (0).
+        #
+        # See documentation:
+        # https://urllib3.readthedocs.io/en/stable/user-guide.html#retrying-requests
+        kwargs: dict[Any, Any] = {} if isinstance(body, bytes) else {"retries": 0}
+
         return self._request(
             "PUT",
             url=url,
@@ -1413,6 +1437,7 @@ class DavClient:
             preload_content=preload_content,
             redirect=redirect,
             pool_manager=pool_manager,
+            **kwargs,
         )
 
     def head(
