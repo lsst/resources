@@ -1,3 +1,12 @@
+Resources v30.0.8 (2026-06-08)
+==============================
+
+Bug Fixes
+---------
+
+- Modified the WebDAV backend to no longer retry non-idempotent PUT requests.
+  Retries were resulting in partial writes. (`DM-54885 <https://rubinobs.atlassian.net/browse/DM-54885>`_)
+
 Resources v30.0.6 (2026-04-06)
 ==============================
 
