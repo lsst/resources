@@ -344,7 +344,8 @@ class DavResourcePath(ResourcePath):
 
         # Read the requested chunk of data and release the backend server.
         end_range = min(stat.size, size) - 1
-        _, data = self._client.read_range(self._internal_url, start=0, end=end_range, release_backend=True)
+        url, data = self._client.read_range(self._internal_url, start=0, end=end_range)
+        self._client._close(url=url)
         return data
 
     @override
