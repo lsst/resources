@@ -187,7 +187,7 @@ class DavConfig:
 
     # Number of times to retry requests before failing. Retry happens only
     # under certain conditions.
-    DEFAULT_RETRIES: int = 4
+    DEFAULT_RETRIES: int = 3
 
     # Minimal and maximal retry backoff (in seconds) for the client to compute
     # the wait time before retrying a request.
@@ -554,20 +554,27 @@ def make_retry(config: DavConfig) -> Retry:
     retry = Retry(
         # Total number of retries to allow. Takes precedence over other
         # counts.
-        total=2 * config.retries,
+        total=3 * config.retries,
         # How many connection-related errors to retry on.
         connect=config.retries,
         # How many times to retry on read errors.
         read=config.retries,
+        # How many times to retry on bad status codes.
+        status=config.retries,
+        # How many times to retry on other errors.
+        other=config.retries,
         # Backoff factor to apply between attempts after the second try
         # (seconds). Compute a random jitter to prevent all the clients which
         # started at the same time (even on different hosts) to overwhelm the
         # server by sending requests at the same time.
         backoff_factor=backoff_min + (backoff_max - backoff_min) * random.random(),
-        # How many times to retry on bad status codes.
-        status=config.retries,
+        # How many redirects to perform. Set to a finite value to avoid
+        # infinite redirect loops.
+        redirect=3,
         # Set of uppercased HTTP method verbs that we should retry on.
-        # We only automatically retry idempotent requests.
+        # By default, we automatically retry idempotent requests. Specific
+        # retry configuration may be set for some requests such as
+        # non-idempotent `PUT` requests.
         allowed_methods=frozenset(
             [
                 "COPY",
