@@ -680,11 +680,11 @@ class DavClientPool:
         if server_id is None:
             # Create a generic webDAV client
             return DavClient(url, config, accepts_ranges)
-
-        if server_id.startswith("dCache/"):
+        server_id = server_id.lower()
+        if server_id.startswith("dcache"):
             # Create a client for a dCache webDAV server
             return DavClientDCache(url, config, accepts_ranges)
-        elif server_id.startswith("XrootD/"):
+        elif server_id.startswith("xrootd"):
             # Create a client for a XrootD webDAV server
             return DavClientXrootD(url, config, accepts_ranges)
         else:
