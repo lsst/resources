@@ -1,3 +1,11 @@
+Resources v30.0.10 (2026-07-20)
+===============================
+
+Bug Fixes
+---------
+
+* Fixed detection of XRootD WebDAV servers across different versions. (`DM-55517 <https://rubinobs.atlassian.net/browse/DM-55517>`_)
+
 Resources v30.0.8 (2026-06-08)
 ==============================
 
