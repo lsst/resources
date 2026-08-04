@@ -2715,7 +2715,7 @@ class DavClientDCache(DavClientURLSigner):
         headers: dict[str, str] | None = None,
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
-        """Inherits doc string."""
+        # Docstring inherited.
         return self._request("MKCOL", url=url, headers=headers, pool_manager=self._mkcol_pool_manager)
 
     @override
@@ -2725,7 +2725,7 @@ class DavClientDCache(DavClientURLSigner):
         headers: dict[str, str] | None = None,
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
-        """Inherits doc string."""
+        # Docstring inherited.
         return self._request("MOVE", url=url, headers=headers, pool_manager=self._move_pool_manager)
 
     @override
@@ -2736,7 +2736,7 @@ class DavClientDCache(DavClientURLSigner):
         body: str = "",
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
-        """Inherits doc string."""
+        # Docstring inherited.
         return self._request(
             "PROPFIND", url=url, headers=headers, body=body, pool_manager=self._propfind_pool_manager
         )
@@ -2749,6 +2749,7 @@ class DavClientDCache(DavClientURLSigner):
         data: BinaryIO | bytes = b"",
     ) -> int | None:
         # Docstring inherited.
+
         # Send a PUT request with empty body to the dCache frontend server to
         # get redirected to the backend.
         #
@@ -3029,7 +3030,7 @@ class DavClientDCache(DavClientURLSigner):
         end: int | None,
         headers: dict[str, str] | None = None,
     ) -> tuple[str, bytes]:
-        """Inherits doc string."""
+        # Docstring inherited.
         range_headers = {"Accept-Encoding": "identity"}
         if end is None:
             range_headers.update({"Range": f"bytes={start}-"})
@@ -3075,7 +3076,8 @@ class DavClientDCache(DavClientURLSigner):
 
     @override
     def _close(self, url: str) -> None:
-        """Inherits doc string."""
+        # Docstring inherited.
+
         # For dCache this is a NOP since `read_range` does not keep the
         # connection with the dCache pool open.
         pass
@@ -3109,6 +3111,7 @@ class DavClientXrootD(DavClientURLSigner):
         data: BinaryIO | bytes = b"",
     ) -> int | None:
         # Docstring inherited.
+
         # Send a PUT request with empty body to the XRootD frontend server to
         # get redirected to the backend.
         frontend_headers = {} if headers is None else dict(headers)
@@ -3281,7 +3284,8 @@ class DavClientXrootD(DavClientURLSigner):
 
     @override
     def stat(self, url: str) -> DavFileMetadata:
-        """Inherits doc string."""
+        # Docstring inherited.
+
         # XRootD v5.9.1 responds "200 OK" to a HEAD request against an
         # existing file. When the target URL is a directory, it also responds
         # "200 OK". In both cases the response header "Content-Length"
@@ -3332,7 +3336,8 @@ class DavClientXrootD(DavClientURLSigner):
         end: int | None,
         headers: dict[str, str] | None = None,
     ) -> tuple[str, bytes]:
-        """Inherits doc string."""
+        # Docstring inherited.
+
         # Send the request to the XRootD redirector and follow
         # redirections automatically.
         #
@@ -3356,7 +3361,8 @@ class DavClientXrootD(DavClientURLSigner):
 
     @override
     def _close(self, url: str) -> None:
-        """Inherits doc string."""
+        # Docstring inherited.
+
         # Send a `HEAD` request with a `Connection: close` header to notify
         # the remote server that we are not sending other GET requests with
         # `Range` header for this URL.
