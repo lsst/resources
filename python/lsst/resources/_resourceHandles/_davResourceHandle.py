@@ -285,14 +285,13 @@ class DavReadAheadCache:
 
         # Read the requested range.
         self._backend_url, self._cache = self._client.read_range(
-            self._backend_url, start=start_range, end=end_range - 1, release_backend=False
+            self._backend_url, start=start_range, end=end_range - 1
         )
         self._start = start_range
         self._end = self._start + len(self._cache)
         return self._cache[start - self._start : end - self._start]
 
     def close(self) -> None:
-        # Send a HEAD request to the backend server and ask it to close this
-        # connection. This signals the server that we no longer need it for
-        # serving partial reads for this handle. We can ignore its response.
-        self._client._request("HEAD", self._backend_url, headers={"Connection": "close"}, redirect=False)
+        # Notify the remote server that we are not issueing more partial
+        # read requests for this file handle.
+        self._client._close(self._backend_url)

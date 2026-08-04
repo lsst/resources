@@ -187,7 +187,7 @@ class DavConfig:
 
     # Number of times to retry requests before failing. Retry happens only
     # under certain conditions.
-    DEFAULT_RETRIES: int = 4
+    DEFAULT_RETRIES: int = 3
 
     # Minimal and maximal retry backoff (in seconds) for the client to compute
     # the wait time before retrying a request.
@@ -554,20 +554,27 @@ def make_retry(config: DavConfig) -> Retry:
     retry = Retry(
         # Total number of retries to allow. Takes precedence over other
         # counts.
-        total=2 * config.retries,
+        total=3 * config.retries,
         # How many connection-related errors to retry on.
         connect=config.retries,
         # How many times to retry on read errors.
         read=config.retries,
+        # How many times to retry on bad status codes.
+        status=config.retries,
+        # How many times to retry on other errors.
+        other=config.retries,
         # Backoff factor to apply between attempts after the second try
         # (seconds). Compute a random jitter to prevent all the clients which
         # started at the same time (even on different hosts) to overwhelm the
         # server by sending requests at the same time.
         backoff_factor=backoff_min + (backoff_max - backoff_min) * random.random(),
-        # How many times to retry on bad status codes.
-        status=config.retries,
+        # How many redirects to perform. Set to a finite value to avoid
+        # infinite redirect loops.
+        redirect=3,
         # Set of uppercased HTTP method verbs that we should retry on.
-        # We only automatically retry idempotent requests.
+        # By default, we automatically retry idempotent requests. Specific
+        # retry configuration may be set for some requests such as
+        # non-idempotent `PUT` requests.
         allowed_methods=frozenset(
             [
                 "COPY",
@@ -1996,7 +2003,6 @@ class DavClient:
         start: int,
         end: int | None,
         headers: dict[str, str] | None = None,
-        release_backend: bool = True,
     ) -> tuple[str, bytes]:
         """Download partial content of file located at `url`.
 
@@ -2006,12 +2012,10 @@ class DavClient:
             Target URL.
         start : `int`
             Starting byte offset of the range to download.
-        end : `int`
+        end : `int`, optional
             Ending byte offset of the range to download.
         headers : `dict[str,str]`, optional
             Specific headers to sent with the GET request.
-        release_backend : `bool`, optional
-            Whether or not to close the connection to the backend.
 
         Returns
         -------
@@ -2027,48 +2031,39 @@ class DavClient:
         a directory. This is important because some webDAV servers respond
         with an HTML document when asked for reading a directory.
         """
-        range_headers = {"Accept-Encoding": "identity"}
+        get_headers = {} if headers is None else dict(headers)
+        get_headers.update({"Accept-Encoding": "identity"})
         if end is None:
-            range_headers.update({"Range": f"bytes={start}-"})
+            get_headers.update({"Range": f"bytes={start}-"})
         else:
-            range_headers.update({"Range": f"bytes={start}-{end}"})
+            get_headers.update({"Range": f"bytes={start}-{end}"})
 
-        frontend_headers = {} if headers is None else dict(headers)
-        frontend_headers.update(range_headers)
-
-        # Send the request to the frontend server and don't follow
-        # redirections automatically. We need to be able to add a
-        # "Connection: close" request header when sending the request to the
-        # backend server (if any) if are requested to. We don't send that
-        # header to the frontend.
-        final_url, resp = self.get(url, headers=frontend_headers, redirect=False)
+        final_url, resp = self.get(url, headers=get_headers, redirect=True)
         match resp.status:
             case HTTPStatus.PARTIAL_CONTENT:
                 return final_url, resp.data
-            case status if status not in resp.REDIRECT_STATUSES:
+            case _:
                 raise unexpected_status_error("GET (with 'Range' header)", url, resp)
-            case _:
-                pass
 
-        # We were redirected to a backend server. Follow the redirection and
-        # if requested add a "Connection: close" header to explicitly release
-        # the backend server.
-        redirect_url = resp.headers.get("Location")
-        log.debug("GET request to %s got redirected to %s", url, redirect_url)
+    def _close(self, url: str) -> None:
+        """Signal the server hosting `url` that no more `read_range` requests
+        will be issued, so that the resources allocated for serving those
+        requests can be released.
 
-        backend_headers = {} if headers is None else dict(headers)
-        backend_headers.update(range_headers)
-        backend_headers.update({"Connection": "close" if release_backend else "keep-alive"})
+        This helper method is intended to be overwritten by subclasses that
+        need such functionality according to the behavior of the specific
+        remote storage endpoint.
 
-        final_url, resp = self.get(redirect_url, headers=backend_headers)
-        match resp.status:
-            case HTTPStatus.PARTIAL_CONTENT:
-                return final_url, resp.data
-            case _:
-                raise unexpected_status_error("GET (with 'Range' header)", redirect_url, resp)
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        """
+        # This is a NOP for a generic webDAV server.
+        pass
 
     def _write_response_body_to_file(self, resp: HTTPResponse, filename: str, chunk_size: int) -> int:
-        """Write the the response body to a local file.
+        """Write the response body to a local file.
 
         Parameters
         ----------
@@ -2720,7 +2715,7 @@ class DavClientDCache(DavClientURLSigner):
         headers: dict[str, str] | None = None,
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
-        """Inherits doc string."""
+        # Docstring inherited.
         return self._request("MKCOL", url=url, headers=headers, pool_manager=self._mkcol_pool_manager)
 
     @override
@@ -2730,7 +2725,7 @@ class DavClientDCache(DavClientURLSigner):
         headers: dict[str, str] | None = None,
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
-        """Inherits doc string."""
+        # Docstring inherited.
         return self._request("MOVE", url=url, headers=headers, pool_manager=self._move_pool_manager)
 
     @override
@@ -2741,7 +2736,7 @@ class DavClientDCache(DavClientURLSigner):
         body: str = "",
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
-        """Inherits doc string."""
+        # Docstring inherited.
         return self._request(
             "PROPFIND", url=url, headers=headers, body=body, pool_manager=self._propfind_pool_manager
         )
@@ -2754,6 +2749,7 @@ class DavClientDCache(DavClientURLSigner):
         data: BinaryIO | bytes = b"",
     ) -> int | None:
         # Docstring inherited.
+
         # Send a PUT request with empty body to the dCache frontend server to
         # get redirected to the backend.
         #
@@ -3026,6 +3022,66 @@ class DavClientDCache(DavClientURLSigner):
             case _:
                 raise unexpected_status_error("PROPFIND", url, resp)
 
+    @override
+    def read_range(
+        self,
+        url: str,
+        start: int,
+        end: int | None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[str, bytes]:
+        # Docstring inherited.
+        range_headers = {"Accept-Encoding": "identity"}
+        if end is None:
+            range_headers.update({"Range": f"bytes={start}-"})
+        else:
+            range_headers.update({"Range": f"bytes={start}-{end}"})
+
+        frontend_headers = {} if headers is None else dict(headers)
+        frontend_headers.update(range_headers)
+
+        # Send the GET request to the dCache door but don't follow redirections
+        # automatically. We need to be able to add a `Connection: close`
+        # request header when sending the request to the dCache pool we
+        # will be redirected to.
+        #
+        # We don't send that header to the door since we want to keep the
+        # network connection with the door open for later reuse.
+        final_url, resp = self.get(url, headers=frontend_headers, redirect=False)
+        match resp.status:
+            case HTTPStatus.PARTIAL_CONTENT:
+                return final_url, resp.data
+            case status if status not in resp.REDIRECT_STATUSES:
+                raise unexpected_status_error("GET (with 'Range' header)", url, resp)
+            case _:
+                pass
+
+        # We were redirected to the dCache pool. Follow the redirection and
+        # add a `Connection: close` header to notify the mover to stop its
+        # execution after serving this request.
+        backend_headers = {} if headers is None else dict(headers)
+        backend_headers.update(range_headers)
+        backend_headers.update({"Connection": "close"})
+
+        redirect_url = resp.headers.get("Location")
+        _, resp = self.get(redirect_url, headers=backend_headers, redirect=True)
+        match resp.status:
+            case HTTPStatus.PARTIAL_CONTENT:
+                # Return the door URL so that subsequent requests (if any)
+                # go through the dCache door instead first of going directly to
+                # the pool since we asked the mover to be stopped.
+                return url, resp.data
+            case _:
+                raise unexpected_status_error("GET (with 'Range' header)", redirect_url, resp)
+
+    @override
+    def _close(self, url: str) -> None:
+        # Docstring inherited.
+
+        # For dCache this is a NOP since `read_range` does not keep the
+        # connection with the dCache pool open.
+        pass
+
 
 class DavClientXrootD(DavClientURLSigner):
     """Client for interacting with a XrootD webDAV server.
@@ -3055,6 +3111,7 @@ class DavClientXrootD(DavClientURLSigner):
         data: BinaryIO | bytes = b"",
     ) -> int | None:
         # Docstring inherited.
+
         # Send a PUT request with empty body to the XRootD frontend server to
         # get redirected to the backend.
         frontend_headers = {} if headers is None else dict(headers)
@@ -3228,6 +3285,7 @@ class DavClientXrootD(DavClientURLSigner):
     @override
     def stat(self, url: str) -> DavFileMetadata:
         # Docstring inherited.
+
         # XRootD v5.9.1 responds "200 OK" to a HEAD request against an
         # existing file. When the target URL is a directory, it also responds
         # "200 OK". In both cases the response header "Content-Length"
@@ -3269,6 +3327,46 @@ class DavClientXrootD(DavClientURLSigner):
                 return DavFileMetadata(base_url=url, exists=False)
             case _:
                 raise unexpected_status_error("HEAD", url, resp)
+
+    @override
+    def read_range(
+        self,
+        url: str,
+        start: int,
+        end: int | None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[str, bytes]:
+        # Docstring inherited.
+
+        # Send the request to the XRootD redirector and follow
+        # redirections automatically.
+        #
+        # The network connection with the redirector and with the backend
+        # file server are left open for later reuse.
+        range_headers = {"Accept-Encoding": "identity"}
+        if end is None:
+            range_headers.update({"Range": f"bytes={start}-"})
+        else:
+            range_headers.update({"Range": f"bytes={start}-{end}"})
+
+        get_headers = {} if headers is None else dict(headers)
+        get_headers.update(range_headers)
+
+        final_url, resp = self.get(url, headers=get_headers, redirect=True)
+        match resp.status:
+            case HTTPStatus.PARTIAL_CONTENT:
+                return final_url, resp.data
+            case _:
+                raise unexpected_status_error("GET (with 'Range' header)", url, resp)
+
+    @override
+    def _close(self, url: str) -> None:
+        # Docstring inherited.
+
+        # Send a `HEAD` request with a `Connection: close` header to notify
+        # the remote server that we are not sending other GET requests with
+        # `Range` header for this URL.
+        self._request("HEAD", url=url, headers={"Connection": "close"}, redirect=False)
 
 
 class DavFileMetadata:
