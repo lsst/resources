@@ -1,3 +1,13 @@
+Resources v30.0.11 (2026-08-12)
+===============================
+
+Performance Enhancement
+-----------------------
+
+* Ranged GET requests over webDAV are now handled by per-endpoint specializations of the client's ``read_range`` method, so that dCache no longer reuses the connection to a pool mover, while XRootD and generic servers keep their connections open for reuse and release them explicitly when the file handle is closed.
+  Request retry handling was also broadened to cover status, redirect, and other error categories, with a bounded redirect count to avoid infinite redirect loops. (`DM-55324 <https://rubinobs.atlassian.net/browse/DM-55324>`_)
+
+
 Resources v30.0.10 (2026-07-20)
 ===============================
 
