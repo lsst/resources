@@ -73,7 +73,7 @@ jobs:
           docker run -d --name fake-gcs-server -p 4443:4443 \
             fsouza/fake-gcs-server -scheme http -filesystem-root /tmp/fake-gcs-server
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl --silent --fail http://127.0.0.1:4443/storage/v1/b >/dev/null; then
               exit 0
             fi
