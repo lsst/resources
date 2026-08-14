@@ -15,7 +15,7 @@ from types import TracebackType
 __all__ = ("BaseResourceHandle", "CloseStatus", "ResourceHandleProtocol")
 
 import logging
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from enum import Enum, auto
 from io import SEEK_SET
@@ -48,16 +48,19 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     `.BaseResourceHandle` is expected.
     """
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def mode(self) -> str: ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def name(self) -> str: ...
 
     @abstractmethod
     def close(self) -> None: ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def closed(self) -> bool: ...
 
     @abstractmethod
@@ -66,7 +69,8 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     @abstractmethod
     def flush(self) -> None: ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def isatty(self) -> bool | Callable[[], bool]: ...
 
     @abstractmethod
