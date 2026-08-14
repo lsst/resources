@@ -21,6 +21,7 @@ import posixpath
 import random
 import re
 import stat
+import sys
 import threading
 import time
 import uuid
@@ -29,10 +30,10 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any, BinaryIO
 
-try:
-    from typing import override  # Python 3.12+
-except ImportError:
-    from typing_extensions import override  # Python 3.11
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 

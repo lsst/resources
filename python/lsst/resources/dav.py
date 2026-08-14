@@ -20,15 +20,16 @@ import io
 import logging
 import os
 import re
+import sys
 import threading
-import urllib
+import urllib.parse
 from collections.abc import Generator, Iterator
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
-try:
-    from typing import override  # Python 3.12+
-except ImportError:
-    from typing_extensions import override  # Python 3.11
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 try:
     import fsspec
