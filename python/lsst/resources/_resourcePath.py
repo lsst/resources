@@ -417,6 +417,11 @@ class ResourcePath:  # numpydoc ignore=PR02
                 from .eups import EupsResourcePath
 
                 subclass = EupsResourcePath
+            elif parsed.scheme == "remote-test":
+                # EUPS package root.
+                from .remote_test import RemoteTestResourcePath
+
+                subclass = RemoteTestResourcePath
             else:
                 raise NotImplementedError(
                     f"No URI support for scheme: '{parsed.scheme}' in {parsed.geturl()}"
