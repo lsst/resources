@@ -38,6 +38,10 @@ try:
 except ImportError:
     import xml.etree.ElementTree as eTree
 
+# defusedxml hardens the parser but still builds trees out of the standard
+# library element type, which is the only one it re-exports.
+from xml.etree.ElementTree import Element
+
 try:
     import fsspec
     from aiohttp import ClientSession, ClientTimeout, TCPConnector
@@ -2184,7 +2188,7 @@ class DavProperty:
 
     Parameters
     ----------
-    response : `eTree.Element` or `None`
+    response : `~xml.etree.ElementTree.Element` or `None`
         The XML response defining the DAV property.
     """
 
@@ -2192,7 +2196,7 @@ class DavProperty:
     # PROPFIND response's 'propstat' element.
     _status_ok_rex = re.compile(r"^HTTP/.* 200 .*$", re.IGNORECASE)
 
-    def __init__(self, response: eTree.Element | None):
+    def __init__(self, response: Element | None):
         self._href: str = ""
         self._displayname: str = ""
         self._collection: bool = False
@@ -2202,7 +2206,7 @@ class DavProperty:
         if response is not None:
             self._parse(response)
 
-    def _parse(self, response: eTree.Element) -> None:
+    def _parse(self, response: Element) -> None:
         # Extract 'href'.
         if (element := response.find("./{DAV:}href")) is not None:
             # We need to use "str(element.text)"" instead of "element.text" to
