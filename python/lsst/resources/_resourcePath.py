@@ -29,17 +29,20 @@ import urllib.parse
 from collections import defaultdict
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
-from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
+from collections.abc import Generator, Iterable, Iterator
+from typing import Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from .utils import _get_num_workers, get_tempdir
@@ -110,7 +113,7 @@ def _get_executor_class() -> _EXECUTOR_TYPE:
 
 
 @contextlib.contextmanager
-def _patch_environ(new_values: dict[str, str]) -> Iterator[None]:
+def _patch_environ(new_values: dict[str, str]) -> Generator[None]:
     """Patch os.environ temporarily using the supplied values.
 
     Parameters
@@ -972,7 +975,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     @classmethod
     def _group_uris(cls, uris: Iterable[ResourcePath]) -> dict[type[ResourcePath], list[ResourcePath]]:
         """Group URIs by class/scheme."""
-        grouped: dict[type, list[ResourcePath]] = defaultdict(list)
+        grouped: dict[type[ResourcePath], list[ResourcePath]] = defaultdict(list)
         for uri in uris:
             grouped[uri.__class__].append(uri)
         return grouped
@@ -1312,7 +1315,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
 
         This is a helper function for `as_local` context manager.
@@ -1340,7 +1343,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     @contextlib.contextmanager
     def as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePathExpression | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
 
         Parameters
@@ -1393,7 +1396,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         prefix: ResourcePath | None = None,
         suffix: str | None = None,
         delete: bool = True,
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Create a temporary file-like URI.
 
         Parameters
@@ -1803,7 +1806,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         *,
         encoding: str | None = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         """Return a context manager that wraps an object that behaves like an
         open file at the location of the URI.
 
@@ -1859,7 +1862,10 @@ class ResourcePath:  # numpydoc ignore=PR02
                     "ResourcePath implementations for which as_local is not "
                     "a temporary must reimplement `open`."
                 )
-                with open(local_uri.ospath, mode=mode, encoding=encoding) as file_buffer:
+                # An encoding is ignored for binary IO, so do not let the
+                # builtin open() reject it.
+                encoding_arg = None if "b" in mode else encoding
+                with open(local_uri.ospath, mode=mode, encoding=encoding_arg) as file_buffer:
                     if "a" in mode:
                         file_buffer.seek(0, io.SEEK_END)
                     yield file_buffer
@@ -1870,7 +1876,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                 yield handle
 
     @contextlib.contextmanager
-    def _openImpl(self, mode: str = "r", *, encoding: str | None = None) -> Iterator[ResourceHandleProtocol]:
+    def _openImpl(self, mode: str = "r", *, encoding: str | None = None) -> Generator[ResourceHandleProtocol]:
         """Implement opening of a resource handle.
 
         This private method may be overridden by specific `ResourcePath`

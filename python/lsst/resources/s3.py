@@ -23,10 +23,11 @@ import re
 import sys
 import threading
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from functools import cache, cached_property
 from typing import IO, TYPE_CHECKING, cast
 
+from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 
 from lsst.utils.iteration import chunk_iterable
@@ -58,21 +59,22 @@ from .s3utils import (
 from .utils import _get_num_workers
 
 try:
-    from boto3.s3.transfer import TransferConfig  # type: ignore
+    from boto3.s3.transfer import TransferConfig
 except ImportError:
-    TransferConfig = None
+    # Hidden from type checkers so that the names above keep the types they
+    # have when the optional dependency is installed.
+    if not TYPE_CHECKING:
+        TransferConfig = None
 
 try:
     import s3fs
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    s3fs = None
-    AbstractFileSystem = type
+    if not TYPE_CHECKING:
+        s3fs = None
+        AbstractFileSystem = type
 
 if TYPE_CHECKING:
-    with contextlib.suppress(ImportError):
-        import boto3
-
     from .utils import TransactionProtocol
 
 
@@ -177,7 +179,7 @@ class S3ResourcePath(ResourcePath):
         return use_threads
 
     @contextlib.contextmanager
-    def _use_threads_temp_override(self, multithreaded: bool) -> Iterator:
+    def _use_threads_temp_override(self, multithreaded: bool) -> Generator[None]:
         """Temporarily override the value of use_threads."""
         original = self.use_threads
         self.use_threads = multithreaded
@@ -197,7 +199,7 @@ class S3ResourcePath(ResourcePath):
         return transfer_config
 
     @property
-    def client(self) -> boto3.client:
+    def client(self) -> BaseClient:
         """Client object to address remote resource."""
         return getS3Client(self._profile)
 
@@ -350,7 +352,7 @@ class S3ResourcePath(ResourcePath):
     @classmethod
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
     def _delete_related_objects(
-        cls, client: boto3.client, bucket: str, keys: list[dict[str, str]]
+        cls, client: BaseClient, bucket: str, keys: list[dict[str, str]]
     ) -> dict[str, MBulkResult]:
         # Delete multiple objects from the same bucket, allowing for backoff
         # retry.
@@ -547,7 +549,7 @@ class S3ResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Download object from S3 and place in temporary directory.
 
         Parameters
@@ -786,7 +788,7 @@ class S3ResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         with S3ResourceHandle(mode, log, self) as handle:
             if "b" in mode:
                 yield handle

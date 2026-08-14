@@ -20,22 +20,26 @@ import io
 import logging
 import os
 import re
+import sys
 import threading
-import urllib
-from collections.abc import Iterator
+import urllib.parse
+from collections.abc import Generator, Iterator
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
-try:
-    from typing import override  # Python 3.12+
-except ImportError:
-    from typing_extensions import override  # Python 3.11
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._davResourceHandle import DavReadResourceHandle
@@ -352,7 +356,7 @@ class DavResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Download object and place in temporary directory.
 
         Parameters
@@ -471,7 +475,11 @@ class DavResourcePath(ResourcePath):
                 root.join(file).remove()
 
             for subdir in subdirs:
-                DavResourcePath(root.join(subdir, forceDirectory=True)).remove_dir(recursive=recursive)
+                child = DavResourcePath(root.join(subdir, forceDirectory=True))
+                # ResourcePath.__new__ is a scheme-dispatching factory
+                # declared as returning the base class; ty honors that
+                # declaration and mypy does not.
+                child.remove_dir(recursive=recursive)  # ty: ignore[unresolved-attribute]
 
         # Remove empty top directory
         self.remove()
@@ -748,7 +756,7 @@ class DavResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         log.debug("DavResourcePath._openImpl: %s mode: %s", self, mode)
 
         if mode in ("rb", "r") and self._client.accepts_ranges(self._internal_url):
@@ -848,10 +856,11 @@ class DavFileSystem(AbstractFileSystem):
         self,
         path: str,
         mode: str = "rb",
-        encoding: str | None = None,
         block_size: int | None = None,
         cache_options: dict[Any, Any] | None = None,
         compression: str | None = None,
+        *,
+        encoding: str | None = None,
         **kwargs: Any,
     ) -> DavReadResourceHandle | io.TextIOWrapper:
         log.debug(

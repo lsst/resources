@@ -15,7 +15,7 @@ from types import TracebackType
 __all__ = ("BaseResourceHandle", "CloseStatus", "ResourceHandleProtocol")
 
 import logging
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from enum import Enum, auto
 from io import SEEK_SET
@@ -48,16 +48,19 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     `.BaseResourceHandle` is expected.
     """
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def mode(self) -> str: ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def name(self) -> str: ...
 
     @abstractmethod
     def close(self) -> None: ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def closed(self) -> bool: ...
 
     @abstractmethod
@@ -66,17 +69,18 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     @abstractmethod
     def flush(self) -> None: ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def isatty(self) -> bool | Callable[[], bool]: ...
 
     @abstractmethod
     def readable(self) -> bool: ...
 
     @abstractmethod
-    def readline(self, size: int = -1) -> U: ...
+    def readline(self, size: int = -1, /) -> U: ...
 
     @abstractmethod
-    def readlines(self, hint: int = -1) -> Iterable[U]: ...
+    def readlines(self, hint: int = -1, /) -> Iterable[U]: ...
 
     @abstractmethod
     def seek(self, offset: int, whence: int = SEEK_SET, /) -> int:
@@ -89,7 +93,7 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     def tell(self) -> int: ...
 
     @abstractmethod
-    def truncate(self, size: int | None = None) -> int: ...
+    def truncate(self, size: int | None = None, /) -> int: ...
 
     @abstractmethod
     def writable(self) -> bool: ...
@@ -98,7 +102,7 @@ class ResourceHandleProtocol(Protocol, Generic[U]):
     def writelines(self, lines: Iterable[U], /) -> None: ...
 
     @abstractmethod
-    def read(self, size: int = -1) -> U: ...
+    def read(self, size: int = -1, /) -> U: ...
 
     @abstractmethod
     def write(self, b: U, /) -> int: ...

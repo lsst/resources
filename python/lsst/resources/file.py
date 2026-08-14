@@ -24,10 +24,11 @@ import re
 import shutil
 import stat
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
+from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._fileResourceHandle import FileResourceHandle
 from ._resourcePath import ResourceInfo, ResourcePath
 from .utils import NoTransaction, ensure_directory_is_writeable, os2posix, posix2os
@@ -36,8 +37,11 @@ try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 if TYPE_CHECKING:
     from importlib.resources.abc import Traversable
@@ -117,7 +121,7 @@ class FileResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Return the local path of the file.
 
         This is an internal helper for ``as_local()``.
@@ -559,9 +563,9 @@ class FileResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Iterator[IO]:
+    ) -> Generator[ResourceHandleProtocol]:
         with FileResourceHandle(mode=mode, log=log, uri=self, encoding=encoding) as buffer:
-            yield buffer  # type: ignore
+            yield buffer
 
     def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
         """Return an abstract file system and path that can be used by fsspec.

@@ -21,18 +21,19 @@ import posixpath
 import random
 import re
 import stat
+import sys
 import threading
 import time
 import uuid
 import xml.etree.ElementTree as eTree
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
-try:
-    from typing import override  # Python 3.12+
-except ImportError:
-    from typing_extensions import override  # Python 3.11
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -40,8 +41,11 @@ try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 import yaml
 from astropy import units as u

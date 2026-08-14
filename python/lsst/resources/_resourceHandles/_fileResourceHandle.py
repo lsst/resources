@@ -37,7 +37,8 @@ class FileResourceHandle(BaseResourceHandle[U]):
     uri : `lsst.resources.ResourcePath`
         URI of the file on the filesystem to use.
     encoding : `str` or None
-        Optionally supply the encoding of the file.
+        Optionally supply the encoding of the file. If a file is opened in
+        binary mode, this argument is not used.
     newline : `str`
         When doing multiline operations, break the stream on given character.
         Defaults to newline. If a file is opened in binary mode, this argument
@@ -55,9 +56,15 @@ class FileResourceHandle(BaseResourceHandle[U]):
     ):
         super().__init__(mode, log, uri, newline=newline)
         self._filename = uri.ospath
-        # opening a file in binary mode does not support a newline argument
-        newline_arg = None if "b" in mode else newline
-        self._fileHandle: IO = open(file=uri.ospath, mode=self._mode, newline=newline_arg, encoding=encoding)
+        # Opening a file in binary mode supports neither a newline nor an
+        # encoding argument. ResourcePath.open documents encoding as being
+        # ignored for binary IO, so drop it rather than letting open() raise.
+        binary = "b" in mode
+        newline_arg = None if binary else newline
+        encoding_arg = None if binary else encoding
+        self._fileHandle: IO = open(
+            file=uri.ospath, mode=self._mode, newline=newline_arg, encoding=encoding_arg
+        )
 
     @property
     def name(self) -> str:

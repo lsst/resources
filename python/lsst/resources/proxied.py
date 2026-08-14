@@ -18,7 +18,8 @@ import dataclasses
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
+from typing import TYPE_CHECKING
 
 from ._resourcePath import ResourceHandleProtocol, ResourceInfo, ResourcePath, ResourcePathExpression
 from .utils import TransactionProtocol
@@ -27,8 +28,11 @@ try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 
 log = logging.getLogger(__name__)
@@ -92,7 +96,7 @@ class ProxiedResourcePath(ABC, ResourcePath):
     @contextlib.contextmanager
     def as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePathExpression | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         proxy = self._get_proxy()
         with proxy.as_local(multithreaded=multithreaded, tmpdir=tmpdir) as loc:
             yield loc
@@ -104,7 +108,7 @@ class ProxiedResourcePath(ABC, ResourcePath):
         *,
         encoding: str | None = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         proxy = self._get_proxy()
         with proxy.open(mode, encoding=encoding, prefer_file_temporary=prefer_file_temporary) as fh:
             yield fh

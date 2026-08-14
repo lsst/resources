@@ -1,0 +1,3 @@
+``ResourcePath.open()`` no longer raises ``ValueError`` when an ``encoding`` is supplied along with a binary mode.
+The encoding is now ignored for binary IO, as the documentation has always specified.
+This affects ``file`` URIs and any scheme opened with ``prefer_file_temporary=True``.

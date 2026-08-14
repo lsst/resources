@@ -27,16 +27,25 @@ import random
 import re
 import ssl
 import stat
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
-try:
-    # Prefer 'defusedxml' (not part of standard library) if available, since
-    # 'xml' is vulnerable to XML bombs.
-    import defusedxml.ElementTree as eTree
-except ImportError:
+if TYPE_CHECKING:
+    # defusedxml ships no type information, so let type checkers see the
+    # standard library module that it hardens and mirrors.
     import xml.etree.ElementTree as eTree
+else:
+    try:
+        # Prefer 'defusedxml' (not part of standard library) if available,
+        # since 'xml' is vulnerable to XML bombs.
+        import defusedxml.ElementTree as eTree
+    except ImportError:
+        import xml.etree.ElementTree as eTree
+
+# defusedxml hardens the parser but still builds trees out of the standard
+# library element type, which is the only one it re-exports.
+from xml.etree.ElementTree import Element
 
 try:
     import fsspec
@@ -44,9 +53,12 @@ try:
     from fsspec.implementations.http import HTTPFileSystem
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
-    HTTPFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
+        HTTPFileSystem = type
 
 from urllib.parse import parse_qs
 
@@ -431,9 +443,10 @@ def _get_dav_and_server_headers(path: ResourcePath | str) -> tuple[str | None, s
 
         config = HttpResourcePathConfig()
         with SessionStore(config=config).get(path) as session:
-            resp = session.options(
-                str(path), stream=False, timeout=config.timeout, headers=path._extra_headers
-            )
+            # ResourcePath.__new__ is a scheme-dispatching factory declared as
+            # returning the base class, which ty honors and mypy does not.
+            headers = path._extra_headers  # ty: ignore[unresolved-attribute]
+            resp = session.options(str(path), stream=False, timeout=config.timeout, headers=headers)
 
             dav_header = server_header = None
             if resp.status_code == requests.codes.ok:
@@ -490,12 +503,14 @@ class BearerTokenAuth(AuthBase):
             with open(self._path) as f:
                 self._token = f.read().rstrip("\n")
 
-    def __call__(self, req: requests.PreparedRequest) -> requests.PreparedRequest:
+    def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
+        # Parameter is named to match requests.auth.AuthBase.__call__, which
+        # callers may invoke by keyword.
         # Only add a bearer token to a request when using secure HTTP.
-        if req.url and req.url.lower().startswith("https://") and self._token:
+        if r.url and r.url.lower().startswith("https://") and self._token:
             self._refresh()
-            req.headers["Authorization"] = f"Bearer {self._token}"
-        return req
+            r.headers["Authorization"] = f"Bearer {self._token}"
+        return r
 
 
 class SessionStore:
@@ -1555,7 +1570,7 @@ class HttpResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Download object over HTTP and place in temporary directory.
 
         Parameters
@@ -2035,7 +2050,7 @@ class HttpResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         resp = self._head()
         accepts_range = resp.status_code == requests.codes.ok and resp.headers.get("Accept-Ranges") == "bytes"
         handle: ResourceHandleProtocol
@@ -2178,7 +2193,7 @@ class DavProperty:
 
     Parameters
     ----------
-    response : `eTree.Element` or `None`
+    response : `~xml.etree.ElementTree.Element` or `None`
         The XML response defining the DAV property.
     """
 
@@ -2186,7 +2201,7 @@ class DavProperty:
     # PROPFIND response's 'propstat' element.
     _status_ok_rex = re.compile(r"^HTTP/.* 200 .*$", re.IGNORECASE)
 
-    def __init__(self, response: eTree.Element | None):
+    def __init__(self, response: Element | None):
         self._href: str = ""
         self._displayname: str = ""
         self._collection: bool = False
@@ -2196,7 +2211,7 @@ class DavProperty:
         if response is not None:
             self._parse(response)
 
-    def _parse(self, response: eTree.Element) -> None:
+    def _parse(self, response: Element) -> None:
         # Extract 'href'.
         if (element := response.find("./{DAV:}href")) is not None:
             # We need to use "str(element.text)"" instead of "element.text" to

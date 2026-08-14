@@ -1,0 +1,37 @@
+name: Run ty
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ty:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Need to clone everything for the git tags.
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.13"
+          activate-environment: true
+
+      - name: Install dependencies
+        run: |
+          uv pip install '.[s3,https,gs]'
+          uv pip install -r types.txt
+
+      - name: Run ty
+        # ty writes absolute paths into its GitHub annotations; strip the
+        # workspace prefix so they attach to files in the diff.
+        shell: bash
+        run: uvx ty check --output-format github python | sed "s|$GITHUB_WORKSPACE/||g"

@@ -25,4 +25,6 @@ jobs:
           python -m pip install numpydoc
 
       - name: Validate docstrings
-        run: python -m numpydoc.hooks.validate_docstrings $(find python -name "*.py")
+        run: |
+          mapfile -t files < <(find python -name "*.py")
+          python -m numpydoc.hooks.validate_docstrings "${files[@]}"
