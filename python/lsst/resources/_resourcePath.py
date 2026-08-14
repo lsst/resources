@@ -1862,7 +1862,10 @@ class ResourcePath:  # numpydoc ignore=PR02
                     "ResourcePath implementations for which as_local is not "
                     "a temporary must reimplement `open`."
                 )
-                with open(local_uri.ospath, mode=mode, encoding=encoding) as file_buffer:
+                # An encoding is ignored for binary IO, so do not let the
+                # builtin open() reject it.
+                encoding_arg = None if "b" in mode else encoding
+                with open(local_uri.ospath, mode=mode, encoding=encoding_arg) as file_buffer:
                     if "a" in mode:
                         file_buffer.seek(0, io.SEEK_END)
                     yield file_buffer

@@ -1097,6 +1097,10 @@ class GenericReadWriteTestCase(_GenericTestCase):
         with ResourcePath.temporary_uri(prefix=tmpdir, suffix=".dat") as tmp:
             _check_open(self, tmp, mode_suffixes=("b",))
             _check_open(self, tmp, mode_suffixes=("b",), prefer_file_temporary=True)
+            # An encoding is documented as being ignored for binary IO, so
+            # supplying one must not change the content or raise.
+            _check_open(self, tmp, mode_suffixes=("b",), encoding="utf-16")
+            _check_open(self, tmp, mode_suffixes=("b",), encoding="utf-16", prefer_file_temporary=True)
 
         with self.assertRaises(IsADirectoryError):
             with self.root_uri.open():
