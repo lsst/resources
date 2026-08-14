@@ -27,6 +27,7 @@ from collections.abc import Generator, Iterable, Iterator
 from functools import cache, cached_property
 from typing import IO, TYPE_CHECKING, cast
 
+from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 
 from lsst.utils.iteration import chunk_iterable
@@ -58,21 +59,22 @@ from .s3utils import (
 from .utils import _get_num_workers
 
 try:
-    from boto3.s3.transfer import TransferConfig  # type: ignore
+    from boto3.s3.transfer import TransferConfig
 except ImportError:
-    TransferConfig = None
+    # Hidden from type checkers so that the names above keep the types they
+    # have when the optional dependency is installed.
+    if not TYPE_CHECKING:
+        TransferConfig = None
 
 try:
     import s3fs
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    s3fs = None
-    AbstractFileSystem = type
+    if not TYPE_CHECKING:
+        s3fs = None
+        AbstractFileSystem = type
 
 if TYPE_CHECKING:
-    with contextlib.suppress(ImportError):
-        import boto3
-
     from .utils import TransactionProtocol
 
 
@@ -197,7 +199,7 @@ class S3ResourcePath(ResourcePath):
         return transfer_config
 
     @property
-    def client(self) -> boto3.client:
+    def client(self) -> BaseClient:
         """Client object to address remote resource."""
         return getS3Client(self._profile)
 
@@ -350,7 +352,7 @@ class S3ResourcePath(ResourcePath):
     @classmethod
     @backoff.on_exception(backoff.expo, retryable_io_errors, max_time=max_retry_time)
     def _delete_related_objects(
-        cls, client: boto3.client, bucket: str, keys: list[dict[str, str]]
+        cls, client: BaseClient, bucket: str, keys: list[dict[str, str]]
     ) -> dict[str, MBulkResult]:
         # Delete multiple objects from the same bucket, allowing for backoff
         # retry.

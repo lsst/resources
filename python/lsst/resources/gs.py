@@ -35,39 +35,42 @@ try:
         TooManyRequests,
     )
 except ImportError:
-    storage = None
-    retry = None
+    # Hidden from type checkers so that the names above keep the types they
+    # have when google-cloud-storage is installed.
+    if not TYPE_CHECKING:
+        storage = None
+        retry = None
 
-    # Must also fake the exception classes.
-    class ClientError(Exception):
-        """Generic client error."""
+        # Must also fake the exception classes.
+        class ClientError(Exception):
+            """Generic client error."""
 
-        pass
+            pass
 
-    class NotFound(ClientError):  # type: ignore  # noqa: N818
-        """Resource not found error."""
+        class NotFound(ClientError):  # noqa: N818
+            """Resource not found error."""
 
-        pass
+            pass
 
-    class TooManyRequests(ClientError):  # type: ignore  # noqa: N818
-        """Too many requests error."""
+        class TooManyRequests(ClientError):  # noqa: N818
+            """Too many requests error."""
 
-        pass
+            pass
 
-    class InternalServerError(ClientError):  # type: ignore
-        """Internal server error."""
+        class InternalServerError(ClientError):
+            """Internal server error."""
 
-        pass
+            pass
 
-    class BadGateway(ClientError):  # type: ignore  # noqa: N818
-        """Bad gateway error."""
+        class BadGateway(ClientError):  # noqa: N818
+            """Bad gateway error."""
 
-        pass
+            pass
 
-    class ServiceUnavailable(ClientError):  # type: ignore  # noqa: N818
-        """Service unavailable error."""
+        class ServiceUnavailable(ClientError):  # noqa: N818
+            """Service unavailable error."""
 
-        pass
+            pass
 
 
 from lsst.utils.timer import time_this

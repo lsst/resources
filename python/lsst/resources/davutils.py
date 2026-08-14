@@ -28,7 +28,7 @@ import uuid
 import xml.etree.ElementTree as eTree
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -41,8 +41,11 @@ try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 import yaml
 from astropy import units as u

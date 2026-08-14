@@ -32,9 +32,10 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
-from typing import Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from unittest.mock import patch
 
+from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 from botocore.handlers import validate_bucket_name
 from urllib3.exceptions import HTTPError, RequestError
@@ -43,12 +44,16 @@ from urllib3.util import Url, parse_url
 try:
     import boto3
 except ImportError:
-    boto3 = None
+    # Hidden from type checkers so that ``boto3`` keeps the type it has when
+    # the optional dependency is installed.
+    if not TYPE_CHECKING:
+        boto3 = None
 
 try:
-    import botocore
+    import botocore.config
 except ImportError:
-    botocore = None
+    if not TYPE_CHECKING:
+        botocore = None
 
 
 from ._resourcePath import ResourcePath
@@ -147,7 +152,7 @@ def clean_test_environment_for_s3() -> Generator[None]:
         yield
 
 
-def getS3Client(profile: str | None = None) -> boto3.client:
+def getS3Client(profile: str | None = None) -> BaseClient:
     """Create a S3 client with AWS (default) or the specified endpoint.
 
     Parameters
@@ -230,7 +235,7 @@ def _get_s3_connection_parameters(profile: str | None = None) -> _EndpointConfig
     return _parse_endpoint_config(endpoint, profile)
 
 
-def _s3_disable_bucket_validation(client: boto3.client) -> None:
+def _s3_disable_bucket_validation(client: BaseClient) -> None:
     """Disable the bucket name validation in the client.
 
     This removes the ``validate_bucket_name`` handler from the handlers
@@ -245,7 +250,7 @@ def _s3_disable_bucket_validation(client: boto3.client) -> None:
 
 
 @functools.lru_cache
-def _get_s3_client(endpoint_config: _EndpointConfig, skip_validation: bool) -> boto3.client:
+def _get_s3_client(endpoint_config: _EndpointConfig, skip_validation: bool) -> BaseClient:
     # Helper function to cache the client for this endpoint
     # boto seems to assume it will always have at least 10 available.
     max_pool_size = max(_get_num_workers(), 10)
@@ -313,7 +318,7 @@ def _parse_endpoint_config(endpoint: str | None, profile: str | None = None) -> 
 def s3CheckFileExists(
     path: Location | ResourcePath | str,
     bucket: str | None = None,
-    client: boto3.client | None = None,
+    client: BaseClient | None = None,
 ) -> tuple[bool, int]:
     """Return if the file exists in the bucket or not.
 
@@ -389,7 +394,7 @@ def s3CheckFileExists(
         raise
 
 
-def bucketExists(bucketName: str, client: boto3.client | None = None) -> bool:
+def bucketExists(bucketName: str, client: BaseClient | None = None) -> bool:
     """Check if the S3 bucket with the given name actually exists.
 
     Parameters

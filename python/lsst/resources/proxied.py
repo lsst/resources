@@ -19,6 +19,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Generator, Iterator
+from typing import TYPE_CHECKING
 
 from ._resourcePath import ResourceHandleProtocol, ResourceInfo, ResourcePath, ResourcePathExpression
 from .utils import TransactionProtocol
@@ -27,8 +28,11 @@ try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 
 log = logging.getLogger(__name__)

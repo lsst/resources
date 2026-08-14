@@ -21,12 +21,7 @@ from importlib import resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    try:
-        import fsspec
-        from fsspec.spec import AbstractFileSystem
-    except ImportError:
-        fsspec = None
-        AbstractFileSystem = type
+    from fsspec.spec import AbstractFileSystem
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourcePath import ResourceInfo, ResourcePath, ResourcePathExpression

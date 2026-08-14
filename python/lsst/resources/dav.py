@@ -35,8 +35,11 @@ try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._davResourceHandle import DavReadResourceHandle

@@ -29,17 +29,20 @@ import urllib.parse
 from collections import defaultdict
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 try:
     import fsspec
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
 
 from collections.abc import Generator, Iterable, Iterator
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
+from typing import Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from .utils import _get_num_workers, get_tempdir

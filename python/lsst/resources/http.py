@@ -44,9 +44,12 @@ try:
     from fsspec.implementations.http import HTTPFileSystem
     from fsspec.spec import AbstractFileSystem
 except ImportError:
-    fsspec = None
-    AbstractFileSystem = type
-    HTTPFileSystem = type
+    # Hidden from type checkers so that the names above keep the types they
+    # have when fsspec is installed.
+    if not TYPE_CHECKING:
+        fsspec = None
+        AbstractFileSystem = type
+        HTTPFileSystem = type
 
 from urllib.parse import parse_qs
 
