@@ -27,7 +27,7 @@ import random
 import re
 import ssl
 import stat
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
@@ -1555,7 +1555,7 @@ class HttpResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Download object over HTTP and place in temporary directory.
 
         Parameters
@@ -2035,7 +2035,7 @@ class HttpResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         resp = self._head()
         accepts_range = resp.status_code == requests.codes.ok and resp.headers.get("Accept-Ranges") == "bytes"
         handle: ResourceHandleProtocol

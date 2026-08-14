@@ -24,7 +24,7 @@ import re
 import shutil
 import stat
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
@@ -117,7 +117,7 @@ class FileResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Return the local path of the file.
 
         This is an internal helper for ``as_local()``.
@@ -559,7 +559,7 @@ class FileResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Iterator[IO]:
+    ) -> Generator[IO, None, None]:
         with FileResourceHandle(mode=mode, log=log, uri=self, encoding=encoding) as buffer:
             yield buffer  # type: ignore
 

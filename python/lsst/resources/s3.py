@@ -23,7 +23,7 @@ import re
 import sys
 import threading
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from functools import cache, cached_property
 from typing import IO, TYPE_CHECKING, cast
 
@@ -177,7 +177,7 @@ class S3ResourcePath(ResourcePath):
         return use_threads
 
     @contextlib.contextmanager
-    def _use_threads_temp_override(self, multithreaded: bool) -> Iterator:
+    def _use_threads_temp_override(self, multithreaded: bool) -> Generator[None]:
         """Temporarily override the value of use_threads."""
         original = self.use_threads
         self.use_threads = multithreaded
@@ -547,7 +547,7 @@ class S3ResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Download object from S3 and place in temporary directory.
 
         Parameters
@@ -786,7 +786,7 @@ class S3ResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         with S3ResourceHandle(mode, log, self) as handle:
             if "b" in mode:
                 yield handle

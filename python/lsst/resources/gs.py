@@ -19,7 +19,7 @@ import contextlib
 import datetime
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from typing import TYPE_CHECKING
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
@@ -277,7 +277,7 @@ class GSResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         with (
             ResourcePath.temporary_uri(prefix=tmpdir, suffix=self.getExtension(), delete=True) as tmp_uri,
             time_this(log, msg="Downloading %s to local file", args=(self,)),
@@ -366,7 +366,7 @@ class GSResourcePath(ResourcePath):
         *,
         encoding: str | None = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         # Docstring inherited
         if self.isdir() or self.is_root:
             raise IsADirectoryError(f"Can not 'open' a directory URI: {self}")

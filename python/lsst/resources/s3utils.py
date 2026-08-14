@@ -28,7 +28,7 @@ import functools
 import os
 import re
 import urllib.parse
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from http.client import HTTPException, ImproperConnectionState
 from types import ModuleType
@@ -118,7 +118,7 @@ max_retry_time = 60
 
 
 @contextmanager
-def clean_test_environment_for_s3() -> Iterator[None]:
+def clean_test_environment_for_s3() -> Generator[None]:
     """Reset S3 environment to ensure that unit tests with a mock S3 can't
     accidentally reference real infrastructure.
     """

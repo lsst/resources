@@ -16,7 +16,7 @@ __all__ = ("PackageResourcePath",)
 import contextlib
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from importlib import resources
 from typing import TYPE_CHECKING
 
@@ -109,7 +109,7 @@ class PackageResourcePath(ResourcePath):
     @contextlib.contextmanager
     def as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePathExpression | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Return the location of the Python resource as local file.
 
         Parameters
@@ -157,7 +157,7 @@ class PackageResourcePath(ResourcePath):
         *,
         encoding: str | None = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         # Docstring inherited.
         if "r" not in mode or "+" in mode:
             raise RuntimeError(f"Package resource URI {self} is read-only.")

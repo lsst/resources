@@ -21,7 +21,7 @@ import posixpath
 import shutil
 import stat
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from functools import cache
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, Protocol
@@ -143,7 +143,7 @@ class NoTransaction:
         return
 
     @contextlib.contextmanager
-    def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Iterator[None]:
+    def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Generator[None]:
         """No-op context manager to replace
         `~lsst.daf.butler.core.datastore.DatastoreTransaction`.
 
@@ -171,7 +171,7 @@ class TransactionProtocol(Protocol):
     """Protocol for type checking transaction interface."""
 
     @contextlib.contextmanager
-    def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Iterator[None]: ...
+    def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Generator[None]: ...
 
 
 def makeTestTempDir(default_base: str | None = None) -> str:

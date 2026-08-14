@@ -14,7 +14,7 @@ from __future__ import annotations
 __all__ = ("InMemoryResourcePath",)
 
 import contextlib
-from collections.abc import Iterator
+from collections.abc import Generator
 
 from ._resourcePath import ResourceInfo, ResourcePath
 
@@ -43,5 +43,5 @@ class InMemoryResourcePath(ResourcePath):
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         raise RuntimeError(f"Do not know how to retrieve data for URI '{self}'")

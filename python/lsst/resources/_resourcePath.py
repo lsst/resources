@@ -38,7 +38,7 @@ except ImportError:
     fsspec = None
     AbstractFileSystem = type
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
@@ -110,7 +110,7 @@ def _get_executor_class() -> _EXECUTOR_TYPE:
 
 
 @contextlib.contextmanager
-def _patch_environ(new_values: dict[str, str]) -> Iterator[None]:
+def _patch_environ(new_values: dict[str, str]) -> Generator[None]:
     """Patch os.environ temporarily using the supplied values.
 
     Parameters
@@ -1312,7 +1312,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     @contextlib.contextmanager
     def _as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePath | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
 
         This is a helper function for `as_local` context manager.
@@ -1340,7 +1340,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     @contextlib.contextmanager
     def as_local(
         self, multithreaded: bool = True, tmpdir: ResourcePathExpression | None = None
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Return the location of the (possibly remote) resource as local file.
 
         Parameters
@@ -1393,7 +1393,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         prefix: ResourcePath | None = None,
         suffix: str | None = None,
         delete: bool = True,
-    ) -> Iterator[ResourcePath]:
+    ) -> Generator[ResourcePath]:
         """Create a temporary file-like URI.
 
         Parameters
@@ -1803,7 +1803,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         *,
         encoding: str | None = None,
         prefer_file_temporary: bool = False,
-    ) -> Iterator[ResourceHandleProtocol]:
+    ) -> Generator[ResourceHandleProtocol]:
         """Return a context manager that wraps an object that behaves like an
         open file at the location of the URI.
 
@@ -1870,7 +1870,7 @@ class ResourcePath:  # numpydoc ignore=PR02
                 yield handle
 
     @contextlib.contextmanager
-    def _openImpl(self, mode: str = "r", *, encoding: str | None = None) -> Iterator[ResourceHandleProtocol]:
+    def _openImpl(self, mode: str = "r", *, encoding: str | None = None) -> Generator[ResourceHandleProtocol]:
         """Implement opening of a resource handle.
 
         This private method may be overridden by specific `ResourcePath`
