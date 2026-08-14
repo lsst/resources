@@ -26,8 +26,9 @@ import stat
 import urllib.parse
 from collections.abc import Generator, Iterator
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
+from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._fileResourceHandle import FileResourceHandle
 from ._resourcePath import ResourceInfo, ResourcePath
 from .utils import NoTransaction, ensure_directory_is_writeable, os2posix, posix2os
@@ -559,9 +560,9 @@ class FileResourcePath(ResourcePath):
         mode: str = "r",
         *,
         encoding: str | None = None,
-    ) -> Generator[IO, None, None]:
+    ) -> Generator[ResourceHandleProtocol]:
         with FileResourceHandle(mode=mode, log=log, uri=self, encoding=encoding) as buffer:
-            yield buffer  # type: ignore
+            yield buffer
 
     def to_fsspec(self) -> tuple[AbstractFileSystem, str]:
         """Return an abstract file system and path that can be used by fsspec.
