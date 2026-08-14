@@ -18,7 +18,7 @@ import logging
 import re
 from collections.abc import Generator, Iterator
 from importlib import resources
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from fsspec.spec import AbstractFileSystem
@@ -159,9 +159,14 @@ class PackageResourcePath(ResourcePath):
         ref = self._get_ref()
         if ref is None:
             raise FileNotFoundError(f"Could not open resource {self}.")
-        # mypy uses the literal value of mode to work out the parameters
-        # and return value but mode here is a variable.
-        with ref.open(mode, encoding=encoding) as buffer:  # type: ignore[call-overload]
+        # Traversable.open is overloaded on the literal mode, so dispatch
+        # explicitly rather than passing the mode variable through.
+        handle: IO[bytes] | IO[str]
+        if "b" in mode:
+            handle = ref.open("rb")
+        else:
+            handle = ref.open("r", encoding=encoding)
+        with handle as buffer:
             yield buffer
 
     def walk(
