@@ -31,12 +31,17 @@ from collections.abc import Generator, Iterator
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
-try:
-    # Prefer 'defusedxml' (not part of standard library) if available, since
-    # 'xml' is vulnerable to XML bombs.
-    import defusedxml.ElementTree as eTree
-except ImportError:
+if TYPE_CHECKING:
+    # defusedxml ships no type information, so let type checkers see the
+    # standard library module that it hardens and mirrors.
     import xml.etree.ElementTree as eTree
+else:
+    try:
+        # Prefer 'defusedxml' (not part of standard library) if available,
+        # since 'xml' is vulnerable to XML bombs.
+        import defusedxml.ElementTree as eTree
+    except ImportError:
+        import xml.etree.ElementTree as eTree
 
 # defusedxml hardens the parser but still builds trees out of the standard
 # library element type, which is the only one it re-exports.
