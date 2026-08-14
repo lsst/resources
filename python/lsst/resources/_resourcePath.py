@@ -972,7 +972,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     @classmethod
     def _group_uris(cls, uris: Iterable[ResourcePath]) -> dict[type[ResourcePath], list[ResourcePath]]:
         """Group URIs by class/scheme."""
-        grouped: dict[type, list[ResourcePath]] = defaultdict(list)
+        grouped: dict[type[ResourcePath], list[ResourcePath]] = defaultdict(list)
         for uri in uris:
             grouped[uri.__class__].append(uri)
         return grouped
