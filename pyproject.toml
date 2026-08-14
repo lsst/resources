@@ -190,6 +190,16 @@ convention = "numpy"
 docstring-code-format = true
 docstring-code-line-length = 79
 
+[tool.ty.environment]
+# Without this ty picks up every "python" directory on PYTHONPATH, which in an
+# EUPS stack is the whole set of installed packages.
+root = ["./python"]
+
+[tool.ty.rules]
+# The cloud backends are optional dependencies guarded by try/except ImportError,
+# so their imports are expected to be unresolvable in a minimal environment.
+unresolved-import = "ignore"
+
 [tool.numpydoc_validation]
 checks = [
     "all",  # All except the rules listed below.
