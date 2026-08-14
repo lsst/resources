@@ -36,6 +36,7 @@ s3 = [
     "backoff >= 1.10",
 ]
 https = [
+    "aiohttp",
     "astropy >= 4.0",
     "requests >= 2.26.0",
     "urllib3 >= 1.25.10",

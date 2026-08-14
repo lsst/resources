@@ -1,5 +1,6 @@
 lsst-utils  @ git+https://github.com/lsst/utils@main
 # optional
+aiohttp
 backoff >= 1.10
 boto3 >= 1.13
 botocore >= 1.15
