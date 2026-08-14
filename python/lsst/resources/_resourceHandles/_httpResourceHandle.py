@@ -110,7 +110,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     def readline(self, size: int = -1) -> bytes:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
-    def readlines(self, size: int = -1) -> Iterable[bytes]:
+    def readlines(self, hint: int = -1) -> Iterable[bytes]:
         raise io.UnsupportedOperation("HttpReadResourceHandles Do not support line by line reading")
 
     def _size(self) -> int:
