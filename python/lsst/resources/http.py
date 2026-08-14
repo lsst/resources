@@ -494,12 +494,14 @@ class BearerTokenAuth(AuthBase):
             with open(self._path) as f:
                 self._token = f.read().rstrip("\n")
 
-    def __call__(self, req: requests.PreparedRequest) -> requests.PreparedRequest:
+    def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
+        # Parameter is named to match requests.auth.AuthBase.__call__, which
+        # callers may invoke by keyword.
         # Only add a bearer token to a request when using secure HTTP.
-        if req.url and req.url.lower().startswith("https://") and self._token:
+        if r.url and r.url.lower().startswith("https://") and self._token:
             self._refresh()
-            req.headers["Authorization"] = f"Bearer {self._token}"
-        return req
+            r.headers["Authorization"] = f"Bearer {self._token}"
+        return r
 
 
 class SessionStore:
