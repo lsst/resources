@@ -12,7 +12,8 @@
 import os
 import unittest
 
-from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
+from lsst.resources import ResourcePath
+from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase, make_remote_test_uri
 from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
@@ -61,6 +62,45 @@ class RemoteTestReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             # Tests that ospath does not raise and that the "local" version
             # of the file is at a different location.
             self.assertNotEqual(loc.ospath, test_file.ospath)
+
+
+class RemoteTestUriTestCase(unittest.TestCase):
+    """Tests for the remote-test URI helper."""
+
+    def setUp(self):
+        self.root = makeTestTempDir(TESTDIR)
+
+    def tearDown(self):
+        removeTestTempDir(self.root)
+
+    def testScheme(self):
+        uri = make_remote_test_uri(self.root)
+        self.assertEqual(uri.scheme, "remote-test")
+        self.assertFalse(uri.isLocal)
+        self.assertEqual(uri.ospath.rstrip("/"), self.root)
+
+    def testSpecialCharacters(self):
+        awkward = os.path.join(self.root, "a dir with spaces")
+        os.makedirs(awkward)
+        uri = make_remote_test_uri(awkward)
+
+        # Interpolating the path into a string that already has a scheme
+        # leaves the spaces unencoded, so the helper has to encode them.
+        naive = ResourcePath(f"remote-test://localhost{awkward}/", forceDirectory=True)
+        self.assertIn(" ", naive.geturl())
+        self.assertNotIn(" ", uri.geturl())
+
+        self.assertEqual(uri.ospath.rstrip("/"), awkward)
+
+        child = uri.join("file.json", forceDirectory=False)
+        child.write(b"{}")
+        self.assertEqual(child.read(), b"{}")
+
+    def testFile(self):
+        uri = make_remote_test_uri(os.path.join(self.root, "a file.json"), forceDirectory=False)
+        self.assertFalse(uri.isdir())
+        self.assertIn("a%20file.json", uri.geturl())
+        self.assertTrue(uri.ospath.endswith("a file.json"))
 
 
 if __name__ == "__main__":
