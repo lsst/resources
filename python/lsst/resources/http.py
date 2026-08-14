@@ -434,9 +434,10 @@ def _get_dav_and_server_headers(path: ResourcePath | str) -> tuple[str | None, s
 
         config = HttpResourcePathConfig()
         with SessionStore(config=config).get(path) as session:
-            resp = session.options(
-                str(path), stream=False, timeout=config.timeout, headers=path._extra_headers
-            )
+            # ResourcePath.__new__ is a scheme-dispatching factory declared as
+            # returning the base class, which ty honors and mypy does not.
+            headers = path._extra_headers  # ty: ignore[unresolved-attribute]
+            resp = session.options(str(path), stream=False, timeout=config.timeout, headers=headers)
 
             dav_header = server_header = None
             if resp.status_code == requests.codes.ok:

@@ -475,7 +475,11 @@ class DavResourcePath(ResourcePath):
                 root.join(file).remove()
 
             for subdir in subdirs:
-                DavResourcePath(root.join(subdir, forceDirectory=True)).remove_dir(recursive=recursive)
+                child = DavResourcePath(root.join(subdir, forceDirectory=True))
+                # ResourcePath.__new__ is a scheme-dispatching factory
+                # declared as returning the base class; ty honors that
+                # declaration and mypy does not.
+                child.remove_dir(recursive=recursive)  # ty: ignore[unresolved-attribute]
 
         # Remove empty top directory
         self.remove()
