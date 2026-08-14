@@ -852,10 +852,11 @@ class DavFileSystem(AbstractFileSystem):
         self,
         path: str,
         mode: str = "rb",
-        encoding: str | None = None,
         block_size: int | None = None,
         cache_options: dict[Any, Any] | None = None,
         compression: str | None = None,
+        *,
+        encoding: str | None = None,
         **kwargs: Any,
     ) -> DavReadResourceHandle | io.TextIOWrapper:
         log.debug(
