@@ -10,7 +10,7 @@
 # license that can be found in the LICENSE file.
 from __future__ import annotations
 
-__all__ = ["GenericReadWriteTestCase", "GenericTestCase"]
+__all__ = ["GenericReadWriteTestCase", "GenericTestCase", "make_remote_test_uri"]
 
 import datetime
 import logging
@@ -1142,3 +1142,35 @@ class GenericReadWriteTestCase(_GenericTestCase):
         # Clean up a subset of files that are already gone, but this can
         # trigger a different code path.
         ResourcePath.mremove(expected_uris[:5], do_raise=False)
+
+
+def make_remote_test_uri(path: str, *, forceDirectory: bool = True) -> ResourcePath:
+    """Return a ``remote-test`` URI corresponding to a local file system path.
+
+    Parameters
+    ----------
+    path : `str`
+        Local file system path to wrap.
+    forceDirectory : `bool`, optional
+        If `True`, the returned URI is treated as a directory.
+
+    Returns
+    -------
+    uri : `lsst.resources.ResourcePath`
+        URI using the ``remote-test`` scheme, which reports itself as not
+        local while being backed by ``path``.
+
+    Notes
+    -----
+    `~lsst.resources.ResourcePath` percent-encodes a path only when it is given
+    a schemeless path; a string that already includes a scheme is used
+    verbatim. The URI is therefore built from the encoded path of the
+    equivalent ``file`` URI. Interpolating ``path`` directly would leave any
+    space in the path unencoded, giving a malformed URI that.
+
+    When a ``file`` URI is constructed only the ``path`` is copied to the
+    new test URI. Any fragments are dropped (a ``#`` in the final component of
+    the  URI is always treated as a fragment by package convention).
+    """
+    file_uri = ResourcePath(path, forceDirectory=forceDirectory, forceAbsolute=True)
+    return ResourcePath(f"remote-test://localhost{file_uri.path}", forceDirectory=forceDirectory)

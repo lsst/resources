@@ -222,6 +222,17 @@ class FileResourcePath(ResourcePath):
                 transfer,
             )
 
+        # Short circuit if the URIs are identical. The inode comparison below
+        # only runs for a local source, so a non-local source that happens to
+        # name this same resource would otherwise be reported as a clash.
+        if self == src:
+            log.debug(
+                "Target and destination URIs are identical: %s, returning immediately."
+                " No further action required.",
+                self,
+            )
+            return
+
         # The output location should not exist unless overwrite=True.
         # Rather than use `exists()`, use os.stat since we might need
         # the full answer later.
@@ -461,7 +472,13 @@ class FileResourcePath(ResourcePath):
             # Filter by the regex
             if file_filter is not None:
                 files = [f for f in files if file_filter.search(f)]
-            yield type(self)(root, forceAbsolute=False, forceDirectory=True), dirs, files
+            # Rebuild from the parsed URI rather than from the OS path, so
+            # that a subclass keeps its own scheme and netloc. Constructing
+            # from a plain path always resolves to a file URI.
+            path = os2posix(root)
+            if self.quotePaths:
+                path = urllib.parse.quote(path)
+            yield self.replace(path=path, forceDirectory=True), dirs, files
 
     @classmethod
     def _fixupPathUri(

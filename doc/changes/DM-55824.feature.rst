@@ -1,0 +1,2 @@
+Added a new ``remote-test`` URI schema that can be used in test code to to allow you to run tests where a local file URI is pretending to be a remote URI.
+This comes with a helper ``lsst.resources.tests.make_remote_test_uri`` to easily construct these URIs from a local file path.
