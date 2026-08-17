@@ -231,10 +231,43 @@ class _GenericTestCase(TestCaseMixin):
     scheme: str | None = None
     netloc: str | None = None
     base_path: str | None = None
+    """Path prepended to every URI built by `_make_uri`. Must already be
+    percent-encoded."""
     path1 = "test_dir"
     path2 = "file.txt"
 
     def _make_uri(self, path: str, netloc: str | None = None) -> str:
+        """Build a URI string for the scheme under test.
+
+        Parameters
+        ----------
+        path : `str`
+            Path component to place below `base_path`. Must already be
+            percent-encoded.
+        netloc : `str` or `None`, optional
+            Network location to use instead of `netloc`.
+
+        Returns
+        -------
+        uri : `str`
+            The assembled URI, or ``path`` unchanged if no scheme is defined.
+
+        Notes
+        -----
+        The components are interpolated into the URI verbatim, so both ``path``
+        and `base_path` must arrive percent-encoded for any scheme whose
+        `~lsst.resources.ResourcePath` class sets ``quotePaths``. This method
+        can not do the encoding itself because it does not know which class
+        will be created from the string it returns, and encoding a path that
+        was already encoded would corrupt it.
+
+        Getting this wrong is not always visible: `ResourcePath.join` quotes
+        only the component being joined and leaves the rest of the URI alone,
+        so an unencoded ``base_path`` survives into every derived URI, while
+        `~lsst.resources.file.FileResourcePath.walk` rebuilds the URI from the
+        OS path and encodes all of it. The two then disagree for any path
+        holding a character such as ``+`` or a space.
+        """
         if self.scheme is not None:
             if netloc is None:
                 netloc = self.netloc
