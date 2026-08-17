@@ -41,7 +41,14 @@ class RemoteTestReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # This scheme is backed by the local file system, so the URI path has
         # to name a real writable directory. The netloc is not used.
         cls._tmproot = makeTestTempDir(TESTDIR)
-        cls.base_path = cls._tmproot
+        # Root the tests below a "+" so that every test exercises a path that
+        # has to be percent-encoded. An EUPS build directory embeds the
+        # package version in its name, so this really happens.
+        root = os.path.join(cls._tmproot, "resources-g1234567890+abcdef1234")
+        os.makedirs(root)
+        # base_path must be percent-encoded, so derive it from a URI rather
+        # than using the OS path directly.
+        cls.base_path = make_remote_test_uri(root).path.rstrip("/")
         super().setUpClass()
 
     @classmethod
