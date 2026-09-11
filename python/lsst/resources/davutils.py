@@ -1156,15 +1156,20 @@ class DavClient:
             mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
-            return pool_manager.request(
-                method,
-                url,
-                body=body,
-                headers=headers,
-                preload_content=preload_content,
-                redirect=redirect,
-                **kwargs,
-            )
+            try:
+                resp = pool_manager.request(
+                    method,
+                    url,
+                    body=body,
+                    headers=headers,
+                    preload_content=preload_content,
+                    redirect=redirect,
+                    **kwargs,
+                )
+                return resp
+            except Exception:
+                log.error(f"request {method} {redact_url(url)} failed")
+                raise
 
     def _options(
         self,
