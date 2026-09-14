@@ -1,0 +1,2 @@
+``ResourcePath.mremove()`` now sends a batch of URIs to each worker rather than submitting one task per URI.
+The upper bound on workers is now set per scheme, and ``file`` URIs default to a higher bound because they use no connection pool.
