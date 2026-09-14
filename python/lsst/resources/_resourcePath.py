@@ -45,7 +45,7 @@ from collections.abc import Generator, Iterable, Iterator
 from typing import Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
-from .utils import _get_num_workers, get_tempdir
+from .utils import _get_num_workers, _init_pool_worker, get_tempdir
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -112,28 +112,31 @@ def _get_executor_class() -> _EXECUTOR_TYPE:
     return _POOL_EXECUTOR_CLASS
 
 
-@contextlib.contextmanager
-def _patch_environ(new_values: dict[str, str]) -> Generator[None]:
-    """Patch os.environ temporarily using the supplied values.
+def _make_pool_executor(pool_executor_class: _EXECUTOR_TYPE, max_workers: int) -> concurrent.futures.Executor:
+    """Create a pool executor of the requested type and size.
 
     Parameters
     ----------
-    new_values : `dict` [ `str`, `str` ]
-        New values to be stored in the environment.
-    """
-    old_values: dict[str, str] = {}
-    for k, v in new_values.items():
-        if k in os.environ:
-            old_values[k] = os.environ[k]
-        os.environ[k] = v
+    pool_executor_class : `type` [ `concurrent.futures.Executor` ]
+        Type of executor pool to create.
+    max_workers : `int`
+        Number of workers the pool should use.
 
-    try:
-        yield
-    finally:
-        for k in new_values:
-            del os.environ[k]
-            if k in old_values:
-                os.environ[k] = old_values[k]
+    Returns
+    -------
+    executor : `concurrent.futures.Executor`
+        The new executor.
+
+    Notes
+    -----
+    A process pool marks each of its workers so that parallel operations
+    running inside a worker use a single worker of their own. A thread pool
+    must not be marked, since its threads share that state with the process
+    that created them.
+    """
+    if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
+        return pool_executor_class(max_workers=max_workers, initializer=_init_pool_worker)
+    return pool_executor_class(max_workers=max_workers)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1035,13 +1038,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             Mapping of original URI to boolean indicating existence.
         """
         pool_executor_class = _get_executor_class()
-        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
-            # Patch the environment to make it think there is only one worker
-            # for each subprocess.
-            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
-                return cls._mexists_pool(pool_executor_class, uris)
-        else:
-            return cls._mexists_pool(pool_executor_class, uris, num_workers=num_workers)
+        return cls._mexists_pool(pool_executor_class, uris, num_workers=num_workers)
 
     @classmethod
     def _mexists_pool(
@@ -1072,7 +1069,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             Mapping of original URI to boolean indicating existence.
         """
         max_workers = num_workers if num_workers is not None else _get_num_workers()
-        with pool_executor_class(max_workers=max_workers) as exists_executor:
+        with _make_pool_executor(pool_executor_class, max_workers) as exists_executor:
             future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
             results: dict[ResourcePath, bool] = {}
@@ -1124,18 +1121,6 @@ class ResourcePath:  # numpydoc ignore=PR02
             is `True`, this will only be returned if there are no errors.
         """
         pool_executor_class = _get_executor_class()
-        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
-            # Patch the environment to make it think there is only one worker
-            # for each subprocess.
-            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
-                return cls._mtransfer(
-                    pool_executor_class,
-                    transfer,
-                    from_to,
-                    overwrite=overwrite,
-                    transaction=transaction,
-                    do_raise=do_raise,
-                )
         return cls._mtransfer(
             pool_executor_class,
             transfer,
@@ -1182,7 +1167,8 @@ class ResourcePath:  # numpydoc ignore=PR02
             A dict of all the transfer attempts with a value indicating
             whether the transfer succeeded for the target URI.
         """
-        with pool_executor_class(max_workers=_get_num_workers()) as transfer_executor:
+        max_workers = _get_num_workers()
+        with _make_pool_executor(pool_executor_class, max_workers) as transfer_executor:
             future_transfers = {
                 transfer_executor.submit(
                     to_uri.transfer_from,
@@ -1261,14 +1247,7 @@ class ResourcePath:  # numpydoc ignore=PR02
     @classmethod
     def _mremove(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, MBulkResult]:
         """Remove multiple URIs using futures."""
-        pool_executor_class = _get_executor_class()
-        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
-            # Patch the environment to make it think there is only one worker
-            # for each subprocess.
-            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
-                return cls._mremove_pool(pool_executor_class, uris)
-        else:
-            return cls._mremove_pool(pool_executor_class, uris)
+        return cls._mremove_pool(_get_executor_class(), uris)
 
     @classmethod
     def _mremove_pool(
@@ -1281,7 +1260,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """Remove URIs using a futures pool."""
         max_workers = num_workers if num_workers is not None else _get_num_workers()
         results: dict[ResourcePath, MBulkResult] = {}
-        with pool_executor_class(max_workers=max_workers) as remove_executor:
+        with _make_pool_executor(pool_executor_class, max_workers) as remove_executor:
             future_remove = {remove_executor.submit(uri.remove): uri for uri in uris}
             for future in concurrent.futures.as_completed(future_remove):
                 try:

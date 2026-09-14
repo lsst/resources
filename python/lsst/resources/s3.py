@@ -41,7 +41,7 @@ from ._resourcePath import (
     ResourceInfo,
     ResourcePath,
     _get_executor_class,
-    _patch_environ,
+    _make_pool_executor,
 )
 from .s3utils import (
     _get_s3_connection_parameters,
@@ -295,14 +295,7 @@ class S3ResourcePath(ResourcePath):
         if len(chunks) == 1:
             # Do the removal directly without futures.
             return cls._delete_objects_wrapper(chunks[0])
-        pool_executor_class = _get_executor_class()
-        if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
-            # Patch the environment to make it think there is only one worker
-            # for each subprocess.
-            with _patch_environ({"LSST_RESOURCES_NUM_WORKERS": "1"}):
-                return cls._mremove_with_pool(pool_executor_class, chunks)
-        else:
-            return cls._mremove_with_pool(pool_executor_class, chunks)
+        return cls._mremove_with_pool(_get_executor_class(), chunks)
 
     @classmethod
     def _mremove_with_pool(
@@ -316,7 +309,7 @@ class S3ResourcePath(ResourcePath):
         # No need to make more workers than we have chunks.
         max_workers = num_workers if num_workers is not None else min(len(chunks), _get_num_workers())
         results: dict[ResourcePath, MBulkResult] = {}
-        with pool_executor_class(max_workers=max_workers) as remove_executor:
+        with _make_pool_executor(pool_executor_class, max_workers) as remove_executor:
             future_remove = {
                 remove_executor.submit(cls._delete_objects_wrapper, chunk): i
                 for i, chunk in enumerate(chunks)
