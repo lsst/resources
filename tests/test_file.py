@@ -311,19 +311,73 @@ class RemoveChunkTestCase(unittest.TestCase):
     def test_chunk_sizes(self) -> None:
         uris = [self.tmpdir.join(f"f{n}.txt") for n in range(5)]
         # Fewer URIs than chunk slots gives one URI per chunk.
-        chunks = FileResourcePath._chunk_for_removal(uris, 32)
+        chunks = FileResourcePath._chunk_uris(uris, 32)
         self.assertEqual(len(chunks), 5)
         self.assertTrue(all(len(c) == 1 for c in chunks))
 
         # More URIs than chunk slots gives evenly sized chunks.
-        chunks = FileResourcePath._chunk_for_removal(uris, 1)
+        chunks = FileResourcePath._chunk_uris(uris, 1)
         self.assertEqual([len(c) for c in chunks], [2, 2, 1])
 
         # An empty input yields no chunks at all.
-        self.assertEqual(FileResourcePath._chunk_for_removal([], 4), [])
+        self.assertEqual(FileResourcePath._chunk_uris([], 4), [])
 
     def test_empty_removal_is_a_no_op(self) -> None:
         self.assertEqual(ResourcePath.mremove([]), {})
+
+    def test_exists_chunk_reports_each_uri(self) -> None:
+        present = [self.tmpdir.join(f"p{n}.txt") for n in range(3)]
+        for uri in present:
+            uri.write(b"")
+        absent = self.tmpdir.join("gone.txt")
+
+        results = FileResourcePath._exists_chunk((*present, absent))
+
+        self.assertEqual(len(results), 4)
+        self.assertTrue(all(results[uri] for uri in present))
+        self.assertFalse(results[absent])
+
+    def test_exists_chunk_treats_an_error_as_missing(self) -> None:
+        uris = [self.tmpdir.join(f"e{n}.txt") for n in range(3)]
+        for uri in uris:
+            uri.write(b"")
+        failing = uris[1].ospath
+        real_exists = FileResourcePath.exists
+
+        def flaky(self: FileResourcePath) -> bool:
+            if self.ospath == failing:
+                raise PermissionError("cannot stat")
+            return real_exists(self)
+
+        with unittest.mock.patch.object(FileResourcePath, "exists", flaky):
+            results = FileResourcePath._exists_chunk(tuple(uris))
+
+        # The failure is reported as absent and the rest are still checked.
+        self.assertEqual(results, {uris[0]: True, uris[1]: False, uris[2]: True})
+
+    @unittest.mock.patch.dict(os.environ, {}, clear=False)
+    @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
+    def test_mexists_scheme_cap_sizes_the_pool(self) -> None:
+        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
+        _clear_worker_caches()
+        recorded: list[int] = []
+
+        class _RecordingExecutor(concurrent.futures.ThreadPoolExecutor):
+            def __init__(self, max_workers: int, **kwargs: Any) -> None:
+                recorded.append(max_workers)
+                super().__init__(max_workers=max_workers, **kwargs)
+
+        uris = [self.tmpdir.join(f"x{n}.txt") for n in range(20)]
+        for uri in uris:
+            uri.write(b"")
+
+        results = FileResourcePath._mexists_pool(_RecordingExecutor, uris)
+
+        self.assertEqual(recorded, [3])
+        self.assertTrue(all(results.values()))
+
+    def test_empty_existence_check_is_a_no_op(self) -> None:
+        self.assertEqual(ResourcePath.mexists([]), {})
 
     @unittest.mock.patch.dict(os.environ, {}, clear=False)
     @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)

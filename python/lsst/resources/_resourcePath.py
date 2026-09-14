@@ -1169,18 +1169,49 @@ class ResourcePath:  # numpydoc ignore=PR02
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
+        uri_list = list(uris)
         max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
-        with _pool_executor(pool_executor_class, max_workers) as exists_executor:
-            future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
+        chunks = cls._chunk_uris(uri_list, max_workers)
+        if not chunks:
+            return {}
+        # No need for more workers than there are chunks to give them.
+        max_workers = min(max_workers, len(chunks))
 
-            results: dict[ResourcePath, bool] = {}
+        results: dict[ResourcePath, bool] = {}
+        with _pool_executor(pool_executor_class, max_workers) as exists_executor:
+            future_exists = {exists_executor.submit(cls._exists_chunk, chunk): chunk for chunk in chunks}
             for future in concurrent.futures.as_completed(future_exists):
-                uri = future_exists[future]
                 try:
-                    exists = future.result()
+                    results.update(future.result())
                 except Exception:
-                    exists = False
-                results[uri] = exists
+                    # The chunk failed as a whole, for example because a
+                    # worker died.
+                    for uri in future_exists[future]:
+                        results[uri] = False
+        return results
+
+    @classmethod
+    def _exists_chunk(cls, uris: tuple[ResourcePath, ...]) -> dict[ResourcePath, bool]:
+        """Check a batch of URIs for existence.
+
+        Parameters
+        ----------
+        uris : `tuple` [ `ResourcePath`, ... ]
+            The URIs to check.
+
+        Returns
+        -------
+        results : `dict` [ `ResourcePath`, `bool` ]
+            An entry for every URI in ``uris``. A URI that cannot be checked
+            is reported as absent, and does not prevent the URIs after it in
+            the batch from being checked.
+        """
+        results: dict[ResourcePath, bool] = {}
+        for uri in uris:
+            try:
+                results[uri] = uri.exists()
+            except Exception:
+                results[uri] = False
         return results
 
     @classmethod
@@ -1351,7 +1382,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         return cls._mremove_pool(_get_executor_class(), uris)
 
     @staticmethod
-    def _chunk_for_removal(uris: list[ResourcePath], max_workers: int) -> list[tuple[ResourcePath, ...]]:
+    def _chunk_uris(uris: list[ResourcePath], max_workers: int) -> list[tuple[ResourcePath, ...]]:
         """Split URIs into batches sized for the given number of workers.
 
         Parameters
@@ -1407,7 +1438,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """Remove URIs using a futures pool."""
         uri_list = list(uris)
         max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
-        chunks = cls._chunk_for_removal(uri_list, max_workers)
+        chunks = cls._chunk_uris(uri_list, max_workers)
         if not chunks:
             return {}
         # No need for more workers than there are chunks to give them.
