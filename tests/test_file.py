@@ -9,6 +9,7 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
+import concurrent.futures
 import contextlib
 import datetime
 import os
@@ -16,11 +17,24 @@ import pathlib
 import unittest
 import unittest.mock
 import urllib.parse
+from typing import Any
 
 from lsst.resources import ResourceInfo, ResourcePath, ResourcePathExpression
 from lsst.resources.file import FileResourcePath
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
-from lsst.resources.utils import makeTestTempDir, removeTestTempDir
+from lsst.resources.utils import (
+    _get_configured_num_workers,
+    _get_default_num_workers,
+    makeTestTempDir,
+    removeTestTempDir,
+)
+
+
+def _clear_worker_caches() -> None:
+    """Discard memoized worker-count lookups."""
+    _get_configured_num_workers.cache_clear()
+    _get_default_num_workers.cache_clear()
+
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -310,6 +324,27 @@ class RemoveChunkTestCase(unittest.TestCase):
 
     def test_empty_removal_is_a_no_op(self) -> None:
         self.assertEqual(ResourcePath.mremove([]), {})
+
+    @unittest.mock.patch.dict(os.environ, {}, clear=False)
+    @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
+    def test_scheme_cap_sizes_the_pool(self) -> None:
+        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
+        _clear_worker_caches()
+        recorded: list[int] = []
+
+        class _RecordingExecutor(concurrent.futures.ThreadPoolExecutor):
+            def __init__(self, max_workers: int, **kwargs: Any) -> None:
+                recorded.append(max_workers)
+                super().__init__(max_workers=max_workers, **kwargs)
+
+        uris = [self.tmpdir.join(f"f{n}.txt") for n in range(20)]
+        for uri in uris:
+            uri.write(b"")
+
+        results = FileResourcePath._mremove_pool(_RecordingExecutor, uris)
+
+        self.assertEqual(recorded, [3])
+        self.assertTrue(all(r.success for r in results.values()))
 
 
 @contextlib.contextmanager

@@ -128,9 +128,17 @@ class WorkerCapTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         _clear_worker_caches()
 
-    def test_local_scheme_allows_more_workers(self) -> None:
-        self.assertGreater(FileResourcePath._max_workers, S3ResourcePath._max_workers)
+    def test_schemes_share_the_default_cap(self) -> None:
         self.assertEqual(ResourcePath._max_workers, MAX_WORKERS)
+        self.assertEqual(FileResourcePath._max_workers, MAX_WORKERS)
+        self.assertEqual(S3ResourcePath._max_workers, MAX_WORKERS)
+
+    @unittest.mock.patch.dict(os.environ, {}, clear=False)
+    @unittest.mock.patch.object(FileResourcePath, "_max_workers", 2)
+    def test_an_overridden_cap_is_honored(self) -> None:
+        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
+        _clear_worker_caches()
+        self.assertEqual(_get_num_workers(FileResourcePath._max_workers), 2)
 
     @unittest.mock.patch.dict(os.environ, {}, clear=False)
     def test_cap_limits_the_default(self) -> None:
