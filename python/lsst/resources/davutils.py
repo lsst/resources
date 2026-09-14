@@ -2711,60 +2711,11 @@ class DavClientDCache(DavClientURLSigner):
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
         super().__init__(url=url, config=config, accepts_ranges=accepts_ranges)
 
-        # Create a specialized pool manager for sending requests to dCache
-        # webdav door, in particular for retrieving metadata.
-        #
-        # As of dCache v10.2.14, the webDAV door leaves the network connection
-        # unusable for us for sending subsequent requests after serving
-        # GET, PUT, DELETE, etc., but leaves the connection intact after
-        # serving MKCOL, MOVE and PROPFIND requests.
-        # We take advantage of that by using a dedicated pool manager for
-        # those requests, so that the network connections managed by that pool
-        # be reused. This avoids establishing the TCP+TLS connection for each
-        # request.
-        pool_manager = self._make_pool_manager()
-        self._propfind_pool_manager = pool_manager
-        self._move_pool_manager = pool_manager
-        self._mkcol_pool_manager = pool_manager
-
         # dCache does not deliver macaroons when we are not using a secure
         # channel to interact with the door. In that case, we can not use
         # third party copy and dCache does not correctly support the COPY
         # method as stated in RFC-4918.
         self._can_duplicate = self._base_url.startswith("https://")
-
-    @override
-    def _mkcol(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        pool_manager: PoolManager | None = None,
-    ) -> HTTPResponse:
-        # Docstring inherited.
-        return self._request("MKCOL", url=url, headers=headers, pool_manager=self._mkcol_pool_manager)
-
-    @override
-    def _move(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        pool_manager: PoolManager | None = None,
-    ) -> HTTPResponse:
-        # Docstring inherited.
-        return self._request("MOVE", url=url, headers=headers, pool_manager=self._move_pool_manager)
-
-    @override
-    def _propfind(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        body: str = "",
-        pool_manager: PoolManager | None = None,
-    ) -> HTTPResponse:
-        # Docstring inherited.
-        return self._request(
-            "PROPFIND", url=url, headers=headers, body=body, pool_manager=self._propfind_pool_manager
-        )
 
     @override
     def put(
