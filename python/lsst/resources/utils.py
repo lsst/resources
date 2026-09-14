@@ -34,9 +34,10 @@ IS_POSIX = os.sep == posixpath.sep
 # posix means posix and only determine explicitly in the non-posix case.
 OS_ROOT_PATH = posixpath.sep if IS_POSIX else Path().resolve().root
 
-# Maximum number of worker threads for parallelized operations.
-# If greater than 10, be aware that this number has to be consistent
-# with connection pool sizing (for example in urllib3).
+# Default upper bound on the number of workers for parallelized operations.
+# Subclasses of ResourcePath override this for schemes that have no connection
+# pool to contend with. Backends that do have one size that pool from the
+# worker count, so they need no separate coordination here.
 MAX_WORKERS = 10
 
 log = logging.getLogger(__name__)
@@ -243,29 +244,74 @@ def _get_int_env_var(env_var: str) -> int | None:
     return int_value
 
 
+# True in processes started as pool workers. Only ever written by
+# _init_pool_worker, which runs once per worker process, so the reads need no
+# locking.
+_IS_POOL_WORKER = False
+
+
+def _init_pool_worker() -> None:
+    """Mark this process as a pool worker.
+
+    Notes
+    -----
+    Used as the ``initializer`` of a `~concurrent.futures.ProcessPoolExecutor`
+    so that parallel operations running inside a worker do not spawn workers
+    of their own. Must not be used with a thread pool, since threads share
+    this global with the process that created them.
+    """
+    global _IS_POOL_WORKER
+    _IS_POOL_WORKER = True
+
+
 @cache
-def _get_num_workers() -> int:
-    f"""Calculate the number of workers to use.
+def _get_configured_num_workers() -> int | None:
+    """Return the explicitly requested number of workers.
+
+    Returns
+    -------
+    num : `int` or `None`
+        Value of the ``LSST_RESOURCES_NUM_WORKERS`` environment variable, or
+        `None` if it is unset or unparsable.
+    """
+    return _get_int_env_var("LSST_RESOURCES_NUM_WORKERS")
+
+
+@cache
+def _get_default_num_workers() -> int:
+    """Return the number of workers implied by the available CPUs.
 
     Returns
     -------
     num : `int`
-        The number of workers to use. Will use the value of the
-        ``LSST_RESOURCES_NUM_WORKERS`` environment variable if set. Will fall
-        back to using the CPU count (plus 2) but capped at {MAX_WORKERS}.
+        The CPU count plus two. Uncapped.
     """
-    num_workers: int | None = None
-    num_workers = _get_int_env_var("LSST_RESOURCES_NUM_WORKERS")
+    # CPU_LIMIT is used on nublado.
+    cpu_limit = _get_int_env_var("CPU_LIMIT") or multiprocessing.cpu_count()
+    return cpu_limit + 2
 
-    # If someone is explicitly specifying a number, let them use that number.
-    if num_workers is not None:
-        return num_workers
 
-    if num_workers is None:
-        # CPU_LIMIT is used on nublado.
-        cpu_limit = _get_int_env_var("CPU_LIMIT") or multiprocessing.cpu_count()
-        if cpu_limit is not None:
-            num_workers = cpu_limit + 2
+def _get_num_workers(max_workers: int = MAX_WORKERS) -> int:
+    """Calculate the number of workers to use.
 
-    # But don't ever return more than the maximum allowed.
-    return min([num_workers, MAX_WORKERS])
+    Parameters
+    ----------
+    max_workers : `int`, optional
+        Upper bound to apply to the calculated default. Ignored when the
+        number of workers has been requested explicitly.
+
+    Returns
+    -------
+    num : `int`
+        The number of workers to use. A pool worker always reports one, so
+        that nested parallel operations do not multiply. Otherwise the value
+        of ``$LSST_RESOURCES_NUM_WORKERS`` is used if set, and the CPU count
+        plus two bounded by ``max_workers`` if not.
+    """
+    if _IS_POOL_WORKER:
+        return 1
+    configured = _get_configured_num_workers()
+    if configured is not None:
+        # An explicit request is honored without capping.
+        return configured
+    return min(_get_default_num_workers(), max_workers)
