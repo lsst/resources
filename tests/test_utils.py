@@ -17,7 +17,11 @@ import unittest.mock
 from typing import Any
 
 from lsst.resources import ResourcePath
-from lsst.resources._resourcePath import _make_pool_executor
+from lsst.resources._resourcePath import (
+    _clear_pool_executor_cache,
+    _make_pool_executor,
+    _pool_executor,
+)
 from lsst.resources.file import FileResourcePath
 from lsst.resources.s3 import S3ResourcePath
 from lsst.resources.utils import (
@@ -150,6 +154,64 @@ class WorkerCapTestCase(unittest.TestCase):
     def test_explicit_request_overrides_the_scheme_cap(self) -> None:
         _clear_worker_caches()
         self.assertEqual(_get_num_workers(S3ResourcePath._max_workers), 99)
+
+
+class PoolReuseTestCase(unittest.TestCase):
+    """Tests for reuse of process pools across calls."""
+
+    def tearDown(self) -> None:
+        _clear_pool_executor_cache()
+
+    def test_process_pools_are_reused(self) -> None:
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as first:
+            pass
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as second:
+            pass
+        self.assertIs(first, second)
+        # Still usable after both blocks have exited.
+        self.assertEqual(list(second.map(int, ["1", "2"])), [1, 2])
+
+    def test_different_sizes_get_different_pools(self) -> None:
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as small:
+            pass
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 3) as large:
+            pass
+        self.assertIsNot(small, large)
+
+    def test_thread_pools_are_not_reused(self) -> None:
+        with _pool_executor(concurrent.futures.ThreadPoolExecutor, 2) as first:
+            pass
+        with _pool_executor(concurrent.futures.ThreadPoolExecutor, 2) as second:
+            pass
+        self.assertIsNot(first, second)
+        # A thread pool is cheap, so it is shut down when the block ends.
+        with self.assertRaises(RuntimeError):
+            first.submit(int, "1")
+
+    def test_clearing_the_cache_shuts_pools_down(self) -> None:
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as executor:
+            pass
+        _clear_pool_executor_cache()
+        with self.assertRaises(RuntimeError):
+            executor.submit(int, "1")
+        # The next request builds a fresh pool.
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as replacement:
+            self.assertIsNot(replacement, executor)
+
+    def test_a_broken_pool_is_replaced(self) -> None:
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as executor:
+            # Workers start lazily, so submit before there is anything to kill.
+            list(executor.map(int, ["1", "2"]))
+        # Kill the workers so the pool is unusable.
+        for process in list(executor._processes.values()):
+            process.terminate()
+            process.join()
+        with self.assertRaises(concurrent.futures.BrokenExecutor):
+            with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as broken:
+                broken.submit(int, "1").result()
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as replacement:
+            self.assertIsNot(replacement, executor)
+            self.assertEqual(replacement.submit(int, "1").result(), 1)
 
 
 if __name__ == "__main__":

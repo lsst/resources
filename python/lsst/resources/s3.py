@@ -41,7 +41,7 @@ from ._resourcePath import (
     ResourceInfo,
     ResourcePath,
     _get_executor_class,
-    _make_pool_executor,
+    _pool_executor,
 )
 from .s3utils import (
     _get_s3_connection_parameters,
@@ -309,7 +309,7 @@ class S3ResourcePath(ResourcePath):
         # No need to make more workers than we have chunks.
         max_workers = num_workers if num_workers is not None else min(len(chunks), _get_num_workers())
         results: dict[ResourcePath, MBulkResult] = {}
-        with _make_pool_executor(pool_executor_class, max_workers) as remove_executor:
+        with _pool_executor(pool_executor_class, max_workers) as remove_executor:
             future_remove = {
                 remove_executor.submit(cls._delete_objects_wrapper, chunk): i
                 for i, chunk in enumerate(chunks)

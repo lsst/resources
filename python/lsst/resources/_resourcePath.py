@@ -13,6 +13,7 @@ from __future__ import annotations
 
 __all__ = ("ResourceInfo", "ResourcePath", "ResourcePathExpression")
 
+import atexit
 import concurrent.futures
 import contextlib
 import copy
@@ -144,6 +145,93 @@ def _make_pool_executor(pool_executor_class: _EXECUTOR_TYPE, max_workers: int) -
     if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
         return pool_executor_class(max_workers=max_workers, initializer=_init_pool_worker)
     return pool_executor_class(max_workers=max_workers)
+
+
+# Process pools, keyed by executor class and worker count. Starting one costs
+# a full interpreter startup per worker under the spawn start method, and the
+# cost scales with how much the parent process has imported, so a pool is kept
+# alive for reuse by later bulk operations. Thread pools are not cached; they
+# cost almost nothing to create and holding one open would keep its threads
+# alive for no benefit.
+_POOL_EXECUTOR_CACHE: dict[tuple[_EXECUTOR_TYPE, int], concurrent.futures.Executor] = {}
+
+
+def _clear_pool_executor_cache() -> None:
+    """Shut down and forget every cached pool executor."""
+    while _POOL_EXECUTOR_CACHE:
+        _, executor = _POOL_EXECUTOR_CACHE.popitem()
+        executor.shutdown(wait=True)
+
+
+def _forget_pool_executor_cache() -> None:
+    """Forget every cached pool executor without shutting it down.
+
+    Notes
+    -----
+    For use in a child process after a fork, where the inherited executors
+    refer to worker processes belonging to the parent and must not be driven
+    or shut down from here.
+    """
+    _POOL_EXECUTOR_CACHE.clear()
+
+
+atexit.register(_clear_pool_executor_cache)
+os.register_at_fork(after_in_child=_forget_pool_executor_cache)
+
+
+@contextlib.contextmanager
+def _pool_executor(
+    pool_executor_class: _EXECUTOR_TYPE, max_workers: int
+) -> Generator[concurrent.futures.Executor]:
+    """Provide a pool executor of the requested type and size.
+
+    Parameters
+    ----------
+    pool_executor_class : `type` [ `concurrent.futures.Executor` ]
+        Type of executor pool to use.
+    max_workers : `int`
+        Number of workers the pool should use.
+
+    Yields
+    ------
+    executor : `concurrent.futures.Executor`
+        The executor to submit work to.
+
+    Notes
+    -----
+    A process pool outlives the block and is reused by later calls, so its
+    workers pay their startup cost once. A pool that has broken is discarded
+    so that the next caller is given a fresh one. A thread pool is created for
+    the block and shut down when it ends.
+    """
+    if not issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
+        with _make_pool_executor(pool_executor_class, max_workers) as transient:
+            yield transient
+        return
+
+    key = (pool_executor_class, max_workers)
+    executor = _POOL_EXECUTOR_CACHE.get(key)
+    if executor is None:
+        executor = _make_pool_executor(pool_executor_class, max_workers)
+        _POOL_EXECUTOR_CACHE[key] = executor
+    try:
+        yield executor
+    except concurrent.futures.BrokenExecutor:
+        _discard_pool_executor(key)
+        raise
+
+
+def _discard_pool_executor(key: tuple[_EXECUTOR_TYPE, int]) -> None:
+    """Drop a cached pool executor so that the next caller gets a fresh one.
+
+    Parameters
+    ----------
+    key : `tuple` [ `type`, `int` ]
+        Executor class and worker count identifying the cached pool.
+    """
+    executor = _POOL_EXECUTOR_CACHE.pop(key, None)
+    if executor is not None:
+        executor.shutdown(wait=False)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1082,7 +1170,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             Mapping of original URI to boolean indicating existence.
         """
         max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
-        with _make_pool_executor(pool_executor_class, max_workers) as exists_executor:
+        with _pool_executor(pool_executor_class, max_workers) as exists_executor:
             future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
             results: dict[ResourcePath, bool] = {}
@@ -1181,7 +1269,7 @@ class ResourcePath:  # numpydoc ignore=PR02
             whether the transfer succeeded for the target URI.
         """
         max_workers = _get_num_workers()
-        with _make_pool_executor(pool_executor_class, max_workers) as transfer_executor:
+        with _pool_executor(pool_executor_class, max_workers) as transfer_executor:
             future_transfers = {
                 transfer_executor.submit(
                     to_uri.transfer_from,
@@ -1326,7 +1414,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         max_workers = min(max_workers, len(chunks))
 
         results: dict[ResourcePath, MBulkResult] = {}
-        with _make_pool_executor(pool_executor_class, max_workers) as remove_executor:
+        with _pool_executor(pool_executor_class, max_workers) as remove_executor:
             future_remove = {remove_executor.submit(cls._remove_chunk, chunk): chunk for chunk in chunks}
             for future in concurrent.futures.as_completed(future_remove):
                 try:
