@@ -20,6 +20,7 @@ import os
 import posixpath
 import random
 import re
+import ssl
 import stat
 import sys
 import threading
@@ -879,11 +880,11 @@ class DavClient:
         self._config: DavConfig = config
 
         # Make the authorizer for this client's requests.
-        self._authorizer: Authorizer | None = self._make_authorizer(config=self._config)
+        self._authorizer: Authorizer | None = self._make_authorizer()
 
         # Make the pool manager for this client to use for sending
         # requests to the server.
-        self._pool_manager: PoolManager = self._make_pool_manager(config=self._config)
+        self._pool_manager: PoolManager = self._make_pool_manager()
 
         # Parser of PROPFIND responses.
         self._propfind_parser: DavPropfindParser = DavPropfindParser()
@@ -902,10 +903,11 @@ class DavClient:
         # to the server.
         self._file_size_cache = DavFileSizeCache()
 
-    def _make_authorizer(self, config: DavConfig) -> Authorizer | None:
+    def _make_authorizer(self) -> Authorizer | None:
         # If a token was specified in the configuration settings for this
         # endpoint, prefer it as the authentication method, even if other
         # authentication settings were also specified.
+        config = self._config
         if config.token is not None:
             return TokenAuthorizer(token=config.token)
         elif config.user_name is not None and config.user_password is not None:
@@ -913,27 +915,50 @@ class DavClient:
 
         return None
 
-    def _make_pool_manager(self, config: DavConfig) -> PoolManager:
-        # Prepare the trusted authorities certificates
-        ca_certs, ca_cert_dir = None, None
+    def _make_ssl_context(self) -> ssl.SSLContext:
+        # Create a SSL context with the settings specified in the config.
+        # Require verification of the server certificate.
+        config = self._config
+        context = ssl.create_default_context()
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = True
+
         if config.trusted_authorities is not None:
             if os.path.isdir(config.trusted_authorities):
-                ca_cert_dir = config.trusted_authorities
+                # Directory where the certificates of the trusted
+                # certificate authorities can be found. The contents of
+                # that directory must be in the form expected by OpenSSL.
+                context.load_verify_locations(capath=config.trusted_authorities)
             elif os.path.isfile(config.trusted_authorities):
-                ca_certs = config.trusted_authorities
+                # Path to a file of concatenated CA certificates in PEM
+                # format.
+                context.load_verify_locations(cafile=config.trusted_authorities)
             else:
                 raise FileNotFoundError(
                     f"Trusted authorities file or directory {config.trusted_authorities} does not exist"
                 )
 
-        # If a token was specified for this endpoint don't use the
-        # <user certificate, private key> pair, even if they were also
-        # specified.
-        user_cert, user_key = None, None
-        if config.token is None:
-            user_cert = config.user_cert
-            user_key = config.user_key
+        # If a token is configured ignore the user certificate / user key.
+        if config.token is None and config.user_cert is not None:
+            if not os.path.isfile(config.user_cert):
+                raise FileNotFoundError(f"User certificate file {config.user_cert} does not exist")
+            if not os.path.isfile(str(config.user_key)):
+                raise FileNotFoundError(f"User certificate private key file {config.user_key} does not exist")
 
+            context.load_cert_chain(certfile=config.user_cert, keyfile=config.user_key)
+
+        # As of dCache v11.2.4, we need to use TLS v1.2 maximum to be able
+        # to reuse the TLS connections this client establishes with either the
+        # front-end server (a.k.a. dCache door) or the back-end server (a.k.a.
+        # dCache pool).
+        #
+        # See: https://github.com/dCache/dcache/issues/8005
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.maximum_version = ssl.TLSVersion.TLSv1_2
+        self._ssl_context: ssl.SSLContext = context
+        return self._ssl_context
+
+    def _make_pool_manager(self) -> PoolManager:
         # Pool manager for sending requests. Connections in this pool manager
         # are generally left open by the client but the front-end server may
         # choose to close them in some specific situations. For instance,
@@ -943,6 +968,7 @@ class DavClient:
         #
         # In addition, the client may also choose to explicitly close the
         # network connection after receiving a response.
+        config = self._config
         return PoolManager(
             # Number of connection pools to cache before discarding the least
             # recently used pool. Each connection pool manages network
@@ -966,19 +992,9 @@ class DavClient:
             # Size in bytes of the buffer for reading/writing data from/to
             # the underlying socket.
             blocksize=config.buffer_size,
-            # Client certificate and private key for esablishing TLS
-            # connections. If None, no client certificate is sent to the
-            # server. Only relevant for endpoints using secure HTTP protocol.
-            cert_file=user_cert,
-            key_file=user_key,
-            # We require verification of the server certificate.
-            cert_reqs="CERT_REQUIRED",
-            # Directory where the certificates of the trusted certificate
-            # authorities can be found. The contents of that directory
-            # must be as expected by OpenSSL.
-            ca_cert_dir=ca_cert_dir,
-            # Path to a file of concatenated CA certificates in PEM format.
-            ca_certs=ca_certs,
+            # SSL context to wrap the connections this client will establish
+            # when the scheme of the target URL `https`.
+            ssl_context=self._make_ssl_context(),
         )
 
     def get_server_details(self, url: str) -> dict[str, str]:
@@ -2706,7 +2722,7 @@ class DavClientDCache(DavClientURLSigner):
         # those requests, so that the network connections managed by that pool
         # be reused. This avoids establishing the TCP+TLS connection for each
         # request.
-        pool_manager = self._make_pool_manager(self._config)
+        pool_manager = self._make_pool_manager()
         self._propfind_pool_manager = pool_manager
         self._move_pool_manager = pool_manager
         self._mkcol_pool_manager = pool_manager
