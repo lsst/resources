@@ -21,6 +21,7 @@ import datetime
 import io
 import locale
 import logging
+import math
 import os
 import posixpath
 import re
@@ -44,6 +45,8 @@ except ImportError:
 from collections.abc import Generator, Iterable, Iterator
 from typing import Any, Literal, NamedTuple, overload
 
+from lsst.utils.iteration import chunk_iterable
+
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from .utils import MAX_WORKERS, _get_num_workers, _init_pool_worker, get_tempdir
 
@@ -58,6 +61,10 @@ ESCAPES_RE = re.compile(r"%[A-F0-9]{2}")
 
 # Precomputed escaped hash
 ESCAPED_HASH = urllib.parse.quote("#")
+
+# Chunks to create per worker when batching bulk operations. Oversubscribing
+# keeps one slow chunk from stalling a worker for the rest of the run.
+CHUNKS_PER_WORKER = 4
 
 
 class MBulkResult(NamedTuple):
@@ -1255,6 +1262,52 @@ class ResourcePath:  # numpydoc ignore=PR02
         """Remove multiple URIs using futures."""
         return cls._mremove_pool(_get_executor_class(), uris)
 
+    @staticmethod
+    def _chunk_for_removal(uris: list[ResourcePath], max_workers: int) -> list[tuple[ResourcePath, ...]]:
+        """Split URIs into batches sized for the given number of workers.
+
+        Parameters
+        ----------
+        uris : `list` [ `ResourcePath` ]
+            The URIs to split.
+        max_workers : `int`
+            Number of workers the batches will be spread across.
+
+        Returns
+        -------
+        chunks : `list` [ `tuple` [ `ResourcePath`, ... ] ]
+            The batches. Empty if ``uris`` is empty.
+        """
+        if not uris:
+            return []
+        chunk_size = max(1, math.ceil(len(uris) / (max_workers * CHUNKS_PER_WORKER)))
+        return list(chunk_iterable(uris, chunk_size=chunk_size))
+
+    @classmethod
+    def _remove_chunk(cls, uris: tuple[ResourcePath, ...]) -> dict[ResourcePath, MBulkResult]:
+        """Remove a batch of URIs, reporting each result independently.
+
+        Parameters
+        ----------
+        uris : `tuple` [ `ResourcePath`, ... ]
+            The URIs to remove.
+
+        Returns
+        -------
+        results : `dict` [ `ResourcePath`, `MBulkResult` ]
+            An entry for every URI in ``uris``. A URI that cannot be removed
+            does not prevent the removal of the URIs after it.
+        """
+        results: dict[ResourcePath, MBulkResult] = {}
+        for uri in uris:
+            try:
+                uri.remove()
+            except Exception as e:
+                results[uri] = MBulkResult(False, e)
+            else:
+                results[uri] = MBulkResult(True, None)
+        return results
+
     @classmethod
     def _mremove_pool(
         cls,
@@ -1264,19 +1317,25 @@ class ResourcePath:  # numpydoc ignore=PR02
         num_workers: int | None = None,
     ) -> dict[ResourcePath, MBulkResult]:
         """Remove URIs using a futures pool."""
+        uri_list = list(uris)
         max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
+        chunks = cls._chunk_for_removal(uri_list, max_workers)
+        if not chunks:
+            return {}
+        # No need for more workers than there are chunks to give them.
+        max_workers = min(max_workers, len(chunks))
+
         results: dict[ResourcePath, MBulkResult] = {}
         with _make_pool_executor(pool_executor_class, max_workers) as remove_executor:
-            future_remove = {remove_executor.submit(uri.remove): uri for uri in uris}
+            future_remove = {remove_executor.submit(cls._remove_chunk, chunk): chunk for chunk in chunks}
             for future in concurrent.futures.as_completed(future_remove):
                 try:
-                    future.result()
+                    results.update(future.result())
                 except Exception as e:
-                    removed = MBulkResult(False, e)
-                else:
-                    removed = MBulkResult(True, None)
-                uri = future_remove[future]
-                results[uri] = removed
+                    # The chunk failed as a whole, for example because a
+                    # worker died.
+                    for uri in future_remove[future]:
+                        results[uri] = MBulkResult(False, e)
         return results
 
     def isabs(self) -> bool:

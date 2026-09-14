@@ -18,7 +18,9 @@ import unittest.mock
 import urllib.parse
 
 from lsst.resources import ResourceInfo, ResourcePath, ResourcePathExpression
+from lsst.resources.file import FileResourcePath
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
+from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -265,6 +267,49 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         Force test with process pool.
         """
         super().test_mtransfer()
+
+
+class RemoveChunkTestCase(unittest.TestCase):
+    """Tests for batched removal."""
+
+    def setUp(self) -> None:
+        self.tmpdir = ResourcePath(makeTestTempDir(TESTDIR), forceDirectory=True)
+
+    def tearDown(self) -> None:
+        removeTestTempDir(self.tmpdir.ospath)
+
+    def test_failure_does_not_abandon_the_rest_of_the_chunk(self) -> None:
+        uris = [self.tmpdir.join(f"f{n}.txt") for n in range(5)]
+        for uri in uris:
+            uri.write(b"")
+        # Remove one out from under the batch so that its own removal raises.
+        uris[1].remove()
+
+        results = FileResourcePath._remove_chunk(tuple(uris))
+
+        self.assertEqual(len(results), 5)
+        self.assertFalse(results[uris[1]].success)
+        self.assertIsInstance(results[uris[1]].exception, FileNotFoundError)
+        for uri in (uris[0], uris[2], uris[3], uris[4]):
+            self.assertTrue(results[uri].success, f"{uri} should have been removed")
+            self.assertFalse(uri.exists())
+
+    def test_chunk_sizes(self) -> None:
+        uris = [self.tmpdir.join(f"f{n}.txt") for n in range(5)]
+        # Fewer URIs than chunk slots gives one URI per chunk.
+        chunks = FileResourcePath._chunk_for_removal(uris, 32)
+        self.assertEqual(len(chunks), 5)
+        self.assertTrue(all(len(c) == 1 for c in chunks))
+
+        # More URIs than chunk slots gives evenly sized chunks.
+        chunks = FileResourcePath._chunk_for_removal(uris, 1)
+        self.assertEqual([len(c) for c in chunks], [2, 2, 1])
+
+        # An empty input yields no chunks at all.
+        self.assertEqual(FileResourcePath._chunk_for_removal([], 4), [])
+
+    def test_empty_removal_is_a_no_op(self) -> None:
+        self.assertEqual(ResourcePath.mremove([]), {})
 
 
 @contextlib.contextmanager
