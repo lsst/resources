@@ -16,7 +16,10 @@ import unittest
 import unittest.mock
 from typing import Any
 
+from lsst.resources import ResourcePath
 from lsst.resources._resourcePath import _make_pool_executor
+from lsst.resources.file import FileResourcePath
+from lsst.resources.s3 import S3ResourcePath
 from lsst.resources.utils import (
     MAX_WORKERS,
     _get_configured_num_workers,
@@ -114,6 +117,31 @@ class PoolExecutorTestCase(unittest.TestCase):
         _clear_worker_caches()
         _make_pool_executor(_RecordingExecutor, 7).shutdown()
         self.assertEqual(recorded, [7])
+
+
+class WorkerCapTestCase(unittest.TestCase):
+    """Tests for per-scheme worker caps."""
+
+    def setUp(self) -> None:
+        _clear_worker_caches()
+
+    def tearDown(self) -> None:
+        _clear_worker_caches()
+
+    def test_local_scheme_allows_more_workers(self) -> None:
+        self.assertGreater(FileResourcePath._max_workers, S3ResourcePath._max_workers)
+        self.assertEqual(ResourcePath._max_workers, MAX_WORKERS)
+
+    @unittest.mock.patch.dict(os.environ, {}, clear=False)
+    def test_cap_limits_the_default(self) -> None:
+        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
+        _clear_worker_caches()
+        self.assertLessEqual(_get_num_workers(S3ResourcePath._max_workers), S3ResourcePath._max_workers)
+
+    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_NUM_WORKERS": "99"})
+    def test_explicit_request_overrides_the_scheme_cap(self) -> None:
+        _clear_worker_caches()
+        self.assertEqual(_get_num_workers(S3ResourcePath._max_workers), 99)
 
 
 if __name__ == "__main__":

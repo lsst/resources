@@ -84,6 +84,10 @@ class FileResourcePath(ResourcePath):
     # By definition refers to a local file
     isLocal = True
 
+    # Local removal and stat calls are latency bound and hold no connection
+    # pool, so more workers help well past the default bound.
+    _max_workers: int = 32
+
     @property
     def ospath(self) -> str:
         """Path component of the URI localized to current OS.

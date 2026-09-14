@@ -45,7 +45,7 @@ from collections.abc import Generator, Iterable, Iterator
 from typing import Any, Literal, NamedTuple, overload
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
-from .utils import _get_num_workers, _init_pool_worker, get_tempdir
+from .utils import MAX_WORKERS, _get_num_workers, _init_pool_worker, get_tempdir
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -229,6 +229,13 @@ class ResourcePath:  # numpydoc ignore=PR02
 
     isLocal = False
     """If `True` this URI refers to a local file."""
+
+    _max_workers: int = MAX_WORKERS
+    """Upper bound on workers for parallel operations on this scheme.
+
+    Schemes backed by a connection pool keep this modest because the pool is
+    sized to match it; schemes with no pool can raise it.
+    """
 
     # This is not an ABC with abstract methods because the __new__ being
     # a factory confuses mypy such that it assumes that every constructor
@@ -999,10 +1006,9 @@ class ResourcePath:  # numpydoc ignore=PR02
         uris : iterable of `ResourcePath`
             The URIs to test.
         num_workers : `int` or `None`, optional
-            The number of parallel workers to use when checking for existence
-            If `None`, the default value will be taken from the environment.
-            If this number is higher than the default and a thread pool is
-            used, there may not be enough cached connections available.
+            The number of parallel workers to use when checking for existence.
+            If `None`, the default value will be taken from the environment
+            and bounded by the limit for this scheme.
 
         Returns
         -------
@@ -1068,7 +1074,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         existence : `dict` of [`ResourcePath`, `bool`]
             Mapping of original URI to boolean indicating existence.
         """
-        max_workers = num_workers if num_workers is not None else _get_num_workers()
+        max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
         with _make_pool_executor(pool_executor_class, max_workers) as exists_executor:
             future_exists = {exists_executor.submit(uri.exists): uri for uri in uris}
 
@@ -1258,7 +1264,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         num_workers: int | None = None,
     ) -> dict[ResourcePath, MBulkResult]:
         """Remove URIs using a futures pool."""
-        max_workers = num_workers if num_workers is not None else _get_num_workers()
+        max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
         results: dict[ResourcePath, MBulkResult] = {}
         with _make_pool_executor(pool_executor_class, max_workers) as remove_executor:
             future_remove = {remove_executor.submit(uri.remove): uri for uri in uris}
