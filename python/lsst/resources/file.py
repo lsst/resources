@@ -84,6 +84,11 @@ class FileResourcePath(ResourcePath):
     # By definition refers to a local file
     isLocal = True
 
+    # A missing-file check on a local or cluster filesystem takes on the order
+    # of 100 microseconds, so a batch has to be around this large before
+    # spreading it over workers beats a plain loop.
+    _min_chunk_size = 100
+
     @property
     def ospath(self) -> str:
         """Path component of the URI localized to current OS.

@@ -347,6 +347,16 @@ class ResourcePath:  # numpydoc ignore=PR02
     sized to match it; schemes with no pool can raise it.
     """
 
+    _min_chunk_size: int = 1
+    """Smallest batch of URIs worth giving to a worker of its own.
+
+    A batch no larger than this is handled in the calling thread instead of
+    being sent to a pool, since handing work to another thread or process
+    costs more than doing it. The default suits a scheme where every
+    operation is a network round trip and so is worth overlapping even for a
+    couple of URIs. A scheme whose operations are cheap should raise it.
+    """
+
     # This is not an ABC with abstract methods because the __new__ being
     # a factory confuses mypy such that it assumes that every constructor
     # returns a ResourcePath and then determines that all the abstract methods
@@ -1189,6 +1199,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         chunks = cls._chunk_uris(uri_list, max_workers)
         if not chunks:
             return {}
+        if len(chunks) == 1:
+            # Not enough work to be worth handing to another thread or
+            # process.
+            return cls._exists_chunk(chunks[0])
 
         results: dict[ResourcePath, bool] = {}
         with _pool_executor(pool_executor_class, max_workers) as exists_executor:
@@ -1398,8 +1412,8 @@ class ResourcePath:  # numpydoc ignore=PR02
         """Remove multiple URIs using futures."""
         return cls._mremove_pool(_get_executor_class(), uris)
 
-    @staticmethod
-    def _chunk_uris(uris: list[ResourcePath], max_workers: int) -> list[tuple[ResourcePath, ...]]:
+    @classmethod
+    def _chunk_uris(cls, uris: list[ResourcePath], max_workers: int) -> list[tuple[ResourcePath, ...]]:
         """Split URIs into batches sized for the given number of workers.
 
         Parameters
@@ -1412,11 +1426,19 @@ class ResourcePath:  # numpydoc ignore=PR02
         Returns
         -------
         chunks : `list` [ `tuple` [ `ResourcePath`, ... ] ]
-            The batches. Empty if ``uris`` is empty.
+            The batches. Empty if ``uris`` is empty. A single batch means the
+            work is not worth spreading, and callers run it directly.
+
+        Notes
+        -----
+        Several batches per worker let a worker that draws quick URIs move on
+        to more of them, but no batch is smaller than ``_min_chunk_size``,
+        below which the cost of handing the batch over exceeds the cost of
+        the work in it.
         """
         if not uris:
             return []
-        chunk_size = max(1, math.ceil(len(uris) / (max_workers * CHUNKS_PER_WORKER)))
+        chunk_size = max(cls._min_chunk_size, math.ceil(len(uris) / (max_workers * CHUNKS_PER_WORKER)))
         return list(chunk_iterable(uris, chunk_size=chunk_size))
 
     @classmethod
@@ -1458,6 +1480,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         chunks = cls._chunk_uris(uri_list, max_workers)
         if not chunks:
             return {}
+        if len(chunks) == 1:
+            # Not enough work to be worth handing to another thread or
+            # process.
+            return cls._remove_chunk(chunks[0])
 
         results: dict[ResourcePath, MBulkResult] = {}
         with _pool_executor(pool_executor_class, max_workers) as remove_executor:

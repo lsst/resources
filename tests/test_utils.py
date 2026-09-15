@@ -195,21 +195,22 @@ class PoolReuseTestCase(unittest.TestCase):
 
     @unittest.mock.patch.dict(os.environ, {}, clear=False)
     @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
+    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
     def test_batch_size_does_not_replace_the_cached_pool(self) -> None:
         os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
         _clear_worker_caches()
         _clear_pool_executor_cache()
-        one = [ResourcePath(__file__)]
+        few = [ResourcePath(__file__).updatedFile(f"missing{n}.txt") for n in range(2)]
         many = [ResourcePath(__file__).updatedFile(f"missing{n}.txt") for n in range(64)]
 
-        # A batch small enough to occupy a single worker must still be given a
+        # A batch that occupies only a couple of workers must still be given a
         # pool sized for the scheme, or the next larger batch would replace it.
-        for uris in (one, many, one):
+        for uris in (few, many, few):
             FileResourcePath._mexists_pool(concurrent.futures.ProcessPoolExecutor, uris)
             cached = resource_path._POOL_EXECUTOR_CACHE
             assert cached is not None
             self.assertEqual(cached[1], 3)
-            if uris is one:
+            if uris is few:
                 first = cached[2]
         self.assertIs(resource_path._POOL_EXECUTOR_CACHE[2], first)
 
@@ -264,6 +265,7 @@ class PoolReuseTestCase(unittest.TestCase):
             self.assertIsNot(replacement, executor)
             self.assertEqual(replacement.submit(int, "1").result(), 1)
 
+    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
     def test_bulk_operations_discard_broken_pools(self) -> None:
         uris = [ResourcePath(__file__), ResourcePath(__file__).updatedFile("missing.txt")]
         executor_class = concurrent.futures.ProcessPoolExecutor

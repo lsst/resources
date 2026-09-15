@@ -19,6 +19,7 @@ import unittest.mock
 import urllib.parse
 from typing import Any
 
+import lsst.resources._resourcePath as resource_path
 from lsst.resources import ResourceInfo, ResourcePath, ResourcePathExpression
 from lsst.resources.file import FileResourcePath
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
@@ -308,6 +309,7 @@ class RemoveChunkTestCase(unittest.TestCase):
             self.assertTrue(results[uri].success, f"{uri} should have been removed")
             self.assertFalse(uri.exists())
 
+    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
     def test_chunk_sizes(self) -> None:
         uris = [self.tmpdir.join(f"f{n}.txt") for n in range(5)]
         # Fewer URIs than chunk slots gives one URI per chunk.
@@ -321,6 +323,17 @@ class RemoveChunkTestCase(unittest.TestCase):
 
         # An empty input yields no chunks at all.
         self.assertEqual(FileResourcePath._chunk_uris([], 4), [])
+
+    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 4)
+    def test_chunk_size_floor(self) -> None:
+        uris = [self.tmpdir.join(f"f{n}.txt") for n in range(10)]
+
+        # A batch that would otherwise be spread thinly is kept in one piece,
+        # which is the signal to the caller to handle it without a pool.
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_uris(uris[:4], 32)], [4])
+
+        # The floor never makes chunks larger than the worker count calls for.
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_uris(uris, 1)], [4, 4, 2])
 
     def test_empty_removal_is_a_no_op(self) -> None:
         self.assertEqual(ResourcePath.mremove([]), {})
@@ -357,6 +370,7 @@ class RemoveChunkTestCase(unittest.TestCase):
 
     @unittest.mock.patch.dict(os.environ, {}, clear=False)
     @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
+    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
     def test_mexists_scheme_cap_sizes_the_pool(self) -> None:
         os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
         _clear_worker_caches()
@@ -379,8 +393,30 @@ class RemoveChunkTestCase(unittest.TestCase):
     def test_empty_existence_check_is_a_no_op(self) -> None:
         self.assertEqual(ResourcePath.mexists([]), {})
 
+    def test_small_batches_avoid_the_pool(self) -> None:
+        present = [self.tmpdir.join(f"s{n}.txt") for n in range(3)]
+        for uri in present:
+            uri.write(b"")
+        absent = self.tmpdir.join("nothere.txt")
+
+        def refuse(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("a batch this small must not be given to a pool")
+
+        with unittest.mock.patch.object(resource_path, "_pool_executor", refuse):
+            existence = FileResourcePath._mexists_pool(
+                concurrent.futures.ThreadPoolExecutor, [*present, absent]
+            )
+            removals = FileResourcePath._mremove_pool(
+                concurrent.futures.ThreadPoolExecutor, [*present, absent]
+            )
+
+        self.assertEqual(existence, {**dict.fromkeys(present, True), absent: False})
+        self.assertTrue(all(removals[uri].success for uri in present))
+        self.assertFalse(removals[absent].success)
+
     @unittest.mock.patch.dict(os.environ, {}, clear=False)
     @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
+    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
     def test_scheme_cap_sizes_the_pool(self) -> None:
         os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
         _clear_worker_caches()
