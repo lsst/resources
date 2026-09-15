@@ -14,6 +14,7 @@ import multiprocessing
 import os
 import unittest
 import unittest.mock
+from concurrent.futures.process import BrokenProcessPool
 from typing import Any
 
 from lsst.resources import ResourcePath
@@ -221,6 +222,46 @@ class PoolReuseTestCase(unittest.TestCase):
         with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as replacement:
             self.assertIsNot(replacement, executor)
             self.assertEqual(replacement.submit(int, "1").result(), 1)
+
+    def test_bulk_operations_discard_broken_pools(self) -> None:
+        uris = [ResourcePath(__file__), ResourcePath(__file__).updatedFile("missing.txt")]
+        executor_class = concurrent.futures.ProcessPoolExecutor
+        operations = {
+            "mexists": lambda: FileResourcePath._mexists_pool(executor_class, uris, num_workers=2),
+            "mremove": lambda: FileResourcePath._mremove_pool(executor_class, uris, num_workers=2),
+            "mtransfer": lambda: ResourcePath._mtransfer(
+                executor_class, "copy", [(uris[0], uris[1])], do_raise=False
+            ),
+            "s3_mremove": lambda: S3ResourcePath._mremove_with_pool(
+                executor_class, [(uris[0],), (uris[1],)], num_workers=2
+            ),
+        }
+        for name, operation in operations.items():
+            with self.subTest(operation=name):
+                with _pool_executor(executor_class, 2) as broken:
+                    pass
+
+                def fail_submission(*args: Any, **kwargs: Any) -> concurrent.futures.Future:
+                    future = concurrent.futures.Future()
+                    future.set_exception(BrokenProcessPool("worker died"))
+                    return future
+
+                # Fail the futures, not submit(), to exercise the exceptions
+                # caught inside each bulk operation's result loop.
+                with (
+                    unittest.mock.patch.object(broken, "submit", side_effect=fail_submission),
+                    unittest.mock.patch("lsst.resources._resourcePath._get_num_workers", return_value=2),
+                ):
+                    results = operation()
+                if name == "mexists":
+                    self.assertTrue(all(value is False for value in results.values()))
+                else:
+                    self.assertTrue(all(not value.success for value in results.values()))
+                with _pool_executor(executor_class, 2) as replacement:
+                    self.assertIsNot(replacement, broken)
+                    self.assertEqual(replacement.submit(int, "1").result(), 1)
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,7 @@ from ._resourcePath import (
     MBulkResult,
     ResourceInfo,
     ResourcePath,
+    _discard_pool_executor,
     _get_executor_class,
     _pool_executor,
 )
@@ -319,6 +320,8 @@ class S3ResourcePath(ResourcePath):
                     results.update(future.result())
                 except Exception as e:
                     # The chunk utterly failed.
+                    if isinstance(e, concurrent.futures.BrokenExecutor):
+                        _discard_pool_executor(remove_executor)
                     chunk = chunks[future_remove[future]]
                     for uri in chunk:
                         results[uri] = MBulkResult(False, e)

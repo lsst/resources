@@ -1192,9 +1192,11 @@ class ResourcePath:  # numpydoc ignore=PR02
             for future in concurrent.futures.as_completed(future_exists):
                 try:
                     results.update(future.result())
-                except Exception:
+                except Exception as e:
                     # The chunk failed as a whole, for example because a
                     # worker died.
+                    if isinstance(e, concurrent.futures.BrokenExecutor):
+                        _discard_pool_executor(exists_executor)
                     for uri in future_exists[future]:
                         results[uri] = False
         return results
@@ -1328,6 +1330,8 @@ class ResourcePath:  # numpydoc ignore=PR02
                 try:
                     future.result()
                 except Exception as e:
+                    if isinstance(e, concurrent.futures.BrokenExecutor):
+                        _discard_pool_executor(transfer_executor)
                     transferred = MBulkResult(False, e)
                     failed = True
                 else:
@@ -1462,6 +1466,8 @@ class ResourcePath:  # numpydoc ignore=PR02
                 except Exception as e:
                     # The chunk failed as a whole, for example because a
                     # worker died.
+                    if isinstance(e, concurrent.futures.BrokenExecutor):
+                        _discard_pool_executor(remove_executor)
                     for uri in future_remove[future]:
                         results[uri] = MBulkResult(False, e)
         return results
