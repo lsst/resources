@@ -1,4 +1,4 @@
 ``ResourcePath.mremove()`` and ``ResourcePath.mexists()`` now send a batch of URIs to each worker rather than submitting one task per URI.
-Process pools are now reused between bulk operations instead of being created and destroyed for each call.
+A single process pool is now reused between bulk operations instead of being created and destroyed for each call; changing the executor class or worker count replaces it.
 Under the ``spawn`` start method every worker pays a full interpreter startup, and that cost grows with how much the calling process has imported, so reuse matters most to a long-running process that performs many bulk operations.
 The upper bound on the number of workers is now set per scheme, so a scheme that holds no connection pool can raise it.

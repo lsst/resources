@@ -147,24 +147,27 @@ def _make_pool_executor(pool_executor_class: _EXECUTOR_TYPE, max_workers: int) -
     return pool_executor_class(max_workers=max_workers)
 
 
-# Process pools, keyed by executor class and worker count. Starting one costs
-# a full interpreter startup per worker under the spawn start method, and the
-# cost scales with how much the parent process has imported, so a pool is kept
-# alive for reuse by later bulk operations. Thread pools are not cached; they
-# cost almost nothing to create and holding one open would keep its threads
-# alive for no benefit.
-_POOL_EXECUTOR_CACHE: dict[tuple[_EXECUTOR_TYPE, int], concurrent.futures.Executor] = {}
+# One process pool, identified by executor class and worker count. Starting one
+# costs a full interpreter startup per worker under the spawn start method.
+# That cost scales with how much the parent process has imported, so we keep
+# the pool alive for reuse by later bulk operations. Thread pools are not
+# cached; they cost almost nothing to create and holding one open would keep
+# its threads alive for no benefit.
+_POOL_EXECUTOR_CACHE: tuple[_EXECUTOR_TYPE, int, concurrent.futures.Executor] | None = None
 
 
 def _clear_pool_executor_cache() -> None:
-    """Shut down and forget every cached pool executor."""
-    while _POOL_EXECUTOR_CACHE:
-        _, executor = _POOL_EXECUTOR_CACHE.popitem()
+    """Shut down and forget the cached pool executor."""
+    global _POOL_EXECUTOR_CACHE
+    cached = _POOL_EXECUTOR_CACHE
+    _POOL_EXECUTOR_CACHE = None
+    if cached is not None:
+        _, _, executor = cached
         executor.shutdown(wait=True)
 
 
 def _forget_pool_executor_cache() -> None:
-    """Forget every cached pool executor without shutting it down.
+    """Forget the cached pool executor without shutting it down.
 
     Notes
     -----
@@ -172,7 +175,8 @@ def _forget_pool_executor_cache() -> None:
     refer to worker processes belonging to the parent and must not be driven
     or shut down from here.
     """
-    _POOL_EXECUTOR_CACHE.clear()
+    global _POOL_EXECUTOR_CACHE
+    _POOL_EXECUTOR_CACHE = None
 
 
 atexit.register(_clear_pool_executor_cache)
@@ -200,38 +204,43 @@ def _pool_executor(
     Notes
     -----
     A process pool outlives the block and is reused by later calls, so its
-    workers pay their startup cost once. A pool that has broken is discarded
+    workers pay their startup cost once. A different executor class or worker
+    count replaces the cached pool. A pool that has broken is discarded
     so that the next caller is given a fresh one. A thread pool is created for
     the block and shut down when it ends.
     """
+    global _POOL_EXECUTOR_CACHE
     if not issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
         with _make_pool_executor(pool_executor_class, max_workers) as transient:
             yield transient
         return
 
-    key = (pool_executor_class, max_workers)
-    executor = _POOL_EXECUTOR_CACHE.get(key)
-    if executor is None:
+    cached = _POOL_EXECUTOR_CACHE
+    if cached is None or cached[:2] != (pool_executor_class, max_workers):
+        _clear_pool_executor_cache()
         executor = _make_pool_executor(pool_executor_class, max_workers)
-        _POOL_EXECUTOR_CACHE[key] = executor
+        _POOL_EXECUTOR_CACHE = (pool_executor_class, max_workers, executor)
+    else:
+        executor = cached[2]
     try:
         yield executor
     except concurrent.futures.BrokenExecutor:
-        _discard_pool_executor(key)
+        _discard_pool_executor(executor)
         raise
 
 
-def _discard_pool_executor(key: tuple[_EXECUTOR_TYPE, int]) -> None:
+def _discard_pool_executor(executor: concurrent.futures.Executor) -> None:
     """Drop a cached pool executor so that the next caller gets a fresh one.
 
     Parameters
     ----------
-    key : `tuple` [ `type`, `int` ]
-        Executor class and worker count identifying the cached pool.
+    executor : `concurrent.futures.Executor`
+        Broken executor. Only clears the cache if it still holds this pool.
     """
-    executor = _POOL_EXECUTOR_CACHE.pop(key, None)
-    if executor is not None:
-        executor.shutdown(wait=False)
+    global _POOL_EXECUTOR_CACHE
+    if _POOL_EXECUTOR_CACHE is not None and _POOL_EXECUTOR_CACHE[2] is executor:
+        _POOL_EXECUTOR_CACHE = None
+    executor.shutdown(wait=False)
 
 
 @dataclasses.dataclass(frozen=True)

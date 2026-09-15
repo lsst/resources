@@ -171,12 +171,21 @@ class PoolReuseTestCase(unittest.TestCase):
         # Still usable after both blocks have exited.
         self.assertEqual(list(second.map(int, ["1", "2"])), [1, 2])
 
-    def test_different_sizes_get_different_pools(self) -> None:
+    def test_different_sizes_replace_the_cached_pool(self) -> None:
         with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as small:
-            pass
+            self.assertEqual(small.submit(int, "1").result(), 1)
         with _pool_executor(concurrent.futures.ProcessPoolExecutor, 3) as large:
-            pass
+            self.assertEqual(large.submit(int, "2").result(), 2)
         self.assertIsNot(small, large)
+        with self.assertRaises(RuntimeError):
+            small.submit(int, "1")
+        # Returning to an earlier size creates a new pool, and also shuts
+        # down the larger one instead of leaving its workers alive.
+        with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as replacement:
+            self.assertIsNot(replacement, small)
+            self.assertEqual(replacement.submit(int, "3").result(), 3)
+        with self.assertRaises(RuntimeError):
+            large.submit(int, "1")
 
     def test_thread_pools_are_not_reused(self) -> None:
         with _pool_executor(concurrent.futures.ThreadPoolExecutor, 2) as first:
@@ -212,7 +221,6 @@ class PoolReuseTestCase(unittest.TestCase):
         with _pool_executor(concurrent.futures.ProcessPoolExecutor, 2) as replacement:
             self.assertIsNot(replacement, executor)
             self.assertEqual(replacement.submit(int, "1").result(), 1)
-
 
 if __name__ == "__main__":
     unittest.main()
