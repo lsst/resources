@@ -180,7 +180,8 @@ def _forget_pool_executor_cache() -> None:
 
 
 atexit.register(_clear_pool_executor_cache)
-os.register_at_fork(after_in_child=_forget_pool_executor_cache)
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forget_pool_executor_cache)
 
 
 @contextlib.contextmanager

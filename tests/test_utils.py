@@ -12,6 +12,8 @@
 import concurrent.futures
 import multiprocessing
 import os
+import subprocess
+import sys
 import unittest
 import unittest.mock
 from concurrent.futures.process import BrokenProcessPool
@@ -87,6 +89,8 @@ class PoolExecutorTestCase(unittest.TestCase):
         # The fork start method is the one where a child inherits the parent's
         # memoized state, so both methods must be checked.
         for method in ("fork", "spawn"):
+            if method not in multiprocessing.get_all_start_methods():
+                continue
             with self.subTest(start_method=method):
                 parent_before = _get_num_workers()
                 context = multiprocessing.get_context(method)
@@ -261,6 +265,21 @@ class PoolReuseTestCase(unittest.TestCase):
                     self.assertIsNot(replacement, broken)
                     self.assertEqual(replacement.submit(int, "1").result(), 1)
 
+    def test_import_without_fork_support(self) -> None:
+        # Load dependencies before hiding the hook: POSIX versions of some
+        # stdlib modules (such as random) assume the hook is available.
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import os, importlib; "
+                "import lsst.resources._resourcePath as resource_path; "
+                "hasattr(os, 'register_at_fork') and delattr(os, 'register_at_fork'); "
+                "importlib.reload(resource_path)",
+            ],
+            check=True,
+            capture_output=True,
+        )
 
 
 if __name__ == "__main__":
