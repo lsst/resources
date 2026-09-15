@@ -19,6 +19,7 @@ import unittest.mock
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any
 
+import lsst.resources._resourcePath as resource_path
 from lsst.resources import ResourcePath
 from lsst.resources._resourcePath import (
     _clear_pool_executor_cache,
@@ -191,6 +192,42 @@ class PoolReuseTestCase(unittest.TestCase):
             self.assertEqual(replacement.submit(int, "3").result(), 3)
         with self.assertRaises(RuntimeError):
             large.submit(int, "1")
+
+    @unittest.mock.patch.dict(os.environ, {}, clear=False)
+    @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
+    def test_batch_size_does_not_replace_the_cached_pool(self) -> None:
+        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
+        _clear_worker_caches()
+        _clear_pool_executor_cache()
+        one = [ResourcePath(__file__)]
+        many = [ResourcePath(__file__).updatedFile(f"missing{n}.txt") for n in range(64)]
+
+        # A batch small enough to occupy a single worker must still be given a
+        # pool sized for the scheme, or the next larger batch would replace it.
+        for uris in (one, many, one):
+            FileResourcePath._mexists_pool(concurrent.futures.ProcessPoolExecutor, uris)
+            cached = resource_path._POOL_EXECUTOR_CACHE
+            assert cached is not None
+            self.assertEqual(cached[1], 3)
+            if uris is one:
+                first = cached[2]
+        self.assertIs(resource_path._POOL_EXECUTOR_CACHE[2], first)
+
+    @unittest.mock.patch.dict(os.environ, {}, clear=False)
+    def test_s3_batch_size_does_not_size_the_pool(self) -> None:
+        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
+        _clear_worker_caches()
+        recorded: list[int] = []
+
+        class _RecordingExecutor(concurrent.futures.ThreadPoolExecutor):
+            def __init__(self, max_workers: int, **kwargs: Any) -> None:
+                recorded.append(max_workers)
+                super().__init__(max_workers=max_workers, **kwargs)
+
+        uri = ResourcePath("s3://bucket/object.txt")
+        with unittest.mock.patch.object(S3ResourcePath, "_delete_objects_wrapper", return_value={}):
+            S3ResourcePath._mremove_with_pool(_RecordingExecutor, [(uri,)])
+        self.assertEqual(recorded, [_get_num_workers()])
 
     def test_thread_pools_are_not_reused(self) -> None:
         with _pool_executor(concurrent.futures.ThreadPoolExecutor, 2) as first:

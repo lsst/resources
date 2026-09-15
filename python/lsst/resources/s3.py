@@ -307,8 +307,7 @@ class S3ResourcePath(ResourcePath):
         num_workers: int | None = None,
     ) -> dict[ResourcePath, MBulkResult]:
         # Different name because different API to base class.
-        # No need to make more workers than we have chunks.
-        max_workers = num_workers if num_workers is not None else min(len(chunks), _get_num_workers())
+        max_workers = num_workers if num_workers is not None else _get_num_workers()
         results: dict[ResourcePath, MBulkResult] = {}
         with _pool_executor(pool_executor_class, max_workers) as remove_executor:
             future_remove = {

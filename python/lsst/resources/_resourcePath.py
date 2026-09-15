@@ -150,9 +150,14 @@ def _make_pool_executor(pool_executor_class: _EXECUTOR_TYPE, max_workers: int) -
 # One process pool, identified by executor class and worker count. Starting one
 # costs a full interpreter startup per worker under the spawn start method.
 # That cost scales with how much the parent process has imported, so we keep
-# the pool alive for reuse by later bulk operations. Thread pools are not
-# cached; they cost almost nothing to create and holding one open would keep
-# its threads alive for no benefit.
+# the pool alive for reuse by later bulk operations. Callers must therefore
+# size a pool from the scheme and the configuration alone, and never from the
+# number of URIs in hand, since a size that varies from call to call would
+# replace the cached pool on every call. Asking for more workers than there is
+# work to give them is harmless: only the fork start method starts them all up
+# front, and there a worker is cheap. Thread pools are not cached; they cost
+# almost nothing to create and holding one open would keep its threads alive
+# for no benefit.
 _POOL_EXECUTOR_CACHE: tuple[_EXECUTOR_TYPE, int, concurrent.futures.Executor] | None = None
 
 
@@ -1184,8 +1189,6 @@ class ResourcePath:  # numpydoc ignore=PR02
         chunks = cls._chunk_uris(uri_list, max_workers)
         if not chunks:
             return {}
-        # No need for more workers than there are chunks to give them.
-        max_workers = min(max_workers, len(chunks))
 
         results: dict[ResourcePath, bool] = {}
         with _pool_executor(pool_executor_class, max_workers) as exists_executor:
@@ -1455,8 +1458,6 @@ class ResourcePath:  # numpydoc ignore=PR02
         chunks = cls._chunk_uris(uri_list, max_workers)
         if not chunks:
             return {}
-        # No need for more workers than there are chunks to give them.
-        max_workers = min(max_workers, len(chunks))
 
         results: dict[ResourcePath, MBulkResult] = {}
         with _pool_executor(pool_executor_class, max_workers) as remove_executor:
