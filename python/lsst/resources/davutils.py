@@ -133,10 +133,12 @@ def redact_url(url: str) -> str:
 
             https://host.example.org:1234/a/b/c/file.data?key1=value1&key2=value2&authz=....#fragment
     """
+    queries_to_redact = ("authz", "dcache-http-ref", "dcache-http-uuid")
     parsed_url = urlparse(url)
     redacted_query: list[tuple[str, str]] = []
     for pair in parse_qsl(parsed_url.query):
-        redacted_query.append((pair[0], "...." if pair[0] == "authz" else pair[1]))
+        redacted_value = f"{pair[1][:4]}..."
+        redacted_query.append((pair[0], redacted_value if pair[0] in queries_to_redact else pair[1]))
 
     redacted_url = parsed_url._replace(query=urlencode(redacted_query))
     return urlunparse(redacted_url)
@@ -916,6 +918,9 @@ class DavClient:
         return None
 
     def _make_ssl_context(self) -> ssl.SSLContext:
+        if hasattr(self, "_ssl_context") and self._ssl_context is not None:
+            return self._ssl_context
+
         # Create a SSL context with the settings specified in the config.
         # Require verification of the server certificate.
         config = self._config
@@ -1645,7 +1650,7 @@ class DavClient:
             case HTTPStatus.OK | HTTPStatus.CREATED | HTTPStatus.NO_CONTENT:
                 redirect_url = url
             case status if status in resp.REDIRECT_STATUSES:
-                redirect_url = resp.headers.get("Location")
+                redirect_url = self._get_response_header(resp, "PUT", "Location")
             case _:
                 raise unexpected_status_error("PUT", url, resp)
 
@@ -2416,6 +2421,81 @@ class DavClient:
         """
         raise NotImplementedError(f"URL signing is not supported by server for {self}")
 
+    def _get_response_header(self, resp: HTTPResponse, method: str, header: str) -> str:
+        """Return the value of response header `header` that is expected to be
+        present in the HTTP response `resp`.
+
+        Parameters
+        ----------
+        resp : `HTTPResponse`
+            Response to inspect extract the header value from.
+        method : `str`
+            Method used in the request that originated this reponse.
+        header : `str`
+            Header to look for in the response.
+
+        Returns
+        -------
+        value : `str`
+            The value of the `header` header found in `resp`, if present.
+            If not present, this method raises an exception.
+        """
+        if (value := resp.headers.get(header)) is not None:
+            return value
+        else:
+            raise ValueError(
+                f"Expecting {header} header in response to {method} {resp.geturl()} with status "
+                f"{resp.status} {resp.reason} but could not find it"
+            )
+
+    def _get_backend_url(self, url: str) -> str:
+        """Return the URL of a file at the back end server. This method helps
+        determining what is the back end server that serves the file at `url`
+        without actually downloading the file content.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+
+        Returns
+        -------
+        url : `str`
+            The URL found in the response returned by the front end server. If
+            that response was not a redirection, the returned `url` is the
+            same as the `url` argument.
+        """
+        # Send a GET request to the server with a `Range` header without
+        # following redirection.
+        #
+        # We want to get redirected to the back end server but don't want to
+        # download the content of the target file, so we just ask for its
+        # first byte. We will get a error status code if the target file
+        # exists but is empty. In that case, we won't know if there is a
+        # back end server for this URL and if so what it is.
+        headers = {
+            "Accept-Encoding": "identity",
+            "Range": "bytes=0-0",
+        }
+        resp = self._get(url, headers=headers, redirect=False, preload_content=True)
+        match resp.status:
+            case HTTPStatus.PARTIAL_CONTENT:
+                # We received the byte range requested without getting
+                # redirected. There is not back end server.
+                return url
+            case status if status in resp.REDIRECT_STATUSES:
+                # We were redirected to the back end server. Extract and return
+                # the redirection URL.
+                return self._get_response_header(resp, "GET", "Location")
+            case HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE:
+                # The file is empty, so we did not get the back end URL.
+                return url
+            case HTTPStatus.NOT_FOUND:
+                # There is no file at this URL
+                raise FileNotFoundError(f"No file found at {url}")
+            case _:
+                raise unexpected_status_error("GET (with 'Range' header)", url, resp)
+
 
 class ActivityCaveat(enum.Enum):
     """Helper class for enumerating accepted activity caveats for requesting
@@ -2744,7 +2824,7 @@ class DavClientDCache(DavClientURLSigner):
             case HTTPStatus.OK | HTTPStatus.CREATED | HTTPStatus.NO_CONTENT:
                 redirect_url = url
             case status if status in resp.REDIRECT_STATUSES:
-                redirect_url = resp.headers.get("Location")
+                redirect_url = self._get_response_header(resp, "PUT", "Location")
             case _:
                 raise unexpected_status_error("PUT", url, resp)
 
@@ -2831,7 +2911,7 @@ class DavClientDCache(DavClientURLSigner):
         # We were redirected to a backend server. Send a GET request to the
         # backend server and ask it to close the HTTP connection to force
         # closing the network connection.
-        redirect_url = resp.headers.get("Location")
+        redirect_url = self._get_response_header(resp, "GET", "Location")
         _, resp = self.get(redirect_url, headers={"Connection": "close"}, preload_content=False)
         match resp.status:
             case HTTPStatus.OK:
@@ -2867,7 +2947,7 @@ class DavClientDCache(DavClientURLSigner):
             case HTTPStatus.OK:
                 return backend_url, resp.data
             case status if status in resp.REDIRECT_STATUSES:
-                redirect_url = resp.headers.get("Location")
+                redirect_url = self._get_response_header(resp, "GET", "Location")
             case _:
                 raise unexpected_status_error("GET", url, resp)
 
@@ -3039,7 +3119,7 @@ class DavClientDCache(DavClientURLSigner):
         backend_headers.update(range_headers)
         backend_headers.update({"Connection": "close"})
 
-        redirect_url = resp.headers.get("Location")
+        redirect_url = self._get_response_header(resp, "GET", "Location")
         _, resp = self.get(redirect_url, headers=backend_headers, redirect=True)
         match resp.status:
             case HTTPStatus.PARTIAL_CONTENT:
@@ -3102,7 +3182,7 @@ class DavClientXrootD(DavClientURLSigner):
                 redirect_url = url
                 break
             elif resp.status in resp.REDIRECT_STATUSES:
-                redirect_url = resp.headers.get("Location")
+                redirect_url = self._get_response_header(resp, "PUT", "Location")
                 break
             elif resp.status == HTTPStatus.LOCKED:
                 # Sometimes XRootD servers respond with status code LOCKED and
