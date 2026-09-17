@@ -57,6 +57,10 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         Defaults to newline. If a file is opened in binary mode, this argument
         is not used, as binary files will only split lines on the binary
         newline representation.
+    size : `int` or `None`, optional
+        Total size of the remote resource in bytes, if it is already known.
+        Saves a request to the server the first time the size is needed, for
+        example when seeking relative to the end of the resource.
     """
 
     def __init__(
@@ -67,6 +71,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         *,
         timeout: tuple[float, float] | None = None,
         newline: AnyStr | None = None,
+        size: int | None = None,
     ) -> None:
         super().__init__(mode, log, uri, newline=newline)
         self._url = uri.geturl()
@@ -81,7 +86,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         self._closed = CloseStatus.OPEN
         self._current_position = 0
         self._eof = False
-        self._total_size = -1  # Unknown
+        self._total_size = -1 if size is None else size  # -1 means unknown
 
     def close(self) -> None:
         self._closed = CloseStatus.CLOSED

@@ -1,0 +1,2 @@
+``ResourcePath.open()`` on a plain HTTP URL now passes the resource size already reported by the range-support probe to the returned handle.
+Seeking relative to the end of the resource no longer needs an extra request to ask the server for its size.

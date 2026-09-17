@@ -2059,7 +2059,9 @@ class HttpResourcePath(ResourcePath):
         accepts_range = resp.status_code in range_capable and resp.headers.get("Accept-Ranges") == "bytes"
         handle: ResourceHandleProtocol
         if mode in ("rb", "r") and accepts_range:
-            handle = HttpReadResourceHandle(mode, log, self, timeout=self._config.timeout)
+            handle = HttpReadResourceHandle(
+                mode, log, self, timeout=self._config.timeout, size=_total_size_from_partial_content(resp)
+            )
             if mode == "r":
                 # cast because the protocol is compatible, but does not have
                 # BytesIO in the inheritance tree
@@ -2073,6 +2075,29 @@ class HttpResourcePath(ResourcePath):
     def _copy_extra_attributes(self, original_uri: ResourcePath) -> None:
         assert isinstance(original_uri, HttpResourcePath)
         self._extra_headers = original_uri._extra_headers
+
+
+def _total_size_from_partial_content(resp: requests.Response) -> int | None:
+    """Return the total size of the resource reported by a 206 response.
+
+    Parameters
+    ----------
+    resp : `requests.Response`
+        Response to inspect.
+
+    Returns
+    -------
+    size : `int` or `None`
+        Total size of the resource in bytes, or `None` if the response does
+        not report one. A 200 response is deliberately ignored because its
+        'Content-Length' describes the transferred body, which may be
+        content-encoded, rather than the resource itself.
+    """
+    if resp.status_code != requests.codes.partial_content:
+        return None
+    if (content_range_header := resp.headers.get("Content-Range")) is None:
+        return None
+    return parse_content_range_header(content_range_header).total
 
 
 def _dump_response(resp: requests.Response) -> None:
