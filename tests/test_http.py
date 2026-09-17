@@ -14,6 +14,7 @@ import io
 import os.path
 import pickle
 import random
+import re
 import shutil
 import socket
 import stat
@@ -154,6 +155,52 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         self.assertEqual(info.last_modified.year, 2025)
         self.assertEqual(info.checksums, {"md5": "rL0Y20zC+Fzt72VPzMSk2A==", "sha-256": "def456"})
         self.assertEqual(len(responses.calls), 2)
+
+    @responses.activate
+    def test_open_presigned_s3_url_uses_range_requests(self):
+        """Opening a presigned S3 URL must read byte ranges on demand rather
+        than downloading the whole object.
+        """
+        _get_dav_and_server_headers.cache_clear()
+        responses.add(responses.OPTIONS, "http://s3.test/", status=200)
+
+        body = b"0123456789abcdef"
+        url = "http://s3.test/big.dat?AWSAccessKeyId=key&Signature=sig&Expires=1000"
+
+        def serve_range(request):
+            # A presigned URL is signed for GET only, so the HEAD used to probe
+            # for range support is emulated with a one-byte ranged GET. Such a
+            # request is answered with 206, never 200.
+            byte_range = request.headers.get("Range")
+            if byte_range is None:
+                return (200, {"Accept-Ranges": "bytes"}, body)
+            # An open-ended range such as "bytes=4-" runs to the end of body.
+            start, end = re.fullmatch(r"bytes=(\d+)-(\d*)", byte_range).groups()
+            first = int(start)
+            if first >= len(body):
+                return (416, {"Accept-Ranges": "bytes"}, b"")
+            last = int(end) if end else len(body) - 1
+            chunk = body[first : last + 1]
+            return (
+                206,
+                {
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": f"bytes {first}-{first + len(chunk) - 1}/{len(body)}",
+                },
+                chunk,
+            )
+
+        responses.add_callback(responses.GET, url, callback=serve_range)
+
+        with ResourcePath(url).open("rb") as handle:
+            self.assertIsInstance(handle, HttpReadResourceHandle)
+            handle.seek(-4, io.SEEK_END)
+            self.assertEqual(handle.read(), b"cdef")
+
+        gets = [call.request for call in responses.calls if call.request.method == "GET"]
+        self.assertTrue(gets)
+        for request in gets:
+            self.assertIn("Range", request.headers)
 
 
 class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):

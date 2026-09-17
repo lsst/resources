@@ -2052,7 +2052,11 @@ class HttpResourcePath(ResourcePath):
         encoding: str | None = None,
     ) -> Generator[ResourceHandleProtocol]:
         resp = self._head()
-        accepts_range = resp.status_code == requests.codes.ok and resp.headers.get("Accept-Ranges") == "bytes"
+        # A presigned S3 URL is signed for a single method, so _head() emulates
+        # HEAD with a one-byte ranged GET, which is answered with 206 rather
+        # than 200.
+        range_capable = (requests.codes.ok, requests.codes.partial_content)
+        accepts_range = resp.status_code in range_capable and resp.headers.get("Accept-Ranges") == "bytes"
         handle: ResourceHandleProtocol
         if mode in ("rb", "r") and accepts_range:
             handle = HttpReadResourceHandle(mode, log, self, timeout=self._config.timeout)
