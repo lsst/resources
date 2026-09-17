@@ -191,8 +191,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             # Verify the position.
             self.assertEqual(handle.tell(), len(sub_contents))
 
-            # Jump back to the beginning and test if reading the whole file
-            # prompts the internal buffer to be read.
+            # Jump back to the beginning and test if reading the whole file.
             handle.seek(0)
             self.assertEqual(handle.tell(), 0)
             result = handle.read().decode()
@@ -218,6 +217,13 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Verify that write modes invoke the default base method
         with remote_file.open("w") as handle:
             self.assertIsInstance(handle, io.StringIO)
+
+        # Verify that a handle of an empty file works as expected
+        remote_file = self.tmpdir.join(self._get_file_name())
+        self.assertIsNone(remote_file.write(data=b"", overwrite=True))
+        with remote_file.open("rb") as handle:
+            self.assertIsInstance(handle, DavReadResourceHandle)
+            self.assertEqual(0, len(handle.read()))
 
     def test_dav_mkdir(self):
         # Check creation and deletion of an empty directory
