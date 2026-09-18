@@ -21,7 +21,6 @@ import datetime
 import io
 import locale
 import logging
-import math
 import os
 import posixpath
 import re
@@ -61,10 +60,6 @@ ESCAPES_RE = re.compile(r"%[A-F0-9]{2}")
 
 # Precomputed escaped hash
 ESCAPED_HASH = urllib.parse.quote("#")
-
-# Chunks to create per worker when batching bulk operations. Oversubscribing
-# keeps one slow chunk from stalling a worker for the rest of the run.
-CHUNKS_PER_WORKER = 4
 
 _T = TypeVar("_T")
 
@@ -174,14 +169,24 @@ class ResourcePath:  # numpydoc ignore=PR02
     sized to match it; schemes with no pool can raise it.
     """
 
-    _min_chunk_size: int = 1
-    """Smallest batch of URIs worth giving to a worker of its own.
+    _chunk_size: int = 1
+    """Number of URIs given to each worker by `mexists` and `mremove`.
 
-    A batch no larger than this is handled in the calling thread instead of
-    being sent to a pool, since handing work to another thread or process
-    costs more than doing it. The default suits a scheme where every
-    operation is a network round trip and so is worth overlapping even for a
-    couple of URIs. A scheme whose operations are cheap should raise it.
+    A batch that fits in a single chunk is handled in the calling thread
+    rather than being sent to a pool. The default suits a scheme where every
+    operation is a network round trip, which is expensive enough that handing
+    over one URI at a time costs nothing and gives the pool the freedom to
+    balance itself. A scheme whose operations are cheap should raise it until
+    a chunk is worth handing over.
+    """
+
+    _transfer_chunk_size: int = 1
+    """Number of files given to each worker by `mtransfer`.
+
+    Kept separate from ``_chunk_size`` because a transfer costs orders of
+    magnitude more than an existence check on the same scheme, and its cost
+    scales with a file size the caller does not know in advance, so chunks
+    have to stay small enough for the pool queue to balance them.
     """
 
     # This is not an ABC with abstract methods because the __new__ being
@@ -991,7 +996,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         uri_list = list(uris)
         max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
-        chunks = cls._chunk_work(uri_list, max_workers, cls._min_chunk_size)
+        chunks = cls._chunk_work(uri_list, cls._chunk_size)
         if not chunks:
             return {}
         if len(chunks) == 1:
@@ -1124,17 +1129,10 @@ class ResourcePath:  # numpydoc ignore=PR02
         copy_status : `dict` [ `ResourcePath`, `MBulkResult` ]
             A dict of all the transfer attempts with a value indicating
             whether the transfer succeeded for the target URI.
-
-        Notes
-        -----
-        Batches are never floored at ``_min_chunk_size``. That floor exists
-        for operations cheap enough that handing one over costs more than
-        doing it, which is never true of a transfer, and a floor would leave
-        workers idle when a few large files are transferred.
         """
         pairs = list(from_to)
         max_workers = _get_num_workers(cls._max_workers)
-        chunks = cls._chunk_work(pairs, max_workers, min_chunk_size=1)
+        chunks = cls._chunk_work(pairs, cls._transfer_chunk_size)
         if not chunks:
             return {}
         if len(chunks) == 1:
@@ -1244,19 +1242,16 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         return results
 
-    @classmethod
-    def _chunk_work(cls, items: list[_T], max_workers: int, min_chunk_size: int) -> list[tuple[_T, ...]]:
-        """Split work items into batches sized for the given worker count.
+    @staticmethod
+    def _chunk_work(items: list[_T], chunk_size: int) -> list[tuple[_T, ...]]:
+        """Split work items into batches of a fixed size.
 
         Parameters
         ----------
         items : `list`
             The work items to split.
-        max_workers : `int`
-            Number of workers the batches will be spread across.
-        min_chunk_size : `int`
-            Smallest batch to create, below which the cost of handing the
-            batch over exceeds the cost of the work in it.
+        chunk_size : `int`
+            Number of items to put in each batch.
 
         Returns
         -------
@@ -1266,12 +1261,15 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Notes
         -----
-        Several batches per worker let a worker that draws quick items move
-        on to more of them.
+        The batch size does not depend on how many items there are. Sizing it
+        from the total would make a batch grow without bound as the total
+        grows, and a batch that draws a run of slow URIs then stalls a worker
+        for the rest of the operation with no way to rebalance. Asking for
+        more batches than there are workers is harmless, since a pool only
+        starts a thread when there is a batch waiting for it.
         """
         if not items:
             return []
-        chunk_size = max(min_chunk_size, math.ceil(len(items) / (max_workers * CHUNKS_PER_WORKER)))
         return list(chunk_iterable(items, chunk_size=chunk_size))
 
     @classmethod
@@ -1317,7 +1315,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         uri_list = list(uris)
         max_workers = _get_num_workers(cls._max_workers)
-        chunks = cls._chunk_work(uri_list, max_workers, cls._min_chunk_size)
+        chunks = cls._chunk_work(uri_list, cls._chunk_size)
         if not chunks:
             return {}
         if len(chunks) == 1:

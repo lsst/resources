@@ -270,38 +270,37 @@ class BulkOperationTestCase(unittest.TestCase):
             uri.write(b"")
         return uris
 
-    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
     def test_chunk_sizes(self) -> None:
-        items = list(range(5))
-
-        # Fewer items than chunk slots gives one item per chunk.
-        chunks = FileResourcePath._chunk_work(items, 32, FileResourcePath._min_chunk_size)
-        self.assertEqual(len(chunks), 5)
-        self.assertTrue(all(len(c) == 1 for c in chunks))
-
-        # More items than chunk slots gives evenly sized chunks.
-        chunks = FileResourcePath._chunk_work(items, 1, FileResourcePath._min_chunk_size)
-        self.assertEqual([len(c) for c in chunks], [2, 2, 1])
-
-        # An empty input yields no chunks at all.
-        self.assertEqual(FileResourcePath._chunk_work([], 4, 1), [])
-
-    def test_chunk_size_floor(self) -> None:
         items = list(range(10))
 
-        # A batch that would otherwise be spread thinly is kept in one piece,
-        # which is the signal to the caller to handle it without a pool.
-        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items[:4], 32, 4)], [4])
+        # The batch size does not depend on how many items there are.
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items, 4)], [4, 4, 2])
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items, 1)], [1] * 10)
 
-        # The floor never makes chunks larger than the worker count calls for.
-        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items, 1, 4)], [4, 4, 2])
+        # A batch that fits in one chunk is the signal to the caller to handle
+        # it without a pool.
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items, 100)], [10])
+
+        # An empty input yields no chunks at all.
+        self.assertEqual(FileResourcePath._chunk_work([], 4), [])
+
+    def test_schemes_size_their_own_chunks(self) -> None:
+        # A local operation is cheap enough that a batch has to be large
+        # before threading it pays, while a scheme whose every operation is a
+        # round trip is worth overlapping immediately.
+        self.assertEqual(FileResourcePath._chunk_size, 1000)
+        self.assertEqual(ResourcePath._chunk_size, 1)
+
+        # A transfer is far more expensive than an existence check on the same
+        # scheme, so it batches separately.
+        self.assertLess(FileResourcePath._transfer_chunk_size, FileResourcePath._chunk_size)
 
     def test_empty_bulk_operations_are_no_ops(self) -> None:
         self.assertEqual(ResourcePath.mremove([]), {})
         self.assertEqual(ResourcePath.mexists([]), {})
         self.assertEqual(ResourcePath.mtransfer("copy", []), {})
 
-    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
+    @unittest.mock.patch.object(FileResourcePath, "_chunk_size", 1)
     def test_removal_failure_does_not_abandon_the_rest(self) -> None:
         uris = self._make_files("f", 20)
         # Remove one out from under the batch so that its own removal raises.
@@ -316,7 +315,7 @@ class BulkOperationTestCase(unittest.TestCase):
             self.assertTrue(results[uri].success, f"{uri} should have been removed")
             self.assertFalse(uri.exists())
 
-    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
+    @unittest.mock.patch.object(FileResourcePath, "_chunk_size", 1)
     def test_existence_check_reports_each_uri(self) -> None:
         present = self._make_files("p", 20)
         absent = self.tmpdir.join("gone.txt")
@@ -327,7 +326,7 @@ class BulkOperationTestCase(unittest.TestCase):
         self.assertTrue(all(results[uri] for uri in present))
         self.assertFalse(results[absent])
 
-    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
+    @unittest.mock.patch.object(FileResourcePath, "_chunk_size", 1)
     def test_existence_check_treats_an_error_as_missing(self) -> None:
         uris = self._make_files("e", 20)
         failing = uris[1].ospath
