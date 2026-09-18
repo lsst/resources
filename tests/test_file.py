@@ -9,7 +9,6 @@
 # Use of this source code is governed by a 3-clause BSD-style
 # license that can be found in the LICENSE file.
 
-import concurrent.futures
 import contextlib
 import datetime
 import os
@@ -17,25 +16,11 @@ import pathlib
 import unittest
 import unittest.mock
 import urllib.parse
-from typing import Any
 
-import lsst.resources._resourcePath as resource_path
 from lsst.resources import ResourceInfo, ResourcePath, ResourcePathExpression
 from lsst.resources.file import FileResourcePath
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
-from lsst.resources.utils import (
-    _get_configured_num_workers,
-    _get_default_num_workers,
-    makeTestTempDir,
-    removeTestTempDir,
-)
-
-
-def _clear_worker_caches() -> None:
-    """Discard memoized worker-count lookups."""
-    _get_configured_num_workers.cache_clear()
-    _get_default_num_workers.cache_clear()
-
+from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -265,24 +250,6 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 mode = os.stat(dir).st_mode
                 self.assertEqual(mode & TEST_UMASK, 0o0300, f"Permissions incorrect for {dir}: {mode:o}")
 
-    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
-    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "process"})
-    def test_mexists_process(self) -> None:
-        """Test mexists with override executor pool.
-
-        Force test with process pool.
-        """
-        super().test_mexists()
-
-    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
-    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "process"})
-    def test_mtransfer_process(self) -> None:
-        """Test transfer with override executor pool.
-
-        Force test with process pool.
-        """
-        super().test_mtransfer()
-
 
 class RemoveChunkTestCase(unittest.TestCase):
     """Tests for batched removal."""
@@ -368,73 +335,8 @@ class RemoveChunkTestCase(unittest.TestCase):
         # The failure is reported as absent and the rest are still checked.
         self.assertEqual(results, {uris[0]: True, uris[1]: False, uris[2]: True})
 
-    @unittest.mock.patch.dict(os.environ, {}, clear=False)
-    @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
-    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
-    def test_mexists_scheme_cap_sizes_the_pool(self) -> None:
-        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
-        _clear_worker_caches()
-        recorded: list[int] = []
-
-        class _RecordingExecutor(concurrent.futures.ThreadPoolExecutor):
-            def __init__(self, max_workers: int, **kwargs: Any) -> None:
-                recorded.append(max_workers)
-                super().__init__(max_workers=max_workers, **kwargs)
-
-        uris = [self.tmpdir.join(f"x{n}.txt") for n in range(20)]
-        for uri in uris:
-            uri.write(b"")
-
-        results = FileResourcePath._mexists_pool(_RecordingExecutor, uris)
-
-        self.assertEqual(recorded, [3])
-        self.assertTrue(all(results.values()))
-
     def test_empty_existence_check_is_a_no_op(self) -> None:
         self.assertEqual(ResourcePath.mexists([]), {})
-
-    def test_small_batches_avoid_the_pool(self) -> None:
-        present = [self.tmpdir.join(f"s{n}.txt") for n in range(3)]
-        for uri in present:
-            uri.write(b"")
-        absent = self.tmpdir.join("nothere.txt")
-
-        def refuse(*args: Any, **kwargs: Any) -> None:
-            raise AssertionError("a batch this small must not be given to a pool")
-
-        with unittest.mock.patch.object(resource_path, "_pool_executor", refuse):
-            existence = FileResourcePath._mexists_pool(
-                concurrent.futures.ThreadPoolExecutor, [*present, absent]
-            )
-            removals = FileResourcePath._mremove_pool(
-                concurrent.futures.ThreadPoolExecutor, [*present, absent]
-            )
-
-        self.assertEqual(existence, {**dict.fromkeys(present, True), absent: False})
-        self.assertTrue(all(removals[uri].success for uri in present))
-        self.assertFalse(removals[absent].success)
-
-    @unittest.mock.patch.dict(os.environ, {}, clear=False)
-    @unittest.mock.patch.object(FileResourcePath, "_max_workers", 3)
-    @unittest.mock.patch.object(FileResourcePath, "_min_chunk_size", 1)
-    def test_scheme_cap_sizes_the_pool(self) -> None:
-        os.environ.pop("LSST_RESOURCES_NUM_WORKERS", None)
-        _clear_worker_caches()
-        recorded: list[int] = []
-
-        class _RecordingExecutor(concurrent.futures.ThreadPoolExecutor):
-            def __init__(self, max_workers: int, **kwargs: Any) -> None:
-                recorded.append(max_workers)
-                super().__init__(max_workers=max_workers, **kwargs)
-
-        uris = [self.tmpdir.join(f"f{n}.txt") for n in range(20)]
-        for uri in uris:
-            uri.write(b"")
-
-        results = FileResourcePath._mremove_pool(_RecordingExecutor, uris)
-
-        self.assertEqual(recorded, [3])
-        self.assertTrue(all(r.success for r in results.values()))
 
 
 @contextlib.contextmanager

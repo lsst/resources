@@ -13,7 +13,6 @@ from __future__ import annotations
 
 __all__ = ("ResourceInfo", "ResourcePath", "ResourcePathExpression")
 
-import atexit
 import concurrent.futures
 import contextlib
 import copy
@@ -31,7 +30,7 @@ import urllib.parse
 from collections import defaultdict
 from pathlib import Path, PurePath, PurePosixPath
 from random import Random
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
 try:
     import fsspec
@@ -49,7 +48,7 @@ from typing import Any, Literal, NamedTuple, overload
 from lsst.utils.iteration import chunk_iterable
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
-from .utils import MAX_WORKERS, _get_num_workers, _init_pool_worker, get_tempdir
+from .utils import MAX_WORKERS, _get_num_workers, get_tempdir
 
 if TYPE_CHECKING:
     from .utils import TransactionProtocol
@@ -73,180 +72,6 @@ class MBulkResult(NamedTuple):
 
     success: bool
     exception: Exception | None
-
-
-_EXECUTOR_TYPE: TypeAlias = type[
-    concurrent.futures.ThreadPoolExecutor | concurrent.futures.ProcessPoolExecutor
-]
-
-# Cache value for executor class so as not to issue warning multiple
-# times but still allow tests to override the value.
-_POOL_EXECUTOR_CLASS: _EXECUTOR_TYPE | None = None
-
-
-def _get_executor_class() -> _EXECUTOR_TYPE:
-    """Return the executor class used for parallelized execution.
-
-    Returns
-    -------
-    cls : `concurrent.futures.Executor`
-        The ``Executor`` class. Default is
-        `concurrent.futures.ThreadPoolExecutor`. Can be set explicitly by
-        setting the ``$LSST_RESOURCES_EXECUTOR`` environment variable to
-        "thread" or "process". Returns "thread" pool if the value of the
-        variable is not recognized.
-    """
-    global _POOL_EXECUTOR_CLASS
-
-    if _POOL_EXECUTOR_CLASS is not None:
-        return _POOL_EXECUTOR_CLASS
-
-    pool_executor_classes = {
-        "threads": concurrent.futures.ThreadPoolExecutor,
-        "process": concurrent.futures.ProcessPoolExecutor,
-    }
-    default_executor = "threads"
-    external = os.getenv("LSST_RESOURCES_EXECUTOR", default_executor)
-    if not external:
-        external = default_executor
-    if external not in pool_executor_classes:
-        log.warning(
-            "Unrecognized value of '%s' for LSST_RESOURCES_EXECUTOR env var. Using '%s'",
-            external,
-            default_executor,
-        )
-        external = default_executor
-    _POOL_EXECUTOR_CLASS = pool_executor_classes[external]
-    return _POOL_EXECUTOR_CLASS
-
-
-def _make_pool_executor(pool_executor_class: _EXECUTOR_TYPE, max_workers: int) -> concurrent.futures.Executor:
-    """Create a pool executor of the requested type and size.
-
-    Parameters
-    ----------
-    pool_executor_class : `type` [ `concurrent.futures.Executor` ]
-        Type of executor pool to create.
-    max_workers : `int`
-        Number of workers the pool should use.
-
-    Returns
-    -------
-    executor : `concurrent.futures.Executor`
-        The new executor.
-
-    Notes
-    -----
-    A process pool marks each of its workers so that parallel operations
-    running inside a worker use a single worker of their own. A thread pool
-    must not be marked, since its threads share that state with the process
-    that created them.
-    """
-    if issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
-        return pool_executor_class(max_workers=max_workers, initializer=_init_pool_worker)
-    return pool_executor_class(max_workers=max_workers)
-
-
-# One process pool, identified by executor class and worker count. Starting one
-# costs a full interpreter startup per worker under the spawn start method.
-# That cost scales with how much the parent process has imported, so we keep
-# the pool alive for reuse by later bulk operations. Callers must therefore
-# size a pool from the scheme and the configuration alone, and never from the
-# number of URIs in hand, since a size that varies from call to call would
-# replace the cached pool on every call. Asking for more workers than there is
-# work to give them is harmless: only the fork start method starts them all up
-# front, and there a worker is cheap. Thread pools are not cached; they cost
-# almost nothing to create and holding one open would keep its threads alive
-# for no benefit.
-_POOL_EXECUTOR_CACHE: tuple[_EXECUTOR_TYPE, int, concurrent.futures.Executor] | None = None
-
-
-def _clear_pool_executor_cache() -> None:
-    """Shut down and forget the cached pool executor."""
-    global _POOL_EXECUTOR_CACHE
-    cached = _POOL_EXECUTOR_CACHE
-    _POOL_EXECUTOR_CACHE = None
-    if cached is not None:
-        _, _, executor = cached
-        executor.shutdown(wait=True)
-
-
-def _forget_pool_executor_cache() -> None:
-    """Forget the cached pool executor without shutting it down.
-
-    Notes
-    -----
-    For use in a child process after a fork, where the inherited executors
-    refer to worker processes belonging to the parent and must not be driven
-    or shut down from here.
-    """
-    global _POOL_EXECUTOR_CACHE
-    _POOL_EXECUTOR_CACHE = None
-
-
-atexit.register(_clear_pool_executor_cache)
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_forget_pool_executor_cache)
-
-
-@contextlib.contextmanager
-def _pool_executor(
-    pool_executor_class: _EXECUTOR_TYPE, max_workers: int
-) -> Generator[concurrent.futures.Executor]:
-    """Provide a pool executor of the requested type and size.
-
-    Parameters
-    ----------
-    pool_executor_class : `type` [ `concurrent.futures.Executor` ]
-        Type of executor pool to use.
-    max_workers : `int`
-        Number of workers the pool should use.
-
-    Yields
-    ------
-    executor : `concurrent.futures.Executor`
-        The executor to submit work to.
-
-    Notes
-    -----
-    A process pool outlives the block and is reused by later calls, so its
-    workers pay their startup cost once. A different executor class or worker
-    count replaces the cached pool. A pool that has broken is discarded
-    so that the next caller is given a fresh one. A thread pool is created for
-    the block and shut down when it ends.
-    """
-    global _POOL_EXECUTOR_CACHE
-    if not issubclass(pool_executor_class, concurrent.futures.ProcessPoolExecutor):
-        with _make_pool_executor(pool_executor_class, max_workers) as transient:
-            yield transient
-        return
-
-    cached = _POOL_EXECUTOR_CACHE
-    if cached is None or cached[:2] != (pool_executor_class, max_workers):
-        _clear_pool_executor_cache()
-        executor = _make_pool_executor(pool_executor_class, max_workers)
-        _POOL_EXECUTOR_CACHE = (pool_executor_class, max_workers, executor)
-    else:
-        executor = cached[2]
-    try:
-        yield executor
-    except concurrent.futures.BrokenExecutor:
-        _discard_pool_executor(executor)
-        raise
-
-
-def _discard_pool_executor(executor: concurrent.futures.Executor) -> None:
-    """Drop a cached pool executor so that the next caller gets a fresh one.
-
-    Parameters
-    ----------
-    executor : `concurrent.futures.Executor`
-        Broken executor. Only clears the cache if it still holds this pool.
-    """
-    global _POOL_EXECUTOR_CACHE
-    if _POOL_EXECUTOR_CACHE is not None and _POOL_EXECUTOR_CACHE[2] is executor:
-        _POOL_EXECUTOR_CACHE = None
-    executor.shutdown(wait=False)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1149,40 +974,8 @@ class ResourcePath:  # numpydoc ignore=PR02
 
         Implementation helper method for `mexists`.
 
-
         Parameters
         ----------
-        uris : iterable of `ResourcePath`
-            The URIs to test.
-        num_workers : `int` or `None`, optional
-            The number of parallel workers to use when checking for existence
-            If `None`, the default value will be taken from the environment.
-
-        Returns
-        -------
-        existence : `dict` of [`ResourcePath`, `bool`]
-            Mapping of original URI to boolean indicating existence.
-        """
-        pool_executor_class = _get_executor_class()
-        return cls._mexists_pool(pool_executor_class, uris, num_workers=num_workers)
-
-    @classmethod
-    def _mexists_pool(
-        cls,
-        pool_executor_class: _EXECUTOR_TYPE,
-        uris: Iterable[ResourcePath],
-        *,
-        num_workers: int | None = None,
-    ) -> dict[ResourcePath, bool]:
-        """Check for existence of multiple URIs at once using specified pool
-        executor.
-
-        Implementation helper method for `_mexists`.
-
-        Parameters
-        ----------
-        pool_executor_class : `type` [ `concurrent.futures.Executor` ]
-            Type of executor pool to use.
         uris : iterable of `ResourcePath`
             The URIs to test.
         num_workers : `int` or `None`, optional
@@ -1200,21 +993,18 @@ class ResourcePath:  # numpydoc ignore=PR02
         if not chunks:
             return {}
         if len(chunks) == 1:
-            # Not enough work to be worth handing to another thread or
-            # process.
+            # Not enough work to be worth handing to another thread.
             return cls._exists_chunk(chunks[0])
 
         results: dict[ResourcePath, bool] = {}
-        with _pool_executor(pool_executor_class, max_workers) as exists_executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as exists_executor:
             future_exists = {exists_executor.submit(cls._exists_chunk, chunk): chunk for chunk in chunks}
             for future in concurrent.futures.as_completed(future_exists):
                 try:
                     results.update(future.result())
-                except Exception as e:
-                    # The chunk failed as a whole, for example because a
-                    # worker died.
-                    if isinstance(e, concurrent.futures.BrokenExecutor):
-                        _discard_pool_executor(exists_executor)
+                except Exception:
+                    # The chunk failed as a whole, for example because the
+                    # pool could not start a thread.
                     for uri in future_exists[future]:
                         results[uri] = False
         return results
@@ -1281,55 +1071,8 @@ class ResourcePath:  # numpydoc ignore=PR02
             whether the transfer succeeded for the target URI. If ``do_raise``
             is `True`, this will only be returned if there are no errors.
         """
-        pool_executor_class = _get_executor_class()
-        return cls._mtransfer(
-            pool_executor_class,
-            transfer,
-            from_to,
-            overwrite=overwrite,
-            transaction=transaction,
-            do_raise=do_raise,
-        )
-
-    @classmethod
-    def _mtransfer(
-        cls,
-        pool_executor_class: _EXECUTOR_TYPE,
-        transfer: str,
-        from_to: Iterable[tuple[ResourcePath, ResourcePath]],
-        overwrite: bool = False,
-        transaction: TransactionProtocol | None = None,
-        do_raise: bool = True,
-    ) -> dict[ResourcePath, MBulkResult]:
-        """Transfer many files in bulk.
-
-        Parameters
-        ----------
-        transfer : `str`
-            Mode to use for transferring the resource. Generically there are
-            many standard options: copy, link, symlink, hardlink, relsymlink.
-            Not all URIs support all modes.
-        from_to : `list` [ `tuple` [ `ResourcePath`, `ResourcePath` ] ]
-            A sequence of the source URIs and the target URIs.
-        overwrite : `bool`, optional
-            Allow an existing file to be overwritten. Defaults to `False`.
-        transaction : `~lsst.resources.utils.TransactionProtocol`, optional
-            A transaction object that can (depending on implementation)
-            rollback transfers on error.  Not guaranteed to be implemented.
-            The transaction object must be thread safe.
-        do_raise : `bool`, optional
-            If `True` an `ExceptionGroup` will be raised containing any
-            exceptions raised by the individual transfers. Else a dict
-            reporting the status of each `ResourcePath` will be returned.
-
-        Returns
-        -------
-        copy_status : `dict` [ `ResourcePath`, `MBulkResult` ]
-            A dict of all the transfer attempts with a value indicating
-            whether the transfer succeeded for the target URI.
-        """
         max_workers = _get_num_workers()
-        with _pool_executor(pool_executor_class, max_workers) as transfer_executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as transfer_executor:
             future_transfers = {
                 transfer_executor.submit(
                     to_uri.transfer_from,
@@ -1348,8 +1091,6 @@ class ResourcePath:  # numpydoc ignore=PR02
                 try:
                     future.result()
                 except Exception as e:
-                    if isinstance(e, concurrent.futures.BrokenExecutor):
-                        _discard_pool_executor(transfer_executor)
                     transferred = MBulkResult(False, e)
                     failed = True
                 else:
@@ -1408,11 +1149,6 @@ class ResourcePath:  # numpydoc ignore=PR02
         return results
 
     @classmethod
-    def _mremove(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, MBulkResult]:
-        """Remove multiple URIs using futures."""
-        return cls._mremove_pool(_get_executor_class(), uris)
-
-    @classmethod
     def _chunk_uris(cls, uris: list[ResourcePath], max_workers: int) -> list[tuple[ResourcePath, ...]]:
         """Split URIs into batches sized for the given number of workers.
 
@@ -1467,35 +1203,39 @@ class ResourcePath:  # numpydoc ignore=PR02
         return results
 
     @classmethod
-    def _mremove_pool(
-        cls,
-        pool_executor_class: _EXECUTOR_TYPE,
-        uris: Iterable[ResourcePath],
-        *,
-        num_workers: int | None = None,
-    ) -> dict[ResourcePath, MBulkResult]:
-        """Remove URIs using a futures pool."""
+    def _mremove(cls, uris: Iterable[ResourcePath]) -> dict[ResourcePath, MBulkResult]:
+        """Remove multiple URIs using threads.
+
+        Implementation helper method for `mremove`.
+
+        Parameters
+        ----------
+        uris : iterable of `ResourcePath`
+            The URIs to remove.
+
+        Returns
+        -------
+        removal : `dict` of [`ResourcePath`, `MBulkResult`]
+            Mapping of original URI to the result of removing it.
+        """
         uri_list = list(uris)
-        max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
+        max_workers = _get_num_workers(cls._max_workers)
         chunks = cls._chunk_uris(uri_list, max_workers)
         if not chunks:
             return {}
         if len(chunks) == 1:
-            # Not enough work to be worth handing to another thread or
-            # process.
+            # Not enough work to be worth handing to another thread.
             return cls._remove_chunk(chunks[0])
 
         results: dict[ResourcePath, MBulkResult] = {}
-        with _pool_executor(pool_executor_class, max_workers) as remove_executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as remove_executor:
             future_remove = {remove_executor.submit(cls._remove_chunk, chunk): chunk for chunk in chunks}
             for future in concurrent.futures.as_completed(future_remove):
                 try:
                     results.update(future.result())
                 except Exception as e:
-                    # The chunk failed as a whole, for example because a
-                    # worker died.
-                    if isinstance(e, concurrent.futures.BrokenExecutor):
-                        _discard_pool_executor(remove_executor)
+                    # The chunk failed as a whole, for example because the
+                    # pool could not start a thread.
                     for uri in future_remove[future]:
                         results[uri] = MBulkResult(False, e)
         return results

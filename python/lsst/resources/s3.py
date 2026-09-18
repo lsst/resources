@@ -35,15 +35,7 @@ from lsst.utils.timer import time_this
 
 from ._resourceHandles._baseResourceHandle import ResourceHandleProtocol
 from ._resourceHandles._s3ResourceHandle import S3ResourceHandle
-from ._resourcePath import (
-    _EXECUTOR_TYPE,
-    MBulkResult,
-    ResourceInfo,
-    ResourcePath,
-    _discard_pool_executor,
-    _get_executor_class,
-    _pool_executor,
-)
+from ._resourcePath import MBulkResult, ResourceInfo, ResourcePath
 from .s3utils import (
     _get_s3_connection_parameters,
     _s3_disable_bucket_validation,
@@ -296,20 +288,14 @@ class S3ResourcePath(ResourcePath):
         if len(chunks) == 1:
             # Do the removal directly without futures.
             return cls._delete_objects_wrapper(chunks[0])
-        return cls._mremove_with_pool(_get_executor_class(), chunks)
+        return cls._mremove_with_pool(chunks)
 
     @classmethod
-    def _mremove_with_pool(
-        cls,
-        pool_executor_class: _EXECUTOR_TYPE,
-        chunks: list[tuple[ResourcePath, ...]],
-        *,
-        num_workers: int | None = None,
-    ) -> dict[ResourcePath, MBulkResult]:
+    def _mremove_with_pool(cls, chunks: list[tuple[ResourcePath, ...]]) -> dict[ResourcePath, MBulkResult]:
         # Different name because different API to base class.
-        max_workers = num_workers if num_workers is not None else _get_num_workers()
+        max_workers = _get_num_workers(cls._max_workers)
         results: dict[ResourcePath, MBulkResult] = {}
-        with _pool_executor(pool_executor_class, max_workers) as remove_executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as remove_executor:
             future_remove = {
                 remove_executor.submit(cls._delete_objects_wrapper, chunk): i
                 for i, chunk in enumerate(chunks)
@@ -319,8 +305,6 @@ class S3ResourcePath(ResourcePath):
                     results.update(future.result())
                 except Exception as e:
                     # The chunk utterly failed.
-                    if isinstance(e, concurrent.futures.BrokenExecutor):
-                        _discard_pool_executor(remove_executor)
                     chunk = chunks[future_remove[future]]
                     for uri in chunk:
                         results[uri] = MBulkResult(False, e)

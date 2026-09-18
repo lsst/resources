@@ -1,6 +1,1 @@
-Fixed the number of workers used by bulk operations when ``$LSST_RESOURCES_EXECUTOR`` is set to ``process``.
-The worker count for a subprocess is now set by a pool initializer rather than through the environment, so it no longer depends on whether the parent process had already calculated its own worker count, and it behaves the same under the ``fork`` and ``spawn`` start methods.
-``ResourcePath.mexists()`` now honors an explicit ``num_workers`` argument when a process pool is in use.
-Bulk operations discard broken process pools so subsequent calls can create a fresh pool.
-Fork-hook registration is conditional so the package can still be imported on Windows.
 ``clean_test_environment_for_s3()`` now also clears ``$AWS_REQUEST_CHECKSUM_CALCULATION`` and ``$AWS_RESPONSE_CHECKSUM_VALIDATION``, so that a site which disables checksums does not change the object metadata seen by tests.

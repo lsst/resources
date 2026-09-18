@@ -1,0 +1,3 @@
+Removed support for the ``$LSST_RESOURCES_EXECUTOR`` environment variable.
+Bulk operations now always use a thread pool.
+Process pools were measured to be no faster for remote URIs and they silently discarded the undo actions registered by ``ResourcePath.mtransfer()`` on a caller's transaction, since those were recorded in the worker process and never reached the parent.

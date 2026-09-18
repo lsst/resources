@@ -244,26 +244,6 @@ def _get_int_env_var(env_var: str) -> int | None:
     return int_value
 
 
-# True in processes started as pool workers. Only ever written by
-# _init_pool_worker, which runs once per worker process, so the reads need no
-# locking.
-_IS_POOL_WORKER = False
-
-
-def _init_pool_worker() -> None:
-    """Mark this process as a pool worker.
-
-    Notes
-    -----
-    Used as the ``initializer`` of a `~concurrent.futures.ProcessPoolExecutor`
-    so that parallel operations running inside a worker do not spawn workers
-    of their own. Must not be used with a thread pool, since threads share
-    this global with the process that created them.
-    """
-    global _IS_POOL_WORKER
-    _IS_POOL_WORKER = True
-
-
 @cache
 def _get_configured_num_workers() -> int | None:
     """Return the explicitly requested number of workers.
@@ -303,13 +283,10 @@ def _get_num_workers(max_workers: int = MAX_WORKERS) -> int:
     Returns
     -------
     num : `int`
-        The number of workers to use. A pool worker always reports one, so
-        that nested parallel operations do not multiply. Otherwise the value
-        of ``$LSST_RESOURCES_NUM_WORKERS`` is used if set, and the CPU count
-        plus two bounded by ``max_workers`` if not.
+        The number of workers to use. The value of
+        ``$LSST_RESOURCES_NUM_WORKERS`` is used if set, and the CPU count plus
+        two bounded by ``max_workers`` if not.
     """
-    if _IS_POOL_WORKER:
-        return 1
     configured = _get_configured_num_workers()
     if configured is not None:
         # An explicit request is honored without capping.
