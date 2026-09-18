@@ -11,6 +11,7 @@
 
 import datetime
 import os
+import sys
 import time
 import unittest
 from inspect import signature
@@ -21,6 +22,19 @@ from lsst.resources import ResourceInfo, ResourcePath
 from lsst.resources.s3 import S3ResourcePath
 from lsst.resources.s3utils import clean_test_environment_for_s3
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
+
+# moto mocks S3 by patching botocore in this process, and its stubber reloads
+# the module holding a backend's URL table on every request. Concurrent
+# reloads of the same module race, and the loser raises ImportError, which a
+# bulk operation reports as a URI that could not be reached. Only a
+# free-threaded interpreter issues those requests at the same time, and which
+# request loses varies from run to run, so every test that drives requests in
+# parallel is affected rather than one in particular.
+_MOTO_IS_THREAD_SAFE = getattr(sys, "_is_gil_enabled", lambda: True)()
+skip_if_moto_races = unittest.skipIf(
+    not _MOTO_IS_THREAD_SAFE,
+    "moto reloads modules per request, which races without the GIL",
+)
 
 try:
     import boto3
@@ -273,6 +287,20 @@ class S3ReadWriteTestCaseBase(GenericReadWriteTestCase):
 
     def test_fsspec(self) -> None:
         raise unittest.SkipTest("fsspec s3fs incompatible with moto")
+
+    # These drive many S3 requests in parallel, so under a free-threaded
+    # interpreter they are the tests moto's reload race shows up in.
+    @skip_if_moto_races
+    def test_mexists(self) -> None:
+        super().test_mexists()
+
+    @skip_if_moto_races
+    def test_mtransfer(self) -> None:
+        super().test_mtransfer()
+
+    @skip_if_moto_races
+    def test_local_mtransfer(self) -> None:
+        super().test_local_mtransfer()
 
 
 @unittest.skipIf(not boto3, "Warning: boto3 AWS SDK not found!")
