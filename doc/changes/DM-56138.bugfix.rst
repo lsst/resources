@@ -1,0 +1,1 @@
+Opening a presigned S3 URL over HTTP no longer downloads the entire object into memory.

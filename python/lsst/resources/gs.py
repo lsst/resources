@@ -108,7 +108,7 @@ def is_retryable(exc: Exception) -> bool:
     return isinstance(exc, _RETRIEVABLE_TYPES)
 
 
-_RETRY_POLICY = retry.Retry(predicate=is_retryable) if retry else None
+_RETRY_POLICY = retry.Retry(predicate=is_retryable) if retry is not None else None
 
 
 _client = None
