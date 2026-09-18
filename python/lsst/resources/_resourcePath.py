@@ -43,7 +43,7 @@ except ImportError:
         AbstractFileSystem = type
 
 from collections.abc import Generator, Iterable, Iterator
-from typing import Any, Literal, NamedTuple, overload
+from typing import Any, Literal, NamedTuple, TypeVar, overload
 
 from lsst.utils.iteration import chunk_iterable
 
@@ -65,6 +65,8 @@ ESCAPED_HASH = urllib.parse.quote("#")
 # Chunks to create per worker when batching bulk operations. Oversubscribing
 # keeps one slow chunk from stalling a worker for the rest of the run.
 CHUNKS_PER_WORKER = 4
+
+_T = TypeVar("_T")
 
 
 class MBulkResult(NamedTuple):
@@ -989,7 +991,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         uri_list = list(uris)
         max_workers = num_workers if num_workers is not None else _get_num_workers(cls._max_workers)
-        chunks = cls._chunk_uris(uri_list, max_workers)
+        chunks = cls._chunk_work(uri_list, max_workers, cls._min_chunk_size)
         if not chunks:
             return {}
         if len(chunks) == 1:
@@ -1071,38 +1073,132 @@ class ResourcePath:  # numpydoc ignore=PR02
             whether the transfer succeeded for the target URI. If ``do_raise``
             is `True`, this will only be returned if there are no errors.
         """
-        max_workers = _get_num_workers()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as transfer_executor:
-            future_transfers = {
-                transfer_executor.submit(
-                    to_uri.transfer_from,
-                    from_uri,
-                    transfer=transfer,
-                    overwrite=overwrite,
-                    transaction=transaction,
-                    multithreaded=False,
-                ): to_uri
-                for from_uri, to_uri in from_to
-            }
-            results: dict[ResourcePath, MBulkResult] = {}
-            failed = False
-            for future in concurrent.futures.as_completed(future_transfers):
-                to_uri = future_transfers[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    transferred = MBulkResult(False, e)
-                    failed = True
-                else:
-                    transferred = MBulkResult(True, None)
-                results[to_uri] = transferred
+        # A transfer is driven by the target, so group by the target scheme
+        # and let each scheme decide how many workers to use.
+        grouped: dict[type[ResourcePath], list[tuple[ResourcePath, ResourcePath]]] = defaultdict(list)
+        for from_uri, to_uri in from_to:
+            grouped[to_uri.__class__].append((from_uri, to_uri))
 
-        if do_raise and failed:
+        results: dict[ResourcePath, MBulkResult] = {}
+        for uri_class, group in grouped.items():
+            results.update(
+                uri_class._mtransfer(transfer, group, overwrite=overwrite, transaction=transaction)
+            )
+
+        if do_raise and any(not res.success for res in results.values()):
             raise ExceptionGroup(
                 f"Errors transferring {len(results)} artifacts",
                 tuple(res.exception for res in results.values() if res.exception is not None),
             )
 
+        return results
+
+    @classmethod
+    def _mtransfer(
+        cls,
+        transfer: str,
+        from_to: Iterable[tuple[ResourcePath, ResourcePath]],
+        *,
+        overwrite: bool = False,
+        transaction: TransactionProtocol | None = None,
+    ) -> dict[ResourcePath, MBulkResult]:
+        """Transfer many files in bulk to targets of this scheme.
+
+        Implementation helper method for `mtransfer`.
+
+        Parameters
+        ----------
+        transfer : `str`
+            Mode to use for transferring the resource.
+        from_to : iterable [ `tuple` [ `ResourcePath`, `ResourcePath` ] ]
+            A sequence of the source URIs and the target URIs.
+        overwrite : `bool`, optional
+            Allow an existing file to be overwritten. Defaults to `False`.
+        transaction : `~lsst.resources.utils.TransactionProtocol`, optional
+            A transaction object that can (depending on implementation)
+            rollback transfers on error.  Not guaranteed to be implemented.
+            The transaction object must be thread safe.
+
+        Returns
+        -------
+        copy_status : `dict` [ `ResourcePath`, `MBulkResult` ]
+            A dict of all the transfer attempts with a value indicating
+            whether the transfer succeeded for the target URI.
+
+        Notes
+        -----
+        Batches are never floored at ``_min_chunk_size``. That floor exists
+        for operations cheap enough that handing one over costs more than
+        doing it, which is never true of a transfer, and a floor would leave
+        workers idle when a few large files are transferred.
+        """
+        pairs = list(from_to)
+        max_workers = _get_num_workers(cls._max_workers)
+        chunks = cls._chunk_work(pairs, max_workers, min_chunk_size=1)
+        if not chunks:
+            return {}
+        if len(chunks) == 1:
+            # Not enough work to be worth handing to another thread.
+            return cls._transfer_chunk(chunks[0], transfer, overwrite, transaction)
+
+        results: dict[ResourcePath, MBulkResult] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as transfer_executor:
+            future_transfers = {
+                transfer_executor.submit(cls._transfer_chunk, chunk, transfer, overwrite, transaction): chunk
+                for chunk in chunks
+            }
+            for future in concurrent.futures.as_completed(future_transfers):
+                try:
+                    results.update(future.result())
+                except Exception as e:
+                    # The chunk failed as a whole, for example because the
+                    # pool could not start a thread.
+                    for _, to_uri in future_transfers[future]:
+                        results[to_uri] = MBulkResult(False, e)
+        return results
+
+    @classmethod
+    def _transfer_chunk(
+        cls,
+        from_to: tuple[tuple[ResourcePath, ResourcePath], ...],
+        transfer: str,
+        overwrite: bool,
+        transaction: TransactionProtocol | None,
+    ) -> dict[ResourcePath, MBulkResult]:
+        """Transfer a batch of files, reporting each result independently.
+
+        Parameters
+        ----------
+        from_to : `tuple` [ `tuple` [ `ResourcePath`, `ResourcePath` ], ... ]
+            The source and target URIs to transfer.
+        transfer : `str`
+            Mode to use for transferring the resource.
+        overwrite : `bool`
+            Allow an existing file to be overwritten.
+        transaction : `~lsst.resources.utils.TransactionProtocol` or `None`
+            A transaction object that can (depending on implementation)
+            rollback transfers on error.
+
+        Returns
+        -------
+        results : `dict` [ `ResourcePath`, `MBulkResult` ]
+            An entry for every target URI in ``from_to``. A transfer that
+            fails does not prevent the transfers after it in the batch.
+        """
+        results: dict[ResourcePath, MBulkResult] = {}
+        for from_uri, to_uri in from_to:
+            try:
+                to_uri.transfer_from(
+                    from_uri,
+                    transfer=transfer,
+                    overwrite=overwrite,
+                    transaction=transaction,
+                    multithreaded=False,
+                )
+            except Exception as e:
+                results[to_uri] = MBulkResult(False, e)
+            else:
+                results[to_uri] = MBulkResult(True, None)
         return results
 
     def remove(self) -> None:
@@ -1149,33 +1245,34 @@ class ResourcePath:  # numpydoc ignore=PR02
         return results
 
     @classmethod
-    def _chunk_uris(cls, uris: list[ResourcePath], max_workers: int) -> list[tuple[ResourcePath, ...]]:
-        """Split URIs into batches sized for the given number of workers.
+    def _chunk_work(cls, items: list[_T], max_workers: int, min_chunk_size: int) -> list[tuple[_T, ...]]:
+        """Split work items into batches sized for the given worker count.
 
         Parameters
         ----------
-        uris : `list` [ `ResourcePath` ]
-            The URIs to split.
+        items : `list`
+            The work items to split.
         max_workers : `int`
             Number of workers the batches will be spread across.
+        min_chunk_size : `int`
+            Smallest batch to create, below which the cost of handing the
+            batch over exceeds the cost of the work in it.
 
         Returns
         -------
-        chunks : `list` [ `tuple` [ `ResourcePath`, ... ] ]
-            The batches. Empty if ``uris`` is empty. A single batch means the
+        chunks : `list` [ `tuple` ]
+            The batches. Empty if ``items`` is empty. A single batch means the
             work is not worth spreading, and callers run it directly.
 
         Notes
         -----
-        Several batches per worker let a worker that draws quick URIs move on
-        to more of them, but no batch is smaller than ``_min_chunk_size``,
-        below which the cost of handing the batch over exceeds the cost of
-        the work in it.
+        Several batches per worker let a worker that draws quick items move
+        on to more of them.
         """
-        if not uris:
+        if not items:
             return []
-        chunk_size = max(cls._min_chunk_size, math.ceil(len(uris) / (max_workers * CHUNKS_PER_WORKER)))
-        return list(chunk_iterable(uris, chunk_size=chunk_size))
+        chunk_size = max(min_chunk_size, math.ceil(len(items) / (max_workers * CHUNKS_PER_WORKER)))
+        return list(chunk_iterable(items, chunk_size=chunk_size))
 
     @classmethod
     def _remove_chunk(cls, uris: tuple[ResourcePath, ...]) -> dict[ResourcePath, MBulkResult]:
@@ -1220,7 +1317,7 @@ class ResourcePath:  # numpydoc ignore=PR02
         """
         uri_list = list(uris)
         max_workers = _get_num_workers(cls._max_workers)
-        chunks = cls._chunk_uris(uri_list, max_workers)
+        chunks = cls._chunk_work(uri_list, max_workers, cls._min_chunk_size)
         if not chunks:
             return {}
         if len(chunks) == 1:
