@@ -125,7 +125,8 @@ max_retry_time = 60
 @contextmanager
 def clean_test_environment_for_s3() -> Generator[None]:
     """Reset S3 environment to ensure that unit tests with a mock S3 can't
-    accidentally reference real infrastructure.
+    accidentally reference real infrastructure, and that site configuration
+    cannot change how the client behaves.
     """
     with patch.dict(
         os.environ,
@@ -142,6 +143,10 @@ def clean_test_environment_for_s3() -> Generator[None]:
             "AWS_PROFILE",
             "AWS_SHARED_CREDENTIALS_FILE",
             "AWS_CONFIG_FILE",
+            # A site that turns checksums off changes what an object's
+            # metadata contains, so let the library defaults apply.
+            "AWS_REQUEST_CHECKSUM_CALCULATION",
+            "AWS_RESPONSE_CHECKSUM_VALIDATION",
         ):
             patched_environ.pop(var, None)
         # Clear the cached boto3 S3 client instances.

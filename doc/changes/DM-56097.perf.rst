@@ -1,0 +1,6 @@
+``ResourcePath.mremove()``, ``ResourcePath.mexists()`` and ``ResourcePath.mtransfer()`` now send a batch of URIs to each worker rather than submitting one task per URI.
+The batch size is fixed per scheme rather than derived from how many URIs a call is given, so a batch never grows large enough that one worker drawing a run of slow URIs stalls the operation with no way to rebalance.
+A scheme sets it from the cost of one of its operations: a local file check is cheap enough that a batch has to reach a thousand URIs before threading it beats a loop in the calling thread, while a scheme whose every operation is a network round trip is worth overlapping immediately.
+Transfers batch separately from existence checks and removals, since a transfer costs far more and scales with a file size that is not known in advance.
+The upper bound on the number of workers is now set per scheme, so a scheme that holds no connection pool can raise it, and ``ResourcePath.mtransfer()`` now uses the bound for the target scheme instead of the global default.
+A batch of URIs that fits in a single chunk is handled in the calling thread rather than being given to a pool.
