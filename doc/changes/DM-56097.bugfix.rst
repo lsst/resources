@@ -1,0 +1,1 @@
+``clean_test_environment_for_s3()`` now also clears ``$AWS_REQUEST_CHECKSUM_CALCULATION`` and ``$AWS_RESPONSE_CHECKSUM_VALIDATION``, so that a site which disables checksums does not change the object metadata seen by tests.

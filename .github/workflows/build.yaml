@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"]
 
     steps:
       - uses: actions/checkout@v7
@@ -40,6 +40,12 @@ jobs:
           uv pip install --system cryptography
 
       - name: Install WebDAV packages for testing
+        # wsgidav needs bcrypt, which publishes no free-threaded wheel for
+        # this Python and cannot be built from source because the pyo3 its
+        # Rust extension uses refuses a Python newer than 3.13 and cannot
+        # fall back to the limited API on a free-threaded build. The WebDAV
+        # tests skip when wsgidav is missing.
+        if: matrix.python-version != '3.15t'
         run: |
           uv pip install --system cheroot wsgidav
 

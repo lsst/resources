@@ -84,6 +84,17 @@ class FileResourcePath(ResourcePath):
     # By definition refers to a local file
     isLocal = True
 
+    # A warm existence check or removal here costs a few microseconds, almost
+    # all of it holding the GIL, so a batch has to be this large before
+    # spreading it over threads beats a plain loop in the calling thread.
+    # Measurements above this size are flat, so it also matches the 1000 keys
+    # an S3 bulk delete takes.
+    _chunk_size = 1000
+
+    # A transfer costs orders of magnitude more than an existence check and
+    # scales with the file size, so batches stay small enough to balance.
+    _transfer_chunk_size = 25
+
     @property
     def ospath(self) -> str:
         """Path component of the URI localized to current OS.

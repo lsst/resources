@@ -11,14 +11,20 @@
 
 import contextlib
 import datetime
+import functools
 import os
 import pathlib
+import threading
 import unittest
 import unittest.mock
 import urllib.parse
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from lsst.resources import ResourceInfo, ResourcePath, ResourcePathExpression
+from lsst.resources.file import FileResourcePath
 from lsst.resources.tests import GenericReadWriteTestCase, GenericTestCase
+from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -248,23 +254,154 @@ class FileReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
                 mode = os.stat(dir).st_mode
                 self.assertEqual(mode & TEST_UMASK, 0o0300, f"Permissions incorrect for {dir}: {mode:o}")
 
-    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
-    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "process"})
-    def test_mexists_process(self) -> None:
-        """Test mexists with override executor pool.
 
-        Force test with process pool.
-        """
-        super().test_mexists()
+class BulkOperationTestCase(unittest.TestCase):
+    """Tests for batched bulk operations on local files."""
 
-    @unittest.mock.patch("lsst.resources._resourcePath._POOL_EXECUTOR_CLASS", None)
-    @unittest.mock.patch.dict(os.environ, {"LSST_RESOURCES_EXECUTOR": "process"})
-    def test_mtransfer_process(self) -> None:
-        """Test transfer with override executor pool.
+    def setUp(self) -> None:
+        self.tmpdir = ResourcePath(makeTestTempDir(TESTDIR), forceDirectory=True)
 
-        Force test with process pool.
-        """
-        super().test_mtransfer()
+    def tearDown(self) -> None:
+        removeTestTempDir(self.tmpdir.ospath)
+
+    def _make_files(self, prefix: str, count: int) -> list[ResourcePath]:
+        uris = [self.tmpdir.join(f"{prefix}{n}.txt") for n in range(count)]
+        for uri in uris:
+            uri.write(b"")
+        return uris
+
+    def test_chunk_sizes(self) -> None:
+        items = list(range(10))
+
+        # The batch size does not depend on how many items there are.
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items, 4)], [4, 4, 2])
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items, 1)], [1] * 10)
+
+        # A batch that fits in one chunk is the signal to the caller to handle
+        # it without a pool.
+        self.assertEqual([len(c) for c in FileResourcePath._chunk_work(items, 100)], [10])
+
+        # An empty input yields no chunks at all.
+        self.assertEqual(FileResourcePath._chunk_work([], 4), [])
+
+    def test_schemes_size_their_own_chunks(self) -> None:
+        # A local operation is cheap enough that a batch has to be large
+        # before threading it pays, while a scheme whose every operation is a
+        # round trip is worth overlapping immediately.
+        self.assertEqual(FileResourcePath._chunk_size, 1000)
+        self.assertEqual(ResourcePath._chunk_size, 1)
+
+        # A transfer is far more expensive than an existence check on the same
+        # scheme, so it batches separately.
+        self.assertLess(FileResourcePath._transfer_chunk_size, FileResourcePath._chunk_size)
+
+    def test_empty_bulk_operations_are_no_ops(self) -> None:
+        self.assertEqual(ResourcePath.mremove([]), {})
+        self.assertEqual(ResourcePath.mexists([]), {})
+        self.assertEqual(ResourcePath.mtransfer("copy", []), {})
+
+    @unittest.mock.patch.object(FileResourcePath, "_chunk_size", 1)
+    def test_removal_failure_does_not_abandon_the_rest(self) -> None:
+        uris = self._make_files("f", 20)
+        # Remove one out from under the batch so that its own removal raises.
+        uris[1].remove()
+
+        results = ResourcePath.mremove(uris, do_raise=False)
+
+        self.assertEqual(len(results), len(uris))
+        self.assertFalse(results[uris[1]].success)
+        self.assertIsInstance(results[uris[1]].exception, FileNotFoundError)
+        for uri in uris[2:]:
+            self.assertTrue(results[uri].success, f"{uri} should have been removed")
+            self.assertFalse(uri.exists())
+
+    @unittest.mock.patch.object(FileResourcePath, "_chunk_size", 1)
+    def test_existence_check_reports_each_uri(self) -> None:
+        present = self._make_files("p", 20)
+        absent = self.tmpdir.join("gone.txt")
+
+        results = ResourcePath.mexists([*present, absent])
+
+        self.assertEqual(len(results), len(present) + 1)
+        self.assertTrue(all(results[uri] for uri in present))
+        self.assertFalse(results[absent])
+
+    @unittest.mock.patch.object(FileResourcePath, "_chunk_size", 1)
+    def test_existence_check_treats_an_error_as_missing(self) -> None:
+        uris = self._make_files("e", 20)
+        failing = uris[1].ospath
+        real_exists = FileResourcePath.exists
+
+        def flaky(self: FileResourcePath) -> bool:
+            if self.ospath == failing:
+                raise PermissionError("cannot stat")
+            return real_exists(self)
+
+        with unittest.mock.patch.object(FileResourcePath, "exists", flaky):
+            results = ResourcePath.mexists(uris)
+
+        # The failure is reported as absent and the rest are still checked.
+        self.assertFalse(results[uris[1]])
+        self.assertTrue(all(results[uri] for uri in uris if uri != uris[1]))
+
+    def test_transfer_of_many_files(self) -> None:
+        sources = self._make_files("src", 50)
+        for i, src in enumerate(sources):
+            src.write(f"{i}".encode())
+        destinations = [self.tmpdir.join(f"dest{n}.txt") for n in range(len(sources))]
+
+        results = ResourcePath.mtransfer("copy", zip(sources, destinations, strict=True))
+
+        self.assertEqual(len(results), len(sources))
+        self.assertTrue(all(res.success for res in results.values()))
+        for i, dest in enumerate(destinations):
+            self.assertEqual(dest.read().decode(), str(i))
+
+    def test_transfer_failure_does_not_abandon_the_rest(self) -> None:
+        sources = self._make_files("s", 20)
+        destinations = [self.tmpdir.join(f"d{n}.txt") for n in range(len(sources))]
+        # An existing target fails when overwriting is not allowed.
+        destinations[1].write(b"in the way")
+
+        results = ResourcePath.mtransfer("copy", zip(sources, destinations, strict=True), do_raise=False)
+
+        self.assertEqual(len(results), len(sources))
+        self.assertFalse(results[destinations[1]].success)
+        for dest in destinations[2:]:
+            self.assertTrue(results[dest].success, f"{dest} should have been written")
+            self.assertTrue(dest.exists())
+
+    def test_transfer_registers_undo_actions(self) -> None:
+        sources = self._make_files("u", 20)
+        destinations = [self.tmpdir.join(f"undo{n}.txt") for n in range(len(sources))]
+        transaction = _RecordingTransaction()
+
+        results = ResourcePath.mtransfer(
+            "copy", zip(sources, destinations, strict=True), overwrite=True, transaction=transaction
+        )
+
+        self.assertTrue(all(res.success for res in results.values()))
+        # Every transfer must be undoable by the caller that supplied the
+        # transaction, no matter which worker performed it.
+        self.assertEqual(len(transaction.undone), len(sources))
+
+        for undo in transaction.undone:
+            undo()
+        self.assertFalse(any(dest.exists() for dest in destinations))
+
+
+class _RecordingTransaction:
+    """Transaction that collects the undo actions registered against it."""
+
+    def __init__(self) -> None:
+        self.undone: list[Callable[[], Any]] = []
+        self._lock = threading.Lock()
+
+    @contextlib.contextmanager
+    def undoWith(self, name: str, undoFunc: Callable, *args: Any, **kwargs: Any) -> Iterator[None]:
+        yield None
+        with self._lock:
+            self.undone.append(functools.partial(undoFunc, *args, **kwargs))
 
 
 @contextlib.contextmanager
