@@ -51,6 +51,7 @@ except ImportError:
 import yaml
 from astropy import units as u
 from urllib3 import PoolManager, make_headers
+from urllib3.exceptions import ProtocolError
 from urllib3.response import HTTPResponse
 from urllib3.util import Retry, Timeout, Url, parse_url
 
@@ -1177,20 +1178,40 @@ class DavClient:
             mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
-            try:
-                resp = pool_manager.request(
-                    method,
-                    url,
-                    body=body,
-                    headers=headers,
-                    preload_content=preload_content,
-                    redirect=redirect,
-                    **kwargs,
-                )
-                return resp
-            except Exception:
-                log.error(f"request {method} {redact_url(url)} failed")
-                raise
+            backoff_factor = 0.4
+            max_disconnect_retries = 3
+            for attempt in range(max_disconnect_retries):
+                try:
+                    return pool_manager.request(
+                        method,
+                        url,
+                        body=body,
+                        headers=headers,
+                        preload_content=preload_content,
+                        redirect=redirect,
+                        **kwargs,
+                    )
+                except ProtocolError as e:
+                    # Server disconnected before we could receive the response.
+                    # This kind of exception is not automatically retried by
+                    # `urllib3`.
+                    log.warning(
+                        f"""Server disconnected before we received a response to request """
+                        f"""{method} {redact_url(url)} (attempt {attempt + 1}/{max_disconnect_retries}) """
+                        f"""[{e}] """
+                    )
+
+                    if attempt < max_disconnect_retries - 1:
+                        log.warning(f"Retrying request {method} {redact_url(url)}")
+                        time.sleep(backoff_factor * (2**attempt))
+                    else:
+                        raise
+
+            # This is never reached but necessary to keep `mypy` happy.
+            raise ValueError(
+                f"""Reached maximum number of disconnects ({max_disconnect_retries}) attempting """
+                f"""request {method} {redact_url(url)}"""
+            )
 
     def _options(
         self,
@@ -1364,6 +1385,7 @@ class DavClient:
         self,
         url: str,
         headers: dict[str, str] | None = None,
+        retry: bool = False,
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
         """Send a webDAV MOVE request and return the response unmodified.
@@ -1374,6 +1396,8 @@ class DavClient:
             Target URL.
         headers : `dict[str, str]`, optional
             Headers to sent with the request.
+        retry : `bool`, optional
+            Retry the request if needed.
         pool_manager : `PoolManager`, optional
             Pool manager to use to send this request.
 
@@ -1381,7 +1405,14 @@ class DavClient:
         -----
         This method is intended for subclasses to override when needed.
         """
-        return self._request("MOVE", url=url, headers=headers, pool_manager=pool_manager)
+        kwargs: dict[Any, Any] = {} if not retry else {"retries": 3}
+        return self._request(
+            "MOVE",
+            url=url,
+            headers=headers,
+            pool_manager=pool_manager,
+            **kwargs,
+        )
 
     def _propfind(
         self,
@@ -1931,7 +1962,9 @@ class DavClient:
         )
         return result
 
-    def move(self, source_url: str, destination_url: str, overwrite: bool = False) -> HTTPResponse:
+    def move(
+        self, source_url: str, destination_url: str, overwrite: bool = False, retry: bool = False
+    ) -> HTTPResponse:
         """Send a webDAV MOVE request and return the response unmodified.
 
         Parameters
@@ -1942,6 +1975,8 @@ class DavClient:
             Destination URL.
         overwrite : `bool`, optional
             Overwrite the destination if it exists.
+        retry : `bool`, optional
+            Retry if needed.
 
         Returns
         -------
@@ -1952,7 +1987,7 @@ class DavClient:
             "Destination": destination_url,
             "Overwrite": "T" if overwrite else "F",
         }
-        return self._move(source_url, headers=headers)
+        return self._move(source_url, headers=headers, retry=retry)
 
     def read_dir(self, url: str) -> list[DavFileMetadata]:
         """Return the properties of the files or directories contained in
@@ -2170,6 +2205,80 @@ class DavClient:
         _, resp = self.get(url, preload_content=False)
         return self._write_response_body_to_file(resp, filename, chunk_size)
 
+    def _upload(self, url: str, data: BinaryIO | bytes) -> int | None:
+        """Upload `data` to remote file at `url`.
+        No attempt is made to create the parent directories. They either
+        must exist or the server creates them automatically as needed.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        data : `bytes`
+            Sequence of bytes to upload.
+
+        Returns
+        -------
+        size : `int | None`
+            The size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
+
+        Notes
+        -----
+        If a file already exists at `url` it will be rewritten.
+        """
+        # First upload to a temporary file and retrieve the size of the file
+        # uploaded. `put()` retries the request if possible.
+        try:
+            temporary_url = self._make_temporary_url(url)
+            size = self.put(temporary_url, data=data)
+        except Exception:
+            # Upload failed. Attempt to remove the temporary file.
+            self.delete(temporary_url)
+            raise
+
+        # Temporary file was successfully uploaded. Rename it to its final
+        # name. We specify that the MOVE request can be retried since we know
+        # the source file exists.
+        resp = self.move(source_url=temporary_url, destination_url=url, overwrite=True, retry=True)
+        match resp.status:
+            case HTTPStatus.OK | HTTPStatus.CREATED | HTTPStatus.NO_CONTENT:
+                # MOVE request succeeded. Update the file size cache with this
+                # file size.
+                self._file_size_cache.update_size(url, size)
+                return size
+            case HTTPStatus.NOT_FOUND:
+                # We may get "Not Found" if the MOVE request was retried but
+                # a previous attempt actually succeeded. This may happen if
+                # the network connection to the server was closed after the
+                # server received and processed the request but before we
+                # could receive its response.
+                #
+                # Check if the destination file exists. If so, we consider that
+                # one of the MOVE attempts succeeded.
+                head_resp = self._head(url)
+                match head_resp.status:
+                    case HTTPStatus.OK:
+                        # Destination does exist.
+                        self._file_size_cache.update_size(url, size)
+                        return size
+                    case HTTPStatus.NOT_FOUND:
+                        # Neither source nor destination exist.
+                        raise ValueError(
+                            f"""Could not rename file {temporary_url} to {url}: neither source nor """
+                            f"""destination files were found"""
+                        )
+                    case _:
+                        raise ValueError(
+                            f"""Unexpected response to HEAD request to verify file {url} exists after """
+                            f"""MOVE from {temporary_url}: status {resp.status} {resp.reason}"""
+                        )
+            case _:
+                raise ValueError(
+                    f"""Unexpected response to MOVE {temporary_url} to {url}: status {resp.status} """
+                    f"""{resp.reason}"""
+                )
+
     def write(self, url: str, data: BinaryIO | bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
@@ -2195,20 +2304,7 @@ class DavClient:
         # exist before we can write to it. So create it first and then
         # upload.
         self.mkcol(self._parent(url))
-
-        try:
-            # Upload to a temporary file and rename to the final name.
-            temporary_url = self._make_temporary_url(url)
-            size = self.put(temporary_url, data=data)
-            self.rename(temporary_url, url, overwrite=True, create_parent=False)
-
-            # Update the file size cache with this size
-            self._file_size_cache.update_size(url, size)
-            return size
-        except Exception:
-            # Upload failed. Attempt to remove the temporary file.
-            self.delete(temporary_url)
-            raise
+        return self._upload(url, data)
 
     def checksums(self, url: str) -> dict[str, str]:
         """Return the checksums of the contents of file located at `url`.
@@ -2988,19 +3084,7 @@ class DavClientDCache(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        try:
-            # Upload to a temporary file and rename to the final name.
-            temporary_url = self._make_temporary_url(url)
-            size = self.put(temporary_url, data=data)
-            self.rename(temporary_url, url, overwrite=True, create_parent=False)
-
-            # Update the file size cache with this size
-            self._file_size_cache.update_size(url, size)
-            return size
-        except Exception:
-            # Upload failed. Attempt to remove the temporary file.
-            self.delete(temporary_url)
-            raise
+        return self._upload(url, data)
 
     @override
     def mkcol(self, url: str) -> None:
@@ -3291,19 +3375,7 @@ class DavClientXrootD(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        try:
-            # Upload to a temporary file and rename to the final name.
-            temporary_url = self._make_temporary_url(url)
-            size = self.put(temporary_url, data=data)
-            self.rename(temporary_url, url, overwrite=True, create_parent=False)
-
-            # Update the file size cache with this size
-            self._file_size_cache.update_size(url, size)
-            return size
-        except Exception:
-            # Upload failed. Attempt to remove the temporary file.
-            self.delete(temporary_url)
-            raise
+        return self._upload(url, data)
 
     @override
     def mkcol(self, url: str) -> None:
