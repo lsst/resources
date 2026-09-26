@@ -553,7 +553,11 @@ class DavDCacheRangeReader(DavRangeReader):
         end = min(self._filesize, end)
         self._log.debug(f"reading range of file at {self.geturl()}: start={start} end={end}")
 
-        resp = self._request("GET", headers={"Range": f"bytes={start}-{end}"})
+        headers = {
+            "Accept-Encoding": "identity",
+            "Range": f"bytes={start}-{end}",
+        }
+        resp = self._request("GET", headers=headers)
         match resp.status:
             case HTTPStatus.PARTIAL_CONTENT:
                 return self._read_response_body(resp, self._filesize, start, end)
