@@ -567,24 +567,32 @@ class DavDCacheRangeReader(DavRangeReader):
     def _read_response_body(
         self, resp: http.client.HTTPResponse, file_size: int, range_start: int, range_end: int
     ) -> bytes:
-        expected_content_length = f"{range_end - range_start + 1}"
-        expected_content_range = f"bytes {range_start}-{range_end}/{file_size}"
+        # Download the response body.
+        body = resp.read()
 
         # Check that we got the expected headers with their expected values.
+        expected_content_range = f"bytes {range_start}-{range_end}/{file_size}"
         if (content_range := resp.getheader("Content-Range")) is None:
-            raise ValueError("Expecting value of 'Content-Range' header in response but got nothing")
+            raise ValueError(f"Expected 'Content-Range' header in response to GET {self.geturl()} is missing")
+        elif expected_content_range != content_range:
+            raise ValueError(
+                f"""Unexpected value of 'Content-Range' header: expecting {expected_content_range} """
+                f"""but got {content_range}"""
+            )
 
+        expected_content_length = f"{range_end - range_start + 1}"
         if (content_length := resp.getheader("Content-Length")) is None:
-            raise ValueError("Expecting value of 'Content-Length' header in response but got nothing")
+            raise ValueError(
+                f"Expected 'Content-Length' header in response to GET {self.geturl()} is missing"
+            )
+        elif expected_content_length != content_length:
+            raise ValueError(
+                f"""Unexpected value of 'Content-Length' header: expecting {expected_content_length} """
+                f"""but got {content_length}"""
+            )
 
-        if not content_length == expected_content_length or not content_range == expected_content_range:
-            # Consume the response body
-            resp.read()
-            raise ValueError("Inconsistent value of 'Content-Range' or 'Content-Length' response headers")
-
-        # Download the response body and verify its length is consistent with
-        # the response headers.
-        body = resp.read()
+        # Verify the response body's length is consistent with the response
+        # headers.
         if (body_length := len(body)) != int(content_length):
             raise ValueError(
                 f"Value of 'Content-Length' response header '{content_length}' does not match "
