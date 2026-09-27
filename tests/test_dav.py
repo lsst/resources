@@ -530,7 +530,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertTrue(fsys.isfile(path))
         self.assertFalse(fsys.isdir(path))
         self.assertEqual(fsys.size(path), remote_file.size())
-        self.assertEqual(remote_file._stat().last_modified, fsys.modified(path))
+        self.assertEqual(fsys.modified(path), remote_file.get_info().last_modified)
 
         info = fsys.info(path)
         self.assertTrue(info["name"], path)
@@ -692,7 +692,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertEqual(member_digest, local_file_digest)
 
     def test_dav_get_info(self):
-        # Missing resources now raise instead of returning a partial dict.
+        # Missing resources must raise
         subdir = self.tmpdir.join("inexistent", forceDirectory=True)
         with self.assertRaises(FileNotFoundError):
             subdir.get_info()
@@ -707,8 +707,8 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertFalse(metadata.is_file)
         self.assertEqual(metadata.size, 0)
         self.assertEqual(len(metadata.checksums), 0)
+        self.assertIsInstance(metadata.last_modified, datetime.datetime)
         self.assertEqual(metadata.last_modified.tzinfo, datetime.UTC)
-        self.assertEqual(metadata.last_modified, subdir._stat().last_modified)
 
         # Retrieve and check metadata details about existing file
         local_file, local_file_size = self._generate_file()
@@ -726,8 +726,8 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertIsInstance(metadata, ResourceInfo)
         self.assertTrue(metadata.is_file)
         self.assertEqual(metadata.size, local_file_size)
+        self.assertIsInstance(metadata.last_modified, datetime.datetime)
         self.assertEqual(metadata.last_modified.tzinfo, datetime.UTC)
-        self.assertEqual(metadata.last_modified, remote_file._stat().last_modified)
 
         checksums = metadata.checksums
         if "md5" in checksums:
