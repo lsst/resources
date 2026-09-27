@@ -48,7 +48,6 @@ from .davutils import (
     DavClient,
     DavClientPool,
     DavConfigPool,
-    DavFileMetadata,
     normalize_path,
     normalize_url,
 )
@@ -251,10 +250,6 @@ class DavResourcePath(ResourcePath):
         self._dav_client = dav_globals.client_pool().get_client_for_url(self._internal_url)
         return self._dav_client
 
-    def _stat(self) -> DavFileMetadata:
-        """Retrieve metadata about this resource."""
-        return self._client.stat(self._internal_url)
-
     @override
     def mkdir(self) -> None:
         """Create the directory resource if it does not already exist."""
@@ -263,7 +258,7 @@ class DavResourcePath(ResourcePath):
         if not self.isdir():
             raise NotADirectoryError(f"Can not create a directory for file-like URI {self}")
 
-        stat = self._stat()
+        stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
         if stat.is_dir:
             return
 
@@ -283,7 +278,8 @@ class DavResourcePath(ResourcePath):
         """Check that this resource exists."""
         log.debug("exists %s [%#x]", self, id(self))
 
-        return self._stat().exists
+        stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
+        return stat.exists
 
     @override
     def size(self) -> int:
@@ -297,16 +293,20 @@ class DavResourcePath(ResourcePath):
         """Return lightweight metadata details about this resource."""
         log.debug("get_info %s [%#x]", self, id(self))
 
-        info = self._client.info(self._internal_url)
-        if info["type"] is None:
+        stat = self._client.stat(
+            self._internal_url,
+            include_last_modified=True,
+            include_checksums=True,
+        )
+        if not stat.exists:
             raise FileNotFoundError(f"Resource {self} does not exist")
 
         return ResourceInfo(
             uri=str(self),
-            is_file=info["type"] == "file",
-            size=info["size"],
-            last_modified=info["last_modified"],
-            checksums=info["checksums"],
+            is_file=stat.is_file,
+            size=stat.size,
+            last_modified=stat.last_modified,
+            checksums=stat.checksums,
         )
 
     @override
@@ -339,7 +339,7 @@ class DavResourcePath(ResourcePath):
             return data
 
         # This is a partial read. Retrieve the file size.
-        stat = self._stat()
+        stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
         if not stat.is_file:
             raise FileNotFoundError(f"No file found at {self}")
 
@@ -420,8 +420,10 @@ class DavResourcePath(ResourcePath):
         if self.isdir():
             raise ValueError(f"Method write() is not implemented for directory {self}")
 
-        if not overwrite and self._stat().is_file:
-            raise FileExistsError(f"File {self} exists and overwrite has been disabled")
+        if not overwrite:
+            stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
+            if stat.is_file:
+                raise FileExistsError(f"File {self} exists and overwrite has been disabled")
 
         self._client.write(self._internal_url, data)
 
@@ -435,7 +437,7 @@ class DavResourcePath(ResourcePath):
         """
         log.debug("remove %s [%#x]", self, id(self))
 
-        stat = self._stat()
+        stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
         if not stat.exists:
             # There is no resource at this uri. There is nothing to do.
             return
@@ -760,7 +762,7 @@ class DavResourcePath(ResourcePath):
         log.debug("DavResourcePath._openImpl: %s mode: %s", self, mode)
 
         if mode in ("rb", "r") and self._client.accepts_ranges(self._internal_url):
-            stat = self._stat()
+            stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
             if stat.is_dir:
                 raise OSError(f"open is not implemented for directory {self}")
 
@@ -823,7 +825,10 @@ class DavFileSystem(AbstractFileSystem):
         if path != self._path:
             raise FileNotFoundError(path)
 
-        return self._uri._stat().last_modified
+        stat = self._uri._client.stat(
+            self._uri._internal_url, include_last_modified=True, include_checksums=False
+        )
+        return stat.last_modified
 
     @override
     def size(self, path: str) -> int:
