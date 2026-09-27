@@ -1785,7 +1785,7 @@ class DavClient:
         if (size := self._file_size_cache.get_size(url)) is not None:
             return size
 
-        stat = self.stat(url)
+        stat = self.stat(url, include_last_modified=False, include_checksums=False)
         if not stat.exists:
             raise FileNotFoundError(f"No file or directory found at {url}")
         else:
@@ -1833,13 +1833,23 @@ class DavClient:
                     f"Can not create directory {resp.geturl()}: status {resp.status} {resp.reason}"
                 )
 
-    def stat(self, url: str) -> DavFileMetadata:
+    def stat(
+        self,
+        url: str,
+        include_last_modified: bool = True,
+        include_checksums: bool = False,
+    ) -> DavFileMetadata:
         """Return some properties of file or directory located at `url`.
 
         Parameters
         ----------
         url : `str`
             Target URL.
+        include_last_modified : `bool`, optional
+            Retrieve the last modified date of the object at URL.
+        include_checksums : `bool`, optional
+            Retrieve the checksums of the file at URL.
+            Not used for a generic webDAV client. Intended for subclasses.
 
         Returns
         -------
@@ -1854,17 +1864,20 @@ class DavClient:
             included depending on the implementation of the webDAV protocol
             by the server.
         """
-        # Request the minimum set of DAV properties.
         body = (
             """<?xml version="1.0" encoding="utf-8"?>"""
             """<D:propfind xmlns:D="DAV:">"""
             """<D:prop>"""
             """<D:resourcetype/>"""
             """<D:getcontentlength/>"""
-            """<D:getlastmodified/>"""
-            """</D:prop>"""
-            """</D:propfind>"""
+            """<D:displayname/>"""
         )
+
+        if include_last_modified:
+            body += "<D:getlastmodified/>"
+
+        body += "</D:prop></D:propfind>"
+
         resp = self.propfind(url, body=body, depth="0")
         match resp.status:
             case HTTPStatus.NOT_FOUND:
@@ -1875,92 +1888,6 @@ class DavClient:
                 return DavFileMetadata.from_property(base_url=self._base_url, property=property)
             case _:
                 raise unexpected_status_error("PROPFIND", url, resp)
-
-    def info(self, url: str, name: str | None = None) -> dict[str, Any]:
-        """Return the details about the file or directory at `url`.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-        name : `str`
-            Name of the object to be included in the returned value. If None,
-            the `url` is used as name.
-
-        Returns
-        -------
-        result: `dict`
-            For an existing file, the returned value has the form:
-
-            .. code-block:: json
-
-               {
-                  "name": name,
-                  "size": 1234,
-                  "type": "file",
-                  "last_modified":
-                        datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
-                  "checksums": {
-                    "adler32": "0fc5f83f",
-                    "md5": "1f57339acdec099c6c0a41f8e3d5fcd0",
-                  }
-               }
-
-            For an existing directory, the returned value has the form:
-
-            .. code-block:: json
-
-               {
-                  "name": name,
-                  "size": 0,
-                  "type": "directory",
-                  "last_modified":
-                     datetime.datetime(2025, 4, 10, 15, 12, 51, 227854),
-                  "checksums": {},
-                }
-
-            For a non-existing file or directory, the returned value has the
-            form:
-
-            .. code-block:: json
-
-               {
-                 "name": name,
-                 "size": None,
-                 "type": None,
-                 "last_modified": datetime.datetime(1, 1, 1, 0, 0),
-                 "checksums": {},
-               }
-
-        Notes
-        -----
-        The format of the returned directory is inspired and compatible with
-        `fsspec`.
-
-        The size of existing directories is always zero. The `checksums`
-        dictionary is empty for directories and may be empty for files if the
-        server does not compute and store the checksum of the files it stores.
-        """
-        result: dict[str, Any] = {
-            "name": name if name is not None else url,
-            "type": None,
-            "size": None,
-            "last_modified": datetime.min,
-            "checksums": {},
-        }
-        metadata = self.stat(url)
-        if not metadata.exists:
-            return result
-
-        result.update(
-            {
-                "type": "directory" if metadata.is_dir else "file",
-                "size": metadata.size,
-                "last_modified": metadata.last_modified,
-                "checksums": metadata.checksums,
-            }
-        )
-        return result
 
     def move(
         self, source_url: str, destination_url: str, overwrite: bool = False, retry: bool = False
@@ -3119,46 +3046,38 @@ class DavClientDCache(DavClientURLSigner):
             self.delete(temporary_url)
 
     @override
-    def info(self, url: str, name: str | None = None) -> dict[str, Any]:
+    def stat(
+        self,
+        url: str,
+        include_last_modified: bool = True,
+        include_checksums: bool = False,
+    ) -> DavFileMetadata:
         # Docstring inherited.
-        result: dict[str, Any] = {
-            "name": name if name is not None else url,
-            "type": None,
-            "size": None,
-            "last_modified": datetime.min,
-            "checksums": {},
-        }
-
-        # Request live DAV properties as well as the checksums that dCache
-        # recorded about this file.
         body = (
             """<?xml version="1.0" encoding="utf-8"?>"""
             """<D:propfind xmlns:D="DAV:" xmlns:dcache="http://www.dcache.org/2013/webdav">"""
             """<D:prop>"""
             """<D:resourcetype/>"""
             """<D:getcontentlength/>"""
-            """<D:getlastmodified/>"""
             """<D:displayname/>"""
-            """<dcache:Checksums/>"""
-            """</D:prop>"""
-            """</D:propfind>"""
         )
+
+        if include_last_modified:
+            body += "<D:getlastmodified/>"
+
+        if include_checksums:
+            body += "<dcache:Checksums/>"
+
+        body += "</D:prop></D:propfind>"
+
         resp = self.propfind(url, body=body, depth="0")
         match resp.status:
             case HTTPStatus.NOT_FOUND:
-                return result
+                href = url.replace(self._base_url, "", 1)
+                return DavFileMetadata(base_url=self._base_url, href=href)
             case HTTPStatus.MULTI_STATUS:
                 property = self._propfind_parser.parse(resp.data)[0]
-                metadata = DavFileMetadata.from_property(base_url=self._base_url, property=property)
-                result.update(
-                    {
-                        "type": "directory" if metadata.is_dir else "file",
-                        "size": metadata.size,
-                        "last_modified": metadata.last_modified,
-                        "checksums": metadata.checksums,
-                    }
-                )
-                return result
+                return DavFileMetadata.from_property(base_url=self._base_url, property=property)
             case _:
                 raise unexpected_status_error("PROPFIND", url, resp)
 
@@ -3239,6 +3158,11 @@ class DavClientXrootD(DavClientURLSigner):
         Indicate whether the remote server accepts the ``Range`` header in GET
         requests.
     """
+
+    # Regular expression to validate the value of the `Digest` response header.
+    # That header is expected to be of the form:
+    #    Digest: adler32=7df4cc7b
+    _adler_checksum_rex = re.compile(r"^adler32=(.{8})$", re.IGNORECASE)
 
     def __init__(self, url: str, config: DavConfig, accepts_ranges: bool | None = None) -> None:
         super().__init__(url=url, config=config, accepts_ranges=accepts_ranges)
@@ -3329,26 +3253,6 @@ class DavClientXrootD(DavClientURLSigner):
                 raise unexpected_status_error("PUT", redirect_url, resp)
 
     @override
-    def info(self, url: str, name: str | None = None) -> dict[str, Any]:
-        # XRootD does not include checksums in the response to PROPFIND
-        # request. We need to send a specific HEAD request to retrieve
-        # the ADLER32 checksum.
-        #
-        # If found, the checksum is included in the response header "Digest",
-        # which is of the form:
-        #
-        #    Digest: adler32=0e4709f2
-        result = super().info(url, name)
-        if result["type"] == "file":
-            headers: dict[str, str] = {"Want-Digest": "adler32"}
-            resp = self.head(url=url, headers=headers)
-            if (digest := resp.headers.get("Digest")) is not None:
-                value = digest.split("=")[1]
-                result["checksums"].update({"adler32": value})
-
-        return result
-
-    @override
     def write(self, url: str, data: BinaryIO | bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
@@ -3411,48 +3315,36 @@ class DavClientXrootD(DavClientURLSigner):
                 )
 
     @override
-    def stat(self, url: str) -> DavFileMetadata:
+    def stat(
+        self,
+        url: str,
+        include_last_modified: bool = True,
+        include_checksums: bool = False,
+    ) -> DavFileMetadata:
         # Docstring inherited.
+        metadata = super().stat(
+            url,
+            include_last_modified=include_last_modified,
+            include_checksums=False,
+        )
+        if not metadata.exists:
+            return metadata
+        elif metadata.is_dir or not include_checksums:
+            return metadata
 
-        # XRootD v5.9.1 responds "200 OK" to a HEAD request against an
-        # existing file. When the target URL is a directory, it also responds
-        # "200 OK". In both cases the response header "Content-Length"
-        # is present but has different meaning. If the target URL is a file,
-        # the header value is the size in bytes of the file. If the target
-        # URL is a directory, the header value is the number of items in
-        # the directory.
-        #
-        # So there is not an easy way to determine if the target URL is a
-        # file or a directory from the response to a HEAD request.
-        #
-        # When the target URL is a directory and we ask for a digest, the
-        # server responds "409 Conflict". We use this behavior to
-        # discriminate between a file and a directory.
-        #
-        # Note that XRootD does not include the "Last-Modified" header in the
-        # response to a HEAD request so we cannot include the last modified
-        # time in the value returned by this method.
+        # We know there is a file at URL. Send a HEAD request to retrieve its
+        # checksum.
         resp = self._head(url, headers={"Want-Digest": "adler32"})
         match resp.status:
             case HTTPStatus.OK:
-                # There is a file at target URL
-                if "Content-Length" in resp.headers:
-                    href = url.replace(self._base_url, "", 1)
-                    size = int(resp.headers.get("Content-Length"))
-                    return DavFileMetadata(self._base_url, href=href, exists=True, is_dir=False, size=size)
-                else:
-                    raise ValueError(
-                        f"""Expecting Content-Length header to be present in """
-                        f"""response to HTTP HEAD {resp.geturl()}: status {resp.status} """
-                        f"""{resp.reason} [{resp.data.decode()}] but could not find it"""
-                    )
-            case HTTPStatus.CONFLICT:
-                # There is a directory at target URL
-                href = url.replace(self._base_url, "", 1)
-                return DavFileMetadata(self._base_url, href=href, exists=True, is_dir=True)
-            case HTTPStatus.NOT_FOUND:
-                # There is neither a file nor a directory at target URL
-                return DavFileMetadata(base_url=url, exists=False)
+                if (digest := resp.getheader("Digest", None)) is not None:
+                    # The value of the "Digest" response header is of the form:
+                    #    Digest: adler32=7df4cc7b
+                    m = DavClientXrootD._adler_checksum_rex.match(digest.lower())
+                    if m is not None:
+                        metadata.checksums.update({"adler32": m.group(1)})
+
+                return metadata
             case _:
                 raise unexpected_status_error("HEAD", url, resp)
 
