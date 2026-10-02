@@ -59,6 +59,8 @@ from lsst.utils.timer import time_this
 # Use the same logger than `dav.py`.
 log = getLogger(f"""{__name__.replace(".davutils", ".dav")}""")
 
+move_exempted_sites = ["webdav.echo.stfc.ac.uk"]
+
 
 def normalize_path(path: str | None) -> str:
     """Normalize a path intended to be part of a URL.
@@ -2169,20 +2171,33 @@ class DavClient:
         # exist before we can write to it. So create it first and then
         # upload.
         self.mkcol(self._parent(url))
+        # upload directly if the site is in the list of sites that
+        # are exempted from the move operation
+        if any(site in url for site in move_exempted_sites):
+            try:
+                self.delete(url)
+            except Exception:
+                pass
+            try:
+                size = self.put(url, data=data)
+                return size
+            except Exception:
+                self.delete(url)
+                raise
+        else:
+            try:
+                # Upload to a temporary file and rename to the final name.
+                temporary_url = self._make_temporary_url(url)
+                size = self.put(temporary_url, data=data)
+                self.rename(temporary_url, url, overwrite=True, create_parent=False)
 
-        try:
-            # Upload to a temporary file and rename to the final name.
-            temporary_url = self._make_temporary_url(url)
-            size = self.put(temporary_url, data=data)
-            self.rename(temporary_url, url, overwrite=True, create_parent=False)
-
-            # Update the file size cache with this size
-            self._file_size_cache.update_size(url, size)
-            return size
-        except Exception:
-            # Upload failed. Attempt to remove the temporary file.
-            self.delete(temporary_url)
-            raise
+                # Update the file size cache with this size
+                self._file_size_cache.update_size(url, size)
+                return size
+            except Exception:
+                # Upload failed. Attempt to remove the temporary file.
+                self.delete(temporary_url)
+                raise
 
     def checksums(self, url: str) -> dict[str, str]:
         """Return the checksums of the contents of file located at `url`.
@@ -2936,19 +2951,34 @@ class DavClientDCache(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        try:
-            # Upload to a temporary file and rename to the final name.
-            temporary_url = self._make_temporary_url(url)
-            size = self.put(temporary_url, data=data)
-            self.rename(temporary_url, url, overwrite=True, create_parent=False)
 
-            # Update the file size cache with this size
-            self._file_size_cache.update_size(url, size)
-            return size
-        except Exception:
-            # Upload failed. Attempt to remove the temporary file.
-            self.delete(temporary_url)
-            raise
+        # upload directly if the site is in the list of sites that
+        # are exempted from the move operation
+        if any(site in url for site in move_exempted_sites):
+            try:
+                self.delete(url)
+            except Exception:
+                pass
+            try:
+                size = self.put(url, data=data)
+                return size
+            except Exception:
+                self.delete(url)
+                raise
+        else:
+            try:
+                # Upload to a temporary file and rename to the final name.
+                temporary_url = self._make_temporary_url(url)
+                size = self.put(temporary_url, data=data)
+                self.rename(temporary_url, url, overwrite=True, create_parent=False)
+
+                # Update the file size cache with this size
+                self._file_size_cache.update_size(url, size)
+                return size
+            except Exception:
+                # Upload failed. Attempt to remove the temporary file.
+                self.delete(temporary_url)
+                raise
 
     @override
     def mkcol(self, url: str) -> None:
@@ -3239,19 +3269,34 @@ class DavClientXrootD(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        try:
-            # Upload to a temporary file and rename to the final name.
-            temporary_url = self._make_temporary_url(url)
-            size = self.put(temporary_url, data=data)
-            self.rename(temporary_url, url, overwrite=True, create_parent=False)
 
-            # Update the file size cache with this size
-            self._file_size_cache.update_size(url, size)
-            return size
-        except Exception:
-            # Upload failed. Attempt to remove the temporary file.
-            self.delete(temporary_url)
-            raise
+        # upload directly if the site is in the list of sites that
+        # are exempted from the move operation
+        if any(site in url for site in move_exempted_sites):
+            try:
+                self.delete(url)
+            except Exception:
+                pass
+            try:
+                size = self.put(url, data=data)
+                return size
+            except Exception:
+                self.delete(url)
+                raise
+        else:
+            try:
+                # Upload to a temporary file and rename to the final name.
+                temporary_url = self._make_temporary_url(url)
+                size = self.put(temporary_url, data=data)
+                self.rename(temporary_url, url, overwrite=True, create_parent=False)
+
+                # Update the file size cache with this size
+                self._file_size_cache.update_size(url, size)
+                return size
+            except Exception:
+                # Upload failed. Attempt to remove the temporary file.
+                self.delete(temporary_url)
+                raise
 
     @override
     def mkcol(self, url: str) -> None:
