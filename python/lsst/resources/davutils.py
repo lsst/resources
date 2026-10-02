@@ -1178,7 +1178,6 @@ class DavClient:
             mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
-            backoff_factor = 0.4
             max_disconnect_retries = 3
             for attempt in range(max_disconnect_retries):
                 try:
@@ -1192,20 +1191,30 @@ class DavClient:
                         **kwargs,
                     )
                 except ProtocolError as e:
-                    # Server disconnected before we could receive the response.
-                    # This kind of exception is not automatically retried by
-                    # `urllib3`.
+                    # Remote server disconnected before we could receive the
+                    # response. This kind of exception is not automatically
+                    # retried by `urllib3`.
                     log.warning(
                         f"""Server disconnected before we received a response to request """
                         f"""{method} {redact_url(url)} (attempt {attempt + 1}/{max_disconnect_retries}) """
                         f"""[{e}] """
                     )
 
-                    if attempt < max_disconnect_retries - 1:
-                        log.warning(f"Retrying request {method} {redact_url(url)}")
-                        time.sleep(backoff_factor * (2**attempt))
-                    else:
-                        raise
+                    # Should we retry?
+                    if attempt == max_disconnect_retries - 1:
+                        raise ValueError(
+                            f"""Reached maximum number of disconnects ({max_disconnect_retries}) """
+                            f"""attempting request {method} {redact_url(url)}"""
+                        )
+
+                    # Before retrying, rewind the request body if possible.
+                    if (body_seek := getattr(body, "seek", None)) is not None:
+                        body_seek(0, whence=os.SEEK_SET)
+
+                    backoff_factor = 1.0
+                    wait_seconds = backoff_factor * (2**attempt)
+                    log.warning(f"Retrying request {method} {redact_url(url)} in {wait_seconds:.3f}s ...")
+                    time.sleep(wait_seconds)
 
             # This is never reached but necessary to keep `mypy` happy.
             raise ValueError(
@@ -1447,6 +1456,7 @@ class DavClient:
         body: BinaryIO | bytes = b"",
         preload_content: bool = True,
         redirect: bool = True,
+        retry: bool = True,
         pool_manager: PoolManager | None = None,
     ) -> HTTPResponse:
         """Send a HTTP PUT request and return the response unmodified.
@@ -1466,6 +1476,8 @@ class DavClient:
             object to download the body.
         redirect : `bool`, optional
             If True, follow redirections.
+        retry : `bool`, optional
+            If True, retry the request.
         pool_manager : `PoolManager`, optional
             Pool manager to send the request through.
 
@@ -1478,16 +1490,9 @@ class DavClient:
         -----
         This method is intended for subclasses to override when needed.
         """
-        # Disable retries when we know the request is not idempotent. In
-        # particular, when the body of the request is an `io.BufferedReader`,
-        # any attempt to use that body may totally or partially consume it.
-        # That means that in case of a retry, the last successful attempt may
-        # end up uploading an incomplete body and, as a consequence, the
-        # resulting uploaded file may be either incomplete or have a length
-        # of zero.
-        #
-        # So we only retry a PUT request when the body is an instance of
-        # `bytes`.
+        # By default PUT requests are retried unless the caller specifies .
+        # otherwise This is intended to disable retries when the caller knows
+        # the request is not idempotent.
         #
         # Note that we cannot set `retries` to False since that setting would
         # also disable redirection. To disable retries only, we must explicitly
@@ -1495,7 +1500,7 @@ class DavClient:
         #
         # See documentation:
         # https://urllib3.readthedocs.io/en/stable/user-guide.html#retrying-requests
-        kwargs: dict[Any, Any] = {} if isinstance(body, bytes) else {"retries": 0}
+        kwargs: dict[Any, Any] = {"retries": 0} if not retry else {}
 
         return self._request(
             "PUT",
@@ -2132,81 +2137,7 @@ class DavClient:
         _, resp = self.get(url, preload_content=False)
         return self._write_response_body_to_file(resp, filename, chunk_size)
 
-    def _upload(self, url: str, data: BinaryIO | bytes) -> int | None:
-        """Upload `data` to remote file at `url`.
-        No attempt is made to create the parent directories. They either
-        must exist or the server creates them automatically as needed.
-
-        Parameters
-        ----------
-        url : `str`
-            Target URL.
-        data : `bytes`
-            Sequence of bytes to upload.
-
-        Returns
-        -------
-        size : `int | None`
-            The size in bytes of the file uploaded. Can be `None` if the size
-            could not be retrieved.
-
-        Notes
-        -----
-        If a file already exists at `url` it will be rewritten.
-        """
-        # First upload to a temporary file and retrieve the size of the file
-        # uploaded. `put()` retries the request if possible.
-        try:
-            temporary_url = self._make_temporary_url(url)
-            size = self.put(temporary_url, data=data)
-        except Exception:
-            # Upload failed. Attempt to remove the temporary file.
-            self.delete(temporary_url)
-            raise
-
-        # Temporary file was successfully uploaded. Rename it to its final
-        # name. We specify that the MOVE request can be retried since we know
-        # the source file exists.
-        resp = self.move(source_url=temporary_url, destination_url=url, overwrite=True, retry=True)
-        match resp.status:
-            case HTTPStatus.OK | HTTPStatus.CREATED | HTTPStatus.NO_CONTENT:
-                # MOVE request succeeded. Update the file size cache with this
-                # file size.
-                self._file_size_cache.update_size(url, size)
-                return size
-            case HTTPStatus.NOT_FOUND:
-                # We may get "Not Found" if the MOVE request was retried but
-                # a previous attempt actually succeeded. This may happen if
-                # the network connection to the server was closed after the
-                # server received and processed the request but before we
-                # could receive its response.
-                #
-                # Check if the destination file exists. If so, we consider that
-                # one of the MOVE attempts succeeded.
-                head_resp = self._head(url)
-                match head_resp.status:
-                    case HTTPStatus.OK:
-                        # Destination does exist.
-                        self._file_size_cache.update_size(url, size)
-                        return size
-                    case HTTPStatus.NOT_FOUND:
-                        # Neither source nor destination exist.
-                        raise ValueError(
-                            f"""Could not rename file {temporary_url} to {url}: neither source nor """
-                            f"""destination files were found"""
-                        )
-                    case _:
-                        raise ValueError(
-                            f"""Unexpected response to HEAD request to verify file {url} exists after """
-                            f"""MOVE from {temporary_url}: status {resp.status} {resp.reason}"""
-                        )
-            case _:
-                raise ValueError(
-                    f"""Unexpected response to MOVE {temporary_url} to {url}: status {resp.status} """
-                    f"""{resp.reason}"""
-                )
-
-    def write(self, url: str, data: BinaryIO | bytes) -> int | None:
+    def write(self, url: str, data: bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
 
@@ -2229,9 +2160,83 @@ class DavClient:
         """
         # According to RFC 4918, the parent directory of the file must
         # exist before we can write to it. So create it first and then
+        # upload the data.
+        self.mkcol(self._parent(url))
+        return self._write(url, data)
+
+    def _write(self, url: str, data: bytes) -> int | None:
+        """Upload `data` to remote file at `url`.
+        No attempt is made to create the parent directories. They either
+        must exist or the server creates them automatically as needed.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        data : `bytes`
+            Sequence of bytes to upload.
+
+        Returns
+        -------
+        size : `int | None`
+            The size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
+
+        Notes
+        -----
+        If a file already exists at `url` it will be rewritten.
+        """
+        try:
+            headers = {"Content-Length": str(len(data))}
+            size = self.put(url, data=data, headers=headers)
+            self._file_size_cache.update_size(url, size)
+            return size
+        except Exception:
+            # PUT failed after retrying. Remove the uploaded file to avoid
+            # leaving empty or partially uploaded files on the server.
+            self.delete(url)
+            raise
+
+    def upload(self, url: str, filename: str) -> int | None:
+        """Create or rewrite a remote file at `url` with the contents of
+        the local file at `filename`.
+
+        Parameters
+        ----------
+        url : `str`
+            Target URL.
+        filename : `str`
+            Name of an existing local file name..
+
+        Returns
+        -------
+        size : `int | None`
+            The size in bytes of the file uploaded. Can be `None` if the size
+            could not be retrieved.
+
+        Notes
+        -----
+        If a file already exists at `url` it will be overwritten.
+        """
+        # According to RFC 4918, the parent directory of the file must
+        # exist before we can write to it. Create it first and then
         # upload.
         self.mkcol(self._parent(url))
-        return self._upload(url, data)
+        return self._upload(url, filename)
+
+    def _upload(self, url: str, filename: str) -> int | None:
+        # The parent directory of the target file must exist.
+        headers = {"Content-Length": str(os.stat(filename).st_size)}
+        with open(filename, "rb") as stream:
+            try:
+                size = self.put(url, data=stream, headers=headers)
+                self._file_size_cache.update_size(url, size)
+                return size
+            except Exception:
+                # PUT failed after retrying. Remove the uploaded file to avoid
+                # leaving empty or incomplete files on the server.
+                self.delete(url)
+                raise
 
     def checksums(self, url: str) -> dict[str, str]:
         """Return the checksums of the contents of file located at `url`.
@@ -2338,6 +2343,8 @@ class DavClient:
         match resp.status:
             case HTTPStatus.CREATED | HTTPStatus.NO_CONTENT:
                 self._file_size_cache.invalidate(destination_url)
+            case HTTPStatus.NOT_FOUND:
+                raise FileNotFoundError(f"No file found at {source_url}")
             case _:
                 raise ValueError(
                     f"Could not copy {resp.geturl()} to {destination_url}: status {resp.status} {resp.reason}"
@@ -2392,16 +2399,16 @@ class DavClient:
             Whether to create the parent.
         """
         # Create the destination's parent directory first because MOVE may
-        # fail if it does not exist, depending on the server implementation
-        # of RFC 4918.
+        # fail if it does not exist, depending on the server implementation.
         if create_parent:
-            destination_parent = self._parent(destination_url)
-            self.mkcol(destination_parent)
+            self.mkcol(self._parent(destination_url))
 
         resp = self.move(source_url=source_url, destination_url=destination_url, overwrite=overwrite)
         match resp.status:
             case HTTPStatus.OK | HTTPStatus.CREATED | HTTPStatus.NO_CONTENT:
                 self._file_size_cache.invalidate(destination_url)
+            case HTTPStatus.NOT_FOUND:
+                raise FileNotFoundError(f"No file found at {source_url}")
             case _:
                 raise ValueError(
                     f"""Could not move file {resp.geturl()} to {destination_url}: status {resp.status} """
@@ -2985,7 +2992,7 @@ class DavClientDCache(DavClientURLSigner):
                 raise unexpected_status_error("GET", redirect_url, resp)
 
     @override
-    def write(self, url: str, data: BinaryIO | bytes) -> int | None:
+    def write(self, url: str, data: bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
 
@@ -3011,7 +3018,18 @@ class DavClientDCache(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        return self._upload(url, data)
+        return self._write(url, data)
+
+    @override
+    def upload(self, url: str, filename: str) -> int | None:
+        # Docstring inherited.
+
+        # dCache will automatically create all the parent directories so we
+        # don't need to explicitly create them. Although this is not compliant
+        # to RFC 4918, this is advantageous because it avoids several
+        # round-trips to the server for creating all the directories
+        # before actually uploading the data.
+        return self._upload(url, filename)
 
     @override
     def mkcol(self, url: str) -> None:
@@ -3253,7 +3271,7 @@ class DavClientXrootD(DavClientURLSigner):
                 raise unexpected_status_error("PUT", redirect_url, resp)
 
     @override
-    def write(self, url: str, data: BinaryIO | bytes) -> int | None:
+    def write(self, url: str, data: bytes) -> int | None:
         """Create or rewrite a remote file at `url` with `data` as its
         contents.
 
@@ -3279,7 +3297,18 @@ class DavClientXrootD(DavClientURLSigner):
         # to RFC 4918, this is advantageous because it avoids several
         # round-trips to the server for creating all the directories
         # before actually uploading the data.
-        return self._upload(url, data)
+        return self._write(url, data)
+
+    @override
+    def upload(self, url: str, filename: str) -> int | None:
+        # Docstring inherited.
+
+        # XRootD will automatically create all the parent directories so we
+        # don't need to explicitly create them. Although this is not compliant
+        # to RFC 4918, this is advantageous because it avoids several
+        # round-trips to the server for creating all the directories
+        # before actually uploading the data.
+        return self._upload(url, filename)
 
     @override
     def mkcol(self, url: str) -> None:

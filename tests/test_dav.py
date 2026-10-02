@@ -246,7 +246,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Attempting to create a directory at a path where a file exists
         # must raise
         file = self.tmpdir.join(self._get_file_name(), forceDirectory=False)
-        file.write(data=None, overwrite=True)
+        file.write(data=b"", overwrite=True)
         self.assertTrue(file.exists())
 
         existing_file = self.tmpdir.join(file.basename(), forceDirectory=True)
@@ -290,7 +290,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         with open(original_file, "rb") as file:
             remote_file = self.tmpdir.join(self._get_file_name())
-            self.assertIsNone(remote_file.write(data=file, overwrite=True))
+            self.assertIsNone(remote_file.write(data=file.read(), overwrite=True))
             self.assertTrue(remote_file.exists())
             remote_file_size = remote_file.size()
             self.assertEqual(remote_file_size, original_file_size)
@@ -416,7 +416,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Upload a multi-megabyte file and ensure a partial read succeeds
         data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE)
-        self.assertIsNone(remote_file.write(data, overwrite=True))
+        self.assertIsNone(remote_file.write(data.read(), overwrite=True))
         file_size: int = remote_file.size()
         file_offset: int = random.randint(self.MEGABYTE, file_size)
         bytes_to_read: int = random.randint(self.MEGABYTE // 2, self.MEGABYTE)
@@ -441,7 +441,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertTrue(handle.read(count) == buffer)
 
     def test_dav_repeated_write(self):
-        data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE)
+        data = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE
         remote_file = self.tmpdir.join(self._get_file_name())
 
         # Consecutive writes to the same file must succeed. It was noticed
@@ -459,7 +459,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         local_file, file_size = self._generate_file()
         with open(local_file, "rb") as f:
             remote_file = self.tmpdir.join(self._get_file_name())
-            self.assertIsNone(remote_file.write(f, overwrite=True))
+            self.assertIsNone(remote_file.write(f.read(), overwrite=True))
 
         self.assertTrue(remote_file.exists())
         self.assertEqual(remote_file.size(), file_size)
@@ -475,7 +475,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertTrue(subdir.exists())
         with open(local_file, "rb") as f:
             remote_file = subdir.join("file_to_remove")
-            remote_file.write(f, overwrite=True)
+            remote_file.write(f.read(), overwrite=True)
             self.assertTrue(remote_file.exists())
             self.assertEqual(remote_file.size(), file_size)
 
@@ -600,7 +600,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
             remote_file = self.tmpdir.join("file.parquet")
             with open(local_file, "rb") as file:
-                remote_file.write(file, overwrite=True)
+                remote_file.write(file.read(), overwrite=True)
 
             self.assertTrue(remote_file.exists())
             self.assertEqual(remote_file.size(), local_file_size)
@@ -648,7 +648,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Upload the zip file to the server
         with open(zip_file_name, mode="rb") as file:
             remote_zip_file = self.tmpdir.join("example.zip")
-            self.assertIsNone(remote_zip_file.write(file, overwrite=True))
+            self.assertIsNone(remote_zip_file.write(file.read(), overwrite=True))
             self.assertEqual(os.stat(zip_file_name).st_size, remote_zip_file.size())
 
         # Read the zip file back and check its contents.
@@ -719,7 +719,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         remote_file = self.tmpdir.join("example.data")
         with open(local_file, mode="rb") as file:
-            self.assertIsNone(remote_file.write(file, overwrite=True))
+            self.assertIsNone(remote_file.write(file.read(), overwrite=True))
             self.assertEqual(os.stat(local_file).st_size, remote_file.size())
 
         metadata = remote_file.get_info()

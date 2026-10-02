@@ -24,7 +24,7 @@ import sys
 import threading
 import urllib.parse
 from collections.abc import Generator, Iterator
-from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -403,7 +403,7 @@ class DavResourcePath(ResourcePath):
             yield tmp_uri
 
     @override
-    def write(self, data: BinaryIO | bytes, overwrite: bool = True) -> None:
+    def write(self, data: bytes, overwrite: bool = True) -> None:
         """Write the supplied bytes to the new resource.
 
         Parameters
@@ -599,8 +599,7 @@ class DavResourcePath(ResourcePath):
                 id(self),
                 local_uri,
             )
-            with open(local_uri.ospath, "rb") as f:
-                self.write(data=f)
+            self._client.upload(self._internal_url, local_uri.ospath)
 
     def _copy_from(self, source: DavResourcePath, overwrite: bool = False) -> None:
         """Copy the contents of `source` to this resource. `source` must
@@ -615,17 +614,14 @@ class DavResourcePath(ResourcePath):
         if source.isdir():
             raise ValueError(f"Copy is not supported for directory {source}")
 
-        if not source.exists():
-            raise FileNotFoundError(f"No file found at {source}")
-
         # If the server supports file duplication, use that method.
         if self._client.supports_duplicate:
             return self._client.duplicate(source._internal_url, self._internal_url, overwrite)
 
-        # Make this copy via a local file
         if not overwrite and self.exists():
             raise FileExistsError(f"Destination path {self} already exists.")
 
+        # Make this copy via a local file
         self._copy_via_local(source)
 
     def _move_from(self, source: DavResourcePath, overwrite: bool = False) -> None:
@@ -645,9 +641,6 @@ class DavResourcePath(ResourcePath):
 
         if source.isdir():
             raise ValueError(f"Move is not supported for directory {source}")
-
-        if not source.exists():
-            raise FileNotFoundError(f"No file found at {source}")
 
         self._client.rename(source._internal_url, self._internal_url, overwrite)
 
