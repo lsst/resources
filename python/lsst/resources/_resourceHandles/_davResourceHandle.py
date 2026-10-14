@@ -313,7 +313,7 @@ class DavReadAheadCache:
         )
 
         # Read the requested range.
-        self._cache = self._range_reader.read_range(start=start_range, end=end_range - 1)
+        self._cache = self._range_reader.read_range(start_range=start_range, end_range=end_range - 1)
         self._start = start_range
         self._end = self._start + len(self._cache)
         return self._cache[start - self._start : end - self._start]
@@ -367,7 +367,7 @@ class DavRangeReader:
         # again.
         pass
 
-    def read_range(self, start: int, end: int) -> bytes:
+    def read_range(self, start_range: int, end_range: int) -> bytes:
         # No need to send a request if the file is empty.
         if self._filesize == 0:
             return b""
@@ -380,8 +380,13 @@ class DavRangeReader:
         # which typically redirects requests to a data server. We want to
         # continue using that data server for subsequent requests without
         # going through the redirector.
-        self._log.debug(f"reading range of file at {redact_url(self._backend_url)}: start={start} end={end}")
-        self._backend_url, body = self._client.read_range(self._backend_url, start=start, end=end)
+        self._log.debug(
+            "reading range of file at %s: start=%d end=%d",
+            redact_url(self._backend_url),
+            start_range,
+            end_range,
+        )
+        self._backend_url, body = self._client.read_range(self._backend_url, start=start_range, end=end_range)
         return body
 
 
@@ -544,59 +549,127 @@ class DavDCacheRangeReader(DavRangeReader):
         )
 
     @override
-    def read_range(self, start: int, end: int) -> bytes:
+    def read_range(self, start_range: int, end_range: int) -> bytes:
         # No need to send a request if the file is empty.
         if self._filesize == 0:
             return b""
 
-        start = max(start, 0)
-        end = min(self._filesize, end)
-        self._log.debug(f"reading range of file at {self.geturl()}: start={start} end={end}")
-
+        start_range = max(0, start_range)
+        end_range = min(self._filesize, end_range)
         headers = {
             "Accept-Encoding": "identity",
-            "Range": f"bytes={start}-{end}",
+            "Range": f"bytes={start_range}-{end_range}",
         }
-        resp = self._request("GET", headers=headers)
-        match resp.status:
-            case HTTPStatus.PARTIAL_CONTENT:
-                return self._read_response_body(resp, self._filesize, start, end)
-            case _:
-                raise ValueError(f"unexpected response to GET request {resp.status} {resp.reason}")
+
+        self._log.debug(
+            "Reading range of file at %s: start=%d end=%d",
+            self.geturl(),
+            start_range,
+            end_range,
+        )
+
+        retry_policy = self._client._make_retry_policy()
+        for attempt in retry_policy:
+            resp = self._request("GET", headers=headers)
+            match resp.status:
+                case HTTPStatus.PARTIAL_CONTENT:
+                    # Check the response and retrieve the response body. A body
+                    # with value `None` is a signal that we need to retry the
+                    # request since the response we obtained is not
+                    # as expected.
+                    body = self._read_response_body(resp, self._filesize, start_range, end_range)
+                    if body is not None:
+                        return body
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    self._log.warning(
+                        """Unexpected response status %d %s to request GET %s (with header 'Range: %s') """
+                        """[attempt %d/%d]""",
+                        resp.status,
+                        resp.reason,
+                        self.geturl(),
+                        headers.get("Range"),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+
+            # Wait and retry this request.
+            self._log.warning(
+                "Retrying request GET %s (with header 'Range: %s')",
+                self.geturl(),
+                headers.get("Range"),
+            )
+            retry_policy.wait()
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request GET {self.geturl()} with header """
+            f"""'Range: {headers.get("Range")}' after {retry_policy.max_attempts} attempts"""
+        )
 
     def _read_response_body(
-        self, resp: http.client.HTTPResponse, file_size: int, range_start: int, range_end: int
-    ) -> bytes:
+        self, resp: http.client.HTTPResponse, file_size: int, start_range: int, end_range: int
+    ) -> bytes | None:
         # Download the response body.
         body = resp.read()
+        body_length = len(body)
 
-        # Check that we got the expected headers with their expected values.
-        expected_content_range = f"bytes {range_start}-{range_end}/{file_size}"
+        # Check that we got response header `Content-Range` and that it has
+        # the expected value.
+        request_range_header = f"Range: bytes={start_range}-{end_range}"
+        expected_content_range = f"bytes {start_range}-{end_range}/{file_size}"
         if (content_range := resp.getheader("Content-Range")) is None:
-            raise ValueError(f"Expected 'Content-Range' header in response to GET {self.geturl()} is missing")
-        elif expected_content_range != content_range:
-            raise ValueError(
-                f"""Unexpected value of 'Content-Range' header: expecting {expected_content_range} """
-                f"""but got {content_range}"""
+            self._log.warning(
+                "Expected 'Content-Range' header in response to GET %s (with header '%s') is missing",
+                self.geturl(),
+                request_range_header,
             )
+            return None
 
-        expected_content_length = f"{range_end - range_start + 1}"
+        if expected_content_range != content_range:
+            self._log.warning(
+                """Unexpected value of 'Content-Range' header in response to request GET %s """
+                """(with header '%s'): expecting '%s' but got '%s'""",
+                self.geturl(),
+                request_range_header,
+                expected_content_range,
+                content_range,
+            )
+            return None
+
+        # Check that we got response header `Content-Length` and that it has
+        # the expected value.
         if (content_length := resp.getheader("Content-Length")) is None:
-            raise ValueError(
-                f"Expected 'Content-Length' header in response to GET {self.geturl()} is missing"
+            self._log.warning(
+                "Expected 'Content-Length' header in response to GET %s (with header '%s') is missing",
+                self.geturl(),
+                request_range_header,
             )
-        elif expected_content_length != content_length:
-            raise ValueError(
-                f"""Unexpected value of 'Content-Length' header: expecting {expected_content_length} """
-                f"""but got {content_length}"""
-            )
+            return None
 
-        # Verify the response body's length is consistent with the response
-        # headers.
-        if (body_length := len(body)) != int(content_length):
-            raise ValueError(
-                f"Value of 'Content-Length' response header '{content_length}' does not match "
-                f"the actual length of response body ({body_length})"
+        expected_content_length = f"{end_range - start_range + 1}"
+        if expected_content_length != content_length:
+            self._log.warning(
+                """Unexpected value of 'Content-Length' header in response to request GET %s """
+                """(with header '%s'): expecting '%s' but got '%s'""",
+                self.geturl(),
+                request_range_header,
+                expected_content_length,
+                content_length,
+            )
+            return None
+
+        # Check that the actual length of the response body matches the value
+        # in the response header `Content-Length`.
+        if body_length != int(content_length):
+            self._log.warning(
+                """Value of 'Content-Length' header in response to request GET %s """
+                """(with header '%s') does not match the actual length of reponse body: """,
+                """expecting '%d' but got '%s'""",
+                self.geturl(),
+                request_range_header,
+                body_length,
+                content_length,
             )
 
         self._log.debug("downloaded %d bytes from %s", body_length, self.geturl())
