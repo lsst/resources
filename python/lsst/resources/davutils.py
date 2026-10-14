@@ -51,7 +51,6 @@ except ImportError:
 import yaml
 from astropy import units as u
 from urllib3 import PoolManager, make_headers
-from urllib3.exceptions import ProtocolError
 from urllib3.response import HTTPResponse
 from urllib3.util import Retry, Timeout, Url, parse_url
 
@@ -1178,48 +1177,14 @@ class DavClient:
             mem_usage=self._config.collect_memory_usage,
             mem_unit=u.mebibyte,
         ):
-            max_disconnect_retries = 3
-            for attempt in range(max_disconnect_retries):
-                try:
-                    return pool_manager.request(
-                        method,
-                        url,
-                        body=body,
-                        headers=headers,
-                        preload_content=preload_content,
-                        redirect=redirect,
-                        **kwargs,
-                    )
-                except ProtocolError as e:
-                    # Remote server disconnected before we could receive the
-                    # response. This kind of exception is not automatically
-                    # retried by `urllib3`.
-                    log.warning(
-                        f"""Server disconnected before we received a response to request """
-                        f"""{method} {redact_url(url)} (attempt {attempt + 1}/{max_disconnect_retries}) """
-                        f"""[{e}] """
-                    )
-
-                    # Should we retry?
-                    if attempt == max_disconnect_retries - 1:
-                        raise ValueError(
-                            f"""Reached maximum number of disconnects ({max_disconnect_retries}) """
-                            f"""attempting request {method} {redact_url(url)}"""
-                        )
-
-                    # Before retrying, rewind the request body if possible.
-                    if (body_seek := getattr(body, "seek", None)) is not None:
-                        body_seek(0, whence=os.SEEK_SET)
-
-                    backoff_factor = 1.0
-                    wait_seconds = backoff_factor * (2**attempt)
-                    log.warning(f"Retrying request {method} {redact_url(url)} in {wait_seconds:.3f}s ...")
-                    time.sleep(wait_seconds)
-
-            # This is never reached but necessary to keep `mypy` happy.
-            raise ValueError(
-                f"""Reached maximum number of disconnects ({max_disconnect_retries}) attempting """
-                f"""request {method} {redact_url(url)}"""
+            return pool_manager.request(
+                method,
+                url,
+                body=body,
+                headers=headers,
+                preload_content=preload_content,
+                redirect=redirect,
+                **kwargs,
             )
 
     def _options(
@@ -1530,14 +1495,32 @@ class DavClient:
             just return the response.
         """
         headers = {} if headers is None else dict(headers)
-        resp = self._head(url=url, headers=headers)
-        match resp.status:
-            case HTTPStatus.OK:
-                return resp
-            case HTTPStatus.NOT_FOUND:
-                raise FileNotFoundError(f"No file found at {resp.geturl()}")
-            case _:
-                raise unexpected_status_error("HEAD", url, resp)
+        retry_policy = self._make_retry_policy()
+        for attempt in retry_policy:
+            resp = self._head(url=url, headers=headers)
+            match resp.status:
+                case HTTPStatus.OK:
+                    return resp
+                case HTTPStatus.NOT_FOUND:
+                    raise FileNotFoundError(f"No file found at {redact_url(url)}")
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    log.warning(
+                        """Unexpected response status %d %s to request HEAD %s """,
+                        """[attempt %d/%d]. Retrying...""",
+                        resp.status,
+                        resp.reason,
+                        redact_url(url),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request HEAD {redact_url(url)} """
+            f"""after {retry_policy.max_attempts} attempts"""
+        )
 
     def get(
         self,
@@ -1609,12 +1592,31 @@ class DavClient:
         resp: `HTTPResponse`
             Response to the request as received from the server.
         """
-        resp = self._options(url=url, headers=headers)
-        match resp.status:
-            case HTTPStatus.OK | HTTPStatus.CREATED:
-                return resp
-            case _:
-                raise unexpected_status_error("OPTIONS", url, resp)
+        headers = {} if headers is None else dict(headers)
+        retry_policy = self._make_retry_policy()
+        for attempt in retry_policy:
+            resp = self._options(url=url, headers=headers)
+            match resp.status:
+                case HTTPStatus.OK | HTTPStatus.CREATED:
+                    return resp
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    log.warning(
+                        """Unexpected response status %d %s to request OPTIONS %s """,
+                        """[attempt %d/%d]. Retrying...""",
+                        resp.status,
+                        resp.reason,
+                        redact_url(url),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request OPTIONS {redact_url(url)} """
+            f"""after {retry_policy.max_attempts} attempts"""
+        )
 
     def propfind(
         self,
@@ -1645,12 +1647,31 @@ class DavClient:
                 "Content-Length": str(len(body)),
             }
         )
-        resp = self._propfind(url=url, headers=headers, body=body)
-        match resp.status:
-            case HTTPStatus.MULTI_STATUS | HTTPStatus.NOT_FOUND:
-                return resp
-            case _:
-                raise unexpected_status_error("PROPFIND", url, resp)
+
+        retry_policy = self._make_retry_policy()
+        for attempt in retry_policy:
+            resp = self._propfind(url=url, headers=headers, body=body)
+            match resp.status:
+                case HTTPStatus.MULTI_STATUS | HTTPStatus.NOT_FOUND:
+                    return resp
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    log.warning(
+                        """Unexpected response status %d %s to request PROPFIND %s """,
+                        """[attempt %d/%d]. Retrying...""",
+                        resp.status,
+                        resp.reason,
+                        redact_url(url),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request PROPFIND {redact_url(url)} """
+            f"""after {retry_policy.max_attempts} attempts"""
+        )
 
     def put(
         self,
@@ -1809,7 +1830,7 @@ class DavClient:
         result: `bool`
            True if there is a directory at `url`.
         """
-        return self.stat(url).is_dir
+        return self.stat(url, include_last_modified=False, include_checksums=False).is_dir
 
     def mkcol(self, url: str) -> None:
         """Create a directory at `url`.
@@ -2507,24 +2528,53 @@ class DavClient:
             "Accept-Encoding": "identity",
             "Range": "bytes=0-0",
         }
-        resp = self._get(url, headers=headers, redirect=False, preload_content=True)
-        match resp.status:
-            case HTTPStatus.PARTIAL_CONTENT:
-                # We received the byte range requested without getting
-                # redirected. There is not back end server.
-                return url
-            case status if status in resp.REDIRECT_STATUSES:
-                # We were redirected to the back end server. Extract and return
-                # the redirection URL.
-                return self._get_response_header(resp, "GET", "Location")
-            case HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE:
-                # The file is empty, so we did not get the back end URL.
-                return url
-            case HTTPStatus.NOT_FOUND:
-                # There is no file at this URL
-                raise FileNotFoundError(f"No file found at {url}")
-            case _:
-                raise unexpected_status_error("GET (with 'Range' header)", url, resp)
+
+        retry_policy = self._make_retry_policy()
+        for attempt in retry_policy:
+            resp = self._get(url, headers=headers, redirect=False, preload_content=True)
+            match resp.status:
+                case HTTPStatus.PARTIAL_CONTENT:
+                    # We received the byte range requested without getting
+                    # redirected. There is not back end server.
+                    return url
+                case status if status in resp.REDIRECT_STATUSES:
+                    # We were redirected to the back end server. Extract and
+                    # return the redirection URL.
+                    return self._get_response_header(resp, "GET", "Location")
+                case HTTPStatus.NOT_FOUND:
+                    # There is no file at this URL
+                    raise FileNotFoundError(f"No file found at {url}")
+                case HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE:
+                    # The file is empty, so we did not get the back end URL.
+                    return url
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    log.warning(
+                        """Unexpected response status %d %s to request GET %s """
+                        """(with header 'Range: %s') [attempt %d/%d]. Retrying...""",
+                        resp.status,
+                        resp.reason,
+                        redact_url(url),
+                        headers.get("Range"),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+                    continue
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request GET {redact_url(url)} with header """
+            f"""'Range: {headers.get("Range")}' after {retry_policy.max_attempts} attempts"""
+        )
+
+    def _make_retry_policy(self) -> DavRetryPolicy:
+        return DavRetryPolicy(
+            max_attempts=self._config.retries,
+            backoff_min=self._config.retry_backoff_min,
+            backoff_max=self._config.retry_backoff_max,
+            backoff_jitter=0.1,
+        )
 
 
 class ActivityCaveat(enum.Enum):
@@ -2862,7 +2912,7 @@ class DavClientDCache(DavClientURLSigner):
         if is_zero_length:
             return 0
 
-        # We may have beend redirected to a backend server. Upload the file
+        # We may have been redirected to a backend server. Upload the file
         # contents to its final destination. Explicitly ask the server to close
         # this network connection after serving this PUT request to release
         # the associated dCache mover.
@@ -3117,39 +3167,69 @@ class DavClientDCache(DavClientURLSigner):
         frontend_headers = {} if headers is None else dict(headers)
         frontend_headers.update(range_headers)
 
-        # Send the GET request to the dCache door but don't follow redirections
-        # automatically. We need to be able to add a `Connection: close`
-        # request header when sending the request to the dCache pool we
-        # will be redirected to.
-        #
-        # We don't send that header to the door since we want to keep the
-        # network connection with the door open for later reuse.
-        final_url, resp = self.get(url, headers=frontend_headers, redirect=False)
-        match resp.status:
-            case HTTPStatus.PARTIAL_CONTENT:
-                return final_url, resp.data
-            case status if status not in resp.REDIRECT_STATUSES:
-                raise unexpected_status_error("GET (with 'Range' header)", url, resp)
-            case _:
-                pass
+        retry_policy = self._make_retry_policy()
+        for attempt in retry_policy:
+            # Send the GET request to the dCache door but don't follow
+            # redirections automatically. We need to be able to add a
+            # `Connection: close` request header when sending the request to
+            # the dCache pool we will be redirected to.
+            final_url, resp = self.get(url, headers=frontend_headers, redirect=False)
+            match resp.status:
+                case HTTPStatus.PARTIAL_CONTENT:
+                    return final_url, resp.data
+                case status if status in resp.REDIRECT_STATUSES:
+                    pass
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    log.warning(
+                        """Unexpected response status %d %s to request GET %s """
+                        """(with header 'Range: %s') [attempt %d/%d]""",
+                        resp.status,
+                        resp.reason,
+                        redact_url(url),
+                        range_headers.get("Range"),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+                    continue
 
-        # We were redirected to the dCache pool. Follow the redirection and
-        # add a `Connection: close` header to notify the mover to stop its
-        # execution after serving this request.
-        backend_headers = {} if headers is None else dict(headers)
-        backend_headers.update(range_headers)
-        backend_headers.update({"Connection": "close"})
+            # We were redirected to the dCache pool. Follow the redirection and
+            # add a `Connection: close` header to notify the mover to stop its
+            # execution after serving this request.
+            backend_headers = {} if headers is None else dict(headers)
+            backend_headers.update(range_headers)
+            backend_headers.update({"Connection": "close"})
 
-        redirect_url = self._get_response_header(resp, "GET", "Location")
-        _, resp = self.get(redirect_url, headers=backend_headers, redirect=True)
-        match resp.status:
-            case HTTPStatus.PARTIAL_CONTENT:
-                # Return the door URL so that subsequent requests (if any)
-                # go through the dCache door instead first of going directly to
-                # the pool since we asked the mover to be stopped.
-                return url, resp.data
-            case _:
-                raise unexpected_status_error("GET (with 'Range' header)", redirect_url, resp)
+            redirect_url = self._get_response_header(resp, "GET", "Location")
+            _, resp = self.get(redirect_url, headers=backend_headers, redirect=True)
+            match resp.status:
+                case HTTPStatus.PARTIAL_CONTENT:
+                    # Return the door URL so that subsequent requests (if any)
+                    # go through the dCache door instead first of going
+                    # directly to the pool since we asked the mover to be
+                    # stopped.
+                    return url, resp.data
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    log.warning(
+                        """Unexpected response status %d %s to request GET %s """
+                        """(with header 'Range: %s') to dCache pool [attempt %d/%d]""",
+                        resp.status,
+                        resp.reason,
+                        redact_url(redirect_url),
+                        range_headers.get("Range"),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+                    continue
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request GET {redact_url(url)} with header """
+            f"""'Range: {range_headers.get("Range")}' after {retry_policy.max_attempts} attempts"""
+        )
 
     @override
     def _close(self, url: str) -> None:
@@ -3984,3 +4064,64 @@ def dump_response(method: str, resp: HTTPResponse, dump_body: bool = False) -> N
 
     if dump_body:
         log.debug("   response body length: %d", len(resp.data.decode()))
+
+
+class DavRetryPolicy:
+    """Retry policy for webDAV requests..
+
+    Parameters
+    ----------
+    max_attempts : `int`
+        Maximum number of attempts.
+    backoff_min : `float`
+        Minimum backoff factor in seconds. A random value in interval
+        [backoff_min, backoff_max] is used as the backoff factor.
+    backoff_max : `float`
+        Maximum backoff factor in seconds.  A random value in interval
+        [backoff_min, backoff_max] is used as the backoff factor.
+    backoff_jitter : `float`
+        Jitter (in seconds) to add to the wait time between requests.
+        A random value in [0, backoff_jitter] is used as jitter.
+    """
+
+    def __init__(
+        self,
+        max_attempts: int = 4,
+        backoff_min: float = 1.0,
+        backoff_max: float = 3.0,
+        backoff_jitter: float = 0.2,
+    ) -> None:
+        backoff_min = max(0.0, backoff_min)
+        backoff_max = max(0.0, backoff_max)
+        backoff_min = min(backoff_min, backoff_max)
+        self._backoff = random.uniform(backoff_min, backoff_max)
+        self._backoff_jitter = max(0.0, backoff_jitter)
+        self._max_attempts = max_attempts
+        self._current_attempt = 1
+
+    def __iter__(self) -> DavRetryPolicy:
+        return self
+
+    def __next__(self) -> int:
+        if self._current_attempt > self._max_attempts:
+            raise StopIteration
+
+        current = self._current_attempt
+        self._current_attempt += 1
+        return current
+
+    @property
+    def max_attempts(self) -> int:
+        return self._max_attempts
+
+    @property
+    def retries_exhausted(self) -> bool:
+        return self._current_attempt > self._max_attempts
+
+    def wait(self) -> None:
+        attempt = max(0, self._current_attempt - 1)
+        time_to_wait = self._backoff * (2**attempt)
+        if self._backoff_jitter > 0.0:
+            time_to_wait += random.uniform(0.0, self._backoff_jitter)
+
+        time.sleep(time_to_wait)
