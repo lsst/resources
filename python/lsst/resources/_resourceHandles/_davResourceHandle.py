@@ -55,16 +55,15 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         newline: AnyStr | None = None,
     ) -> None:
         super().__init__(mode, log, uri, newline=newline)
-        self._uri: DavResourcePath = uri
-        self._client: DavClient = self._uri._client
+        self._client: DavClient = uri._client
         self._filesize: int = file_size
         self._closed = CloseStatus.OPEN
         self._current_position = 0
         self._cache: DavReadAheadCache = DavReadAheadCache(
             client=self._client,
-            url=self._uri._internal_url,
+            url=uri._internal_url,
             filesize=self._filesize,
-            blocksize=self._uri._client._config.block_size,
+            blocksize=self._client._config.block_size,
             log=log,
         )
         self._log.debug("initializing read handle for %s [%#x]", self._uri, id(self))
