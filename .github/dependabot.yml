@@ -12,3 +12,15 @@ updates:
       monthly-batch:
         patterns:
           - "*"
+  # Pinned CI tool versions (e.g. ty). Scoped to .github so that the
+  # package's own requirements files are not considered.
+  - package-ecosystem: "pip"
+    directory: "/.github"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    groups:
+      monthly-batch:
+        patterns:
+          - "*"

@@ -29,9 +29,12 @@ jobs:
         run: |
           uv pip install '.[s3,https,gs]'
           uv pip install -r types.txt
+          # The ty version is pinned so that new releases (which can add
+          # rules) are picked up via dependabot rather than breaking CI.
+          uv pip install -r .github/ty-requirements.txt
 
       - name: Run ty
         # ty writes absolute paths into its GitHub annotations; strip the
         # workspace prefix so they attach to files in the diff.
         shell: bash
-        run: uvx ty check --output-format github python | sed "s|$GITHUB_WORKSPACE/||g"
+        run: ty check --output-format github python | sed "s|$GITHUB_WORKSPACE/||g"
