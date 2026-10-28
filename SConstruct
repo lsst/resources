@@ -4,7 +4,7 @@ from lsst.sconsUtils import state
 
 import os
 
-scripts.BasicSConstruct("resources", disableCc=True)
+scripts.BasicSConstruct("resources", disableCc=True, noCfgFile=True)
 mypy = state.env.Command("mypy.log", "python/lsst/resources",
                          "mypy python/lsst 2>&1 | tee -a mypy.log")
 state.env.Alias("mypy", mypy)
