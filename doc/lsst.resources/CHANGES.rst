@@ -1,3 +1,45 @@
+Resources v30.0.12 (2026-10-27)
+===============================
+
+New Features
+------------
+
+- Added a new ``remote-test`` URI schema that can be used in test code to allow you to run tests where a local file URI is pretending to be a remote URI.
+  This comes with a helper ``lsst.resources.tests.make_remote_test_uri`` to easily construct these URIs from a local file path. (`DM-55824 <https://rubinobs.atlassian.net/browse/DM-55824>`_)
+
+
+Bug Fixes
+---------
+
+- ``ResourcePath.open()`` no longer raises ``ValueError`` when an ``encoding`` is supplied along with a binary mode.
+  The encoding is now ignored for binary IO, as the documentation has always specified.
+  This affects ``file`` URIs and any scheme opened with ``prefer_file_temporary=True``. (`DM-55832 <https://rubinobs.atlassian.net/browse/DM-55832>`_)
+- ``clean_test_environment_for_s3()`` now also clears ``$AWS_REQUEST_CHECKSUM_CALCULATION`` and ``$AWS_RESPONSE_CHECKSUM_VALIDATION``, so that a site which disables checksums does not change the object metadata seen by tests. (`DM-56097 <https://rubinobs.atlassian.net/browse/DM-56097>`_)
+- Opening a presigned S3 URL over HTTP no longer downloads the entire object into memory. (`DM-56138 <https://rubinobs.atlassian.net/browse/DM-56138>`_)
+- The ``s3`` extra now requires the ``certifi`` library to ensure that updated CA certificates are available. (`DM-56681 <https://rubinobs.atlassian.net/browse/DM-56681>`_)
+
+
+Performance Enhancement
+-----------------------
+
+- ``ResourcePath.mremove()``, ``ResourcePath.mexists()`` and ``ResourcePath.mtransfer()`` now send a batch of URIs to each worker rather than submitting one task per URI.
+  The batch size is fixed per scheme rather than derived from how many URIs a call is given, so a batch never grows large enough that one worker drawing a run of slow URIs stalls the operation with no way to rebalance.
+  A scheme sets it from the cost of one of its operations: a local file check is cheap enough that a batch has to reach a thousand URIs before threading it beats a loop in the calling thread, while a scheme whose every operation is a network round trip is worth overlapping immediately.
+  Transfers batch separately from existence checks and removals, since a transfer costs far more and scales with a file size that is not known in advance.
+  The upper bound on the number of workers is now set per scheme, so a scheme that holds no connection pool can raise it, and ``ResourcePath.mtransfer()`` now uses the bound for the target scheme instead of the global default.
+  A batch of URIs that fits in a single chunk is handled in the calling thread rather than being given to a pool. (`DM-56097 <https://rubinobs.atlassian.net/browse/DM-56097>`_)
+- ``ResourcePath.open()`` on a plain HTTP URL now passes the resource size already reported by the range-support probe to the returned handle.
+  Seeking relative to the end of the resource no longer needs an extra request to ask the server for its size. (`DM-56138 <https://rubinobs.atlassian.net/browse/DM-56138>`_)
+
+
+An API Removal or Deprecation
+-----------------------------
+
+- Removed support for the ``$LSST_RESOURCES_EXECUTOR`` environment variable.
+  Bulk operations now always use a thread pool.
+  Process pools were measured to be no faster for remote URIs and they silently discarded the undo actions registered by ``ResourcePath.mtransfer()`` on a caller's transaction, since those were recorded in the worker process and never reached the parent. (`DM-56097 <https://rubinobs.atlassian.net/browse/DM-56097>`_)
+
+
 Resources v30.0.11 (2026-08-12)
 ===============================
 
