@@ -755,14 +755,10 @@ class DavResourcePath(ResourcePath):
         log.debug("DavResourcePath._openImpl: %s mode: %s", self, mode)
 
         if mode in ("rb", "r") and self._client.accepts_ranges(self._internal_url):
-            stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
-            if stat.is_dir:
+            if self.isdir():
                 raise OSError(f"open is not implemented for directory {self}")
 
-            if not stat.is_file:
-                raise FileNotFoundError(f"No such file {self}")
-
-            with DavReadResourceHandle(mode, log.logger, uri=self, file_size=stat.size) as handle:
+            with DavReadResourceHandle(mode, log.logger, uri=self) as handle:
                 if mode == "r":
                     # cast because the protocol is compatible, but does not
                     # have BytesIO in the inheritance tree
@@ -874,7 +870,7 @@ class DavFileSystem(AbstractFileSystem):
         if mode not in ("rb", "r"):
             raise OSError(f"Opening {path} for writing is not supported")
 
-        handle = DavReadResourceHandle(mode, log.logger, self._uri, self.size(self._path))
+        handle = DavReadResourceHandle(mode, log.logger, self._uri)
         if mode == "rb":
             return handle
         else:
