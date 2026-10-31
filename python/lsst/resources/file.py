@@ -91,10 +91,6 @@ class FileResourcePath(ResourcePath):
     # an S3 bulk delete takes.
     _chunk_size = 1000
 
-    # A transfer costs orders of magnitude more than an existence check and
-    # scales with the file size, so batches stay small enough to balance.
-    _transfer_chunk_size = 25
-
     @property
     def ospath(self) -> str:
         """Path component of the URI localized to current OS.
