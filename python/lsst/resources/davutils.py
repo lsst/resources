@@ -1790,7 +1790,7 @@ class DavClient:
         result: `bool`
            True if there is an object at `url`.
         """
-        return self.stat(url).exists
+        return self.stat(url, include_checksums=False, include_last_modified=False).exists
 
     def size(self, url: str) -> int:
         """Return the size in bytes of resource at `url`.
@@ -3232,6 +3232,38 @@ class DavClientDCache(DavClientURLSigner):
         )
 
     @override
+    def exists(self, url: str) -> bool:
+        # Docstring inherited.
+        retry_policy = self._make_retry_policy()
+        for attempt in retry_policy:
+            # Send a HEAD request which, unlike PROPFIND, does not require
+            # parsing of the response.
+            resp = self._head(url)
+            match resp.status:
+                case HTTPStatus.OK:
+                    return True
+                case HTTPStatus.NOT_FOUND:
+                    return False
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    log.warning(
+                        "Unexpected response status %d %s to request HEAD %s [attempt %d/%d]. Retrying...",
+                        resp.status,
+                        resp.reason,
+                        redact_url(url),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+                    continue
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request HEAD {redact_url(url)} """
+            f"""after {retry_policy.max_attempts} attempts"""
+        )
+
+    @override
     def _close(self, url: str) -> None:
         # Docstring inherited.
 
@@ -3496,6 +3528,18 @@ class DavClientXrootD(DavClientURLSigner):
         # the remote server that we are not sending other GET requests with
         # `Range` header for this URL.
         self._request("HEAD", url=url, headers={"Connection": "close"}, redirect=False)
+
+    @override
+    def exists(self, url: str) -> bool:
+        # Docstring inherited.
+        resp = self._head(url)
+        match resp.status:
+            case HTTPStatus.OK:
+                return True
+            case HTTPStatus.NOT_FOUND:
+                return False
+            case _:
+                raise unexpected_status_error("HEAD", url, resp)
 
 
 class DavFileMetadata:
