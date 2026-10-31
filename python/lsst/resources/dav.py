@@ -278,8 +278,7 @@ class DavResourcePath(ResourcePath):
         """Check that this resource exists."""
         log.debug("exists %s [%#x]", self, id(self))
 
-        stat = self._client.stat(self._internal_url, include_last_modified=False, include_checksums=False)
-        return stat.exists
+        return self._client.exists(self._internal_url)
 
     @override
     def size(self) -> int:
