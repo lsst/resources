@@ -174,15 +174,15 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
     def test_dav_file_handle(self):
         # Upload a new file with known contents.
         contents = "These are some \n bytes to read"
-        remote_file = self.tmpdir.join(self._get_file_name())
-        self.assertIsNone(remote_file.write(data=contents, overwrite=True))
+        empty_file = self.tmpdir.join(self._get_file_name())
+        self.assertIsNone(empty_file.write(data=contents, overwrite=True))
 
         # Test that the correct handle is returned.
-        with remote_file.open("rb") as handle:
+        with empty_file.open("rb") as handle:
             self.assertIsInstance(handle, DavReadResourceHandle)
 
         # Test reading byte ranges works
-        with remote_file.open("rb") as handle:
+        with empty_file.open("rb") as handle:
             sub_contents = contents[:10]
             handle = cast(DavReadResourceHandle, handle)
             result = handle.read(len(sub_contents)).decode()
@@ -201,7 +201,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             handle.flush()
 
         # Verify reading as a string handle works as expected.
-        with remote_file.open("r") as handle:
+        with empty_file.open("r") as handle:
             self.assertIsInstance(handle, io.TextIOWrapper)
 
             handle = cast(io.TextIOWrapper, handle)
@@ -215,15 +215,26 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             handle.flush()
 
         # Verify that write modes invoke the default base method
-        with remote_file.open("w") as handle:
+        with empty_file.open("w") as handle:
             self.assertIsInstance(handle, io.StringIO)
 
         # Verify that a handle of an empty file works as expected
-        remote_file = self.tmpdir.join(self._get_file_name())
-        self.assertIsNone(remote_file.write(data=b"", overwrite=True))
-        with remote_file.open("rb") as handle:
+        empty_file = self.tmpdir.join(self._get_file_name())
+        self.assertIsNone(empty_file.write(data=b"", overwrite=True))
+        with empty_file.open("rb") as handle:
             self.assertIsInstance(handle, DavReadResourceHandle)
             self.assertEqual(0, len(handle.read()))
+
+        # Verify that reading beyond the size of an empty file handle
+        # returns consistent results.
+        with empty_file.open("rb") as handle:
+            handle.seek(1234)
+            self.assertEqual(handle.read(), b"")
+
+        # Verify that seeking to a negative position raises
+        with self.assertRaises(ValueError):
+            with empty_file.open() as handle:
+                handle.seek(-1234)
 
     def test_dav_mkdir(self):
         # Check creation and deletion of an empty directory

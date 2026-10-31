@@ -64,30 +64,42 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         mode: str,
         log: logging.Logger,
         uri: DavResourcePath,
-        file_size: int,
         *,
         newline: AnyStr | None = None,
     ) -> None:
         super().__init__(mode, log, uri, newline=newline)
         self._client: DavClient = uri._client
-        self._filesize: int = file_size
         self._closed = CloseStatus.OPEN
         self._current_position = 0
-        self._cache: DavReadAheadCache = DavReadAheadCache(
-            client=self._client,
-            url=uri._internal_url,
-            filesize=self._filesize,
-            blocksize=self._client._config.block_size,
-            log=log,
-        )
+
+        self._range_reader: DavRangeReader | DavDCacheRangeReader
+        if isinstance(self._client, DavClientDCache):
+            # Use a specialized range reader for dCache
+            self._range_reader = DavDCacheRangeReader(
+                client=self._client,
+                url=uri._internal_url,
+                blocksize=self._client._config.block_size,
+                log=self._log,
+            )
+        else:
+            # Use the generic range reader
+            self._range_reader = DavRangeReader(
+                client=self._client,
+                url=uri._internal_url,
+                blocksize=self._client._config.block_size,
+                log=self._log,
+            )
+
+        # Retrieve this file size
+        self._filesize: int = self._range_reader.filesize
         self._lock = threading.Lock()
-        self._log.debug("initializing read handle for %s [%#x]", self._uri, id(self))
+        self._log.debug("initialized read handle for %s [%#x]", self._uri, id(self))
 
     def close(self) -> None:
         with self._lock:
             if self._closed != CloseStatus.CLOSED:
                 self._log.debug("closing read handle for %s [%#x]", self._uri, id(self))
-                self._cache.close()
+                self._range_reader.close()
                 self._closed = CloseStatus.CLOSED
 
     @property
@@ -149,7 +161,7 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         return self._current_position
 
     def truncate(self, size: int | None = None) -> int:
-        raise io.UnsupportedOperation("DavReadResourceHandles Do not support truncation")
+        raise io.UnsupportedOperation("DavReadResourceHandles do not support truncation")
 
     def writable(self) -> bool:
         return False
@@ -184,7 +196,9 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
                 # Read up to the end of the file
                 size = self._filesize - self._current_position
 
-            output = self._cache.fetch(start=self._current_position, end=self._current_position + size)
+            output = self._range_reader.read_range(
+                range_start=self._current_position, range_end=self._current_position + size
+            )
             self._current_position += len(output)
 
             self._log.debug("returning %d bytes from handle read for %s", len(output), self._uri)
@@ -208,119 +222,6 @@ class DavReadResourceHandle(BaseResourceHandle[bytes]):
         return len(data)
 
 
-class DavReadAheadCache:
-    """Helper read-ahead cache for fetching chunks of a DavResourceHandle.
-
-    Parameters
-    ----------
-    client : `lsst.resources.davutils.DavClient`
-        The webDAV client to interact with the server to download data.
-    url : `str`
-        URL of the resource to download data from.
-    filesize : `int`
-        Size in bytes of the remote file.
-    blocksize : `int`
-        Size in bytes of the block for this resource. This is the size we use
-        to retrieve data from this resource.
-    log : `logging.Logger`
-        Logger object to emit log records.
-
-    Notes
-    -----
-    Behavior of this cache is inspired from fsspec's ReadAheadCache class.
-    https://github.com/fsspec/filesystem_spec/blob/master/fsspec/caching.py
-    """
-
-    def __init__(
-        self, client: DavClient, url: str, filesize: int, blocksize: int, log: logging.Logger
-    ) -> None:
-        self._client: DavClient = client
-        self._url: str = url
-        self._filesize: int = filesize
-        self._blocksize: int = blocksize
-        self._cache = b""
-        self._start: int = 0
-        self._end: int = 0
-        self._log: logging.Logger = log
-
-        self._range_reader: DavRangeReader | DavDCacheRangeReader
-        if isinstance(self._client, DavClientDCache):
-            # Use a specialized range reader for dCache
-            self._range_reader = DavDCacheRangeReader(
-                self._client, self._url, self._filesize, self._blocksize, self._log
-            )
-        else:
-            # Use a generic range reader
-            self._range_reader = DavRangeReader(
-                self._client, self._url, self._filesize, self._blocksize, self._log
-            )
-
-    def geturl(self) -> str:
-        return redact_url(self._url)
-
-    def fetch(self, start: int, end: int) -> bytes:
-        """Fetch a chunk of the file and store it in memory.
-
-        Parameters
-        ----------
-        start : `int`
-            Position of the first byte of the chunk.
-        end : `int`
-            Position of the last byte of the chunk.
-
-        Returns
-        -------
-        output: `bytes`
-            A chunk of up to end-start bytes. The returned chunk is
-            served directly from the in-memory buffer without fetching new
-            data from the remote file if it is already cached. Otherwise,
-            a new chunk is retrieved from the origin file server and cached
-            in memory. The size of the chunk can be the configured block
-            size for this particular kind of resource path or the remaining
-            bytes in the file.
-        """
-        self._log.debug(
-            "DavReadAheadCache.fetch: %s start=%d end=%d [total: %d]",
-            self.geturl(),
-            start,
-            end,
-            end - start,
-        )
-        start = max(0, start)
-        end = min(end, self._filesize)
-        if start >= self._filesize or start >= end:
-            return b""
-
-        if start >= self._start and end <= self._end:
-            # The requested chunk is entirely cached
-            return self._cache[start - self._start : end - self._start]
-
-        # The requested chunk is not fully in cache. Repopulate the cache
-        # with a number of blocks large enough to satisfy the requested chunk.
-        blocks_to_fetch = 1 + ((end - start) // self._blocksize)
-        bytes_to_fetch = self._blocksize * blocks_to_fetch
-        end_range = min(self._filesize, start + bytes_to_fetch)
-        start_range = max(0, end_range - bytes_to_fetch)
-
-        self._log.debug(
-            "populating handle cache for %s with %d blocks [%d - %d, total bytes: %d]",
-            self.geturl(),
-            blocks_to_fetch,
-            start_range,
-            end_range,
-            end_range - start_range,
-        )
-
-        # Read the requested range.
-        self._cache = self._range_reader.read_range(start_range=start_range, end_range=end_range - 1)
-        self._start = start_range
-        self._end = self._start + len(self._cache)
-        return self._cache[start - self._start : end - self._start]
-
-    def close(self) -> None:
-        self._range_reader.close()
-
-
 class DavRangeReader:
     """Helper reader of partial content of remote files.
 
@@ -330,8 +231,6 @@ class DavRangeReader:
         The webDAV client to interact with the server to download data.
     url : `str`
         URL of the resource to download data from.
-    filesize : `int`
-        Size in bytes of the remote file.
     blocksize : `int`
         Size in bytes of the block for this resource. This is the size we use
         to retrieve data from this resource.
@@ -339,15 +238,16 @@ class DavRangeReader:
         Logger object to emit log records.
     """
 
-    def __init__(
-        self, client: DavClient, url: str, filesize: int, blocksize: int, log: logging.Logger
-    ) -> None:
+    def __init__(self, client: DavClient, url: str, blocksize: int, log: logging.Logger) -> None:
         self._client: DavClient = client
         self._frontend_url: str = url
         self._backend_url: str = url
-        self._filesize: int = filesize
         self._blocksize: int = blocksize
         self._log = log
+        self._cache = b""
+        self._cache_start: int = 0
+        self._cache_end: int = 0
+        self._filesize: int = -1  # Lazily initialized
 
     def __del__(self) -> None:
         self.close()
@@ -366,13 +266,79 @@ class DavRangeReader:
         # again.
         pass
 
-    def read_range(self, start_range: int, end_range: int) -> bytes:
-        # No need to send a request if the file is empty.
-        if self._filesize == 0:
+    def geturl(self) -> str:
+        return redact_url(self._backend_url)
+
+    @property
+    def filesize(self) -> int:
+        if self._filesize >= 0:
+            return self._filesize
+
+        self._filesize = self._get_file_size()
+        return self._filesize
+
+    def read_range(self, range_start: int, range_end: int) -> bytes:
+        """Fetch a chunk of the file and store it in memory.
+
+        Parameters
+        ----------
+        range_start : `int`
+            Position of the first byte of the chunk.
+        range_end : `int`
+            Position of the last byte of the chunk.
+
+        Returns
+        -------
+        output: `bytes`
+            A chunk of up to end-start bytes. The returned chunk is
+            served directly from the in-memory buffer without fetching new
+            data from the remote file if it is already cached. Otherwise,
+            a new chunk is retrieved from the origin file server and cached
+            in memory. The size of the chunk can be the configured block
+            size for this particular kind of resource path or the remaining
+            bytes in the file.
+        """
+        self._log.debug(
+            "DavRangeReader.read_range: %s range_start=%d range_end=%d [total: %d]",
+            self.geturl(),
+            range_start,
+            range_end,
+            range_end - range_start,
+        )
+        range_start = max(0, range_start)
+        range_end = min(self._filesize, range_end)
+        if range_start >= self._filesize or range_start > range_end:
             return b""
 
-        # Use the WebDAV client to send a GET request with a Range header and
-        # save the returned backend URL so that subsequent requests can
+        if range_start >= self._cache_start and range_end <= self._cache_end:
+            # The requested chunk is entirely cached.
+            return self._cache[range_start - self._cache_start : range_end - self._cache_start]
+
+        # The requested chunk is not fully in cache. Repopulate the cache
+        # with a number of blocks large enough to include the requested chunk.
+        blocks_to_fetch = 1 + ((range_end - range_start) // self._blocksize)
+        bytes_to_fetch = self._blocksize * blocks_to_fetch
+        end_fetch = min(self._filesize, range_start + bytes_to_fetch)
+        start_fetch = max(0, end_fetch - bytes_to_fetch)
+
+        self._log.debug(
+            "populating read-ahead cache for handle of %s with %d blocks [%d - %d, total bytes: %d]",
+            self.geturl(),
+            blocks_to_fetch,
+            start_fetch,
+            end_fetch,
+            end_fetch - start_fetch,
+        )
+
+        # Get the requested range from the remote server.
+        self._cache = self._get_range(range_start=start_fetch, range_end=end_fetch - 1)
+        self._cache_start = start_fetch
+        self._cache_end = self._cache_start + len(self._cache)
+        return self._cache[range_start - self._cache_start : range_end - self._cache_start]
+
+    def _get_range(self, range_start: int, range_end: int) -> bytes:
+        # Use the WebDAV client to send a 'GET' request with a 'Range' header
+        # and save the returned backend URL so that subsequent requests can
         # go directly to that server.
         #
         # This is beneficial when we are interacting with a XRootD server
@@ -382,11 +348,15 @@ class DavRangeReader:
         self._log.debug(
             "reading range of file at %s: start=%d end=%d",
             redact_url(self._backend_url),
-            start_range,
-            end_range,
+            range_start,
+            range_end,
         )
-        self._backend_url, body = self._client.read_range(self._backend_url, start=start_range, end=end_range)
+        self._backend_url, body = self._client.read_range(self._backend_url, start=range_start, end=range_end)
         return body
+
+    def _get_file_size(self) -> int:
+        # Retrieve the size of this file from the remote server.
+        return self._client.size(self._backend_url)
 
 
 class DavDCacheRangeReader(DavRangeReader):
@@ -403,7 +373,7 @@ class DavDCacheRangeReader(DavRangeReader):
 
     # The important aspect of this behavior is that we choose not to directly
     # use the `DavClient` object to make those `GET` requests as the generic
-    # DavRangeReader does, for two reasons.
+    # `DavRangeReader`` does, for two reasons.
     #
     # First, each of those requests would go first to the front end server
     # which would respond with a redirection to the back end server. That puts
@@ -426,10 +396,8 @@ class DavDCacheRangeReader(DavRangeReader):
     # is valid, otherwise it redirects the client to the door.
     MAX_REDIRECTS: int = 3
 
-    def __init__(
-        self, client: DavClient, url: str, filesize: int, blocksize: int, log: logging.Logger
-    ) -> None:
-        super().__init__(client=client, url=url, filesize=filesize, blocksize=blocksize, log=log)
+    def __init__(self, client: DavClient, url: str, blocksize: int, log: logging.Logger) -> None:
+        super().__init__(client=client, url=url, blocksize=blocksize, log=log)
         self._conn: http.client.HTTPConnection | None = None
         self._scheme: str
         self._host: str
@@ -489,21 +457,60 @@ class DavDCacheRangeReader(DavRangeReader):
     def close(self) -> None:
         if self._conn is not None:
             try:
-                # Send a "HEAD" request with "Connection: close" header
-                # to notify the back end server we are no longer sending
-                # requests
-                resp = self._request("HEAD", headers={"Connection": "close"})
-                resp.read()
-            finally:
                 self._log.debug(f"closing connection to {self.geturl()}")
                 self._conn.close()
+            finally:
                 self._conn = None
+
+    @override
+    def _get_file_size(self) -> int:
+        # Send a HEAD request to the dCache pool to retrieve this file size.
+        #
+        # This is preferred to send the same HEAD request to the dCache door
+        # because retrieving the size from the pool reduces the load on the
+        # door when there are thousands of simultaneous clients openting
+        # read handles.
+        retry_policy = self._client._make_retry_policy()
+        for attempt in retry_policy:
+            resp = self._request("HEAD")
+            resp.read()  # Read and discard response body
+            match resp.status:
+                case HTTPStatus.OK:
+                    content_length = resp.getheader("Content-Length")
+                    if content_length is not None:
+                        return int(content_length)
+                    else:
+                        self._log.warning(
+                            "Missing 'Content-Length' header in response to HEAD %s", self.geturl()
+                        )
+                case HTTPStatus.NOT_FOUND:
+                    raise FileNotFoundError(f"No file found at {self._frontend_url}")
+                case _:
+                    # This is an unexpected status code. Retry the request.
+                    self._log.warning(
+                        "Unexpected response status %d %s to request HEAD %s [attempt %d/%d]",
+                        resp.status,
+                        resp.reason,
+                        self.geturl(),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+
+            # Wait and retry this request.
+            retry_policy.wait()
+            self._log.warning("Retrying request HEAD %s", self.geturl())
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not get a satisfactory response to request HEAD {self.geturl()} """
+            f"""after {retry_policy.max_attempts} attempts"""
+        )
 
     def _request(self, method: str, headers: dict | None = None) -> http.client.HTTPResponse:
         # If not already done, establish the connection to the back end server.
         if self._conn is None:
             self._reset_connection()
-            self._log.debug(f"connection was reset to {self.geturl()}")
+            self._log.debug(f"establishing connection for {self.geturl()}")
 
         headers = {} if headers is None else dict(headers)
         headers.update({"Host": self._host})
@@ -548,25 +555,18 @@ class DavDCacheRangeReader(DavRangeReader):
         )
 
     @override
-    def read_range(self, start_range: int, end_range: int) -> bytes:
-        # No need to send a request if the file is empty.
-        if self._filesize == 0:
-            return b""
-
-        start_range = max(0, start_range)
-        end_range = min(self._filesize, end_range)
-        headers = {
-            "Accept-Encoding": "identity",
-            "Range": f"bytes={start_range}-{end_range}",
-        }
-
+    def _get_range(self, range_start: int, range_end: int) -> bytes:
         self._log.debug(
-            "Reading range of file at %s: start=%d end=%d",
+            "reading range of file at %s: start=%d end=%d",
             self.geturl(),
-            start_range,
-            end_range,
+            range_start,
+            range_end,
         )
 
+        headers = {
+            "Accept-Encoding": "identity",
+            "Range": f"bytes={range_start}-{range_end}",
+        }
         retry_policy = self._client._make_retry_policy()
         for attempt in retry_policy:
             resp = self._request("GET", headers=headers)
@@ -576,11 +576,13 @@ class DavDCacheRangeReader(DavRangeReader):
                     # with value `None` is a signal that we need to retry the
                     # request since the response we obtained is not
                     # as expected.
-                    body = self._read_response_body(resp, self._filesize, start_range, end_range)
+                    body = self._read_response_body(resp, self._filesize, range_start, range_end)
                     if body is not None:
                         return body
                 case _:
-                    # This is an unexpected status code. Retry the request.
+                    # This is an unexpected status code. Discard the
+                    # response body and retry the request.
+                    resp.read()
                     self._log.warning(
                         """Unexpected response status %d %s to request GET %s (with header 'Range: %s') """
                         """[attempt %d/%d]""",
@@ -607,7 +609,7 @@ class DavDCacheRangeReader(DavRangeReader):
         )
 
     def _read_response_body(
-        self, resp: http.client.HTTPResponse, file_size: int, start_range: int, end_range: int
+        self, resp: http.client.HTTPResponse, file_size: int, range_start: int, range_end: int
     ) -> bytes | None:
         # Download the response body.
         body = resp.read()
@@ -615,8 +617,8 @@ class DavDCacheRangeReader(DavRangeReader):
 
         # Check that we got response header `Content-Range` and that it has
         # the expected value.
-        request_range_header = f"Range: bytes={start_range}-{end_range}"
-        expected_content_range = f"bytes {start_range}-{end_range}/{file_size}"
+        request_range_header = f"Range: bytes={range_start}-{range_end}"
+        expected_content_range = f"bytes {range_start}-{range_end}/{file_size}"
         if (content_range := resp.getheader("Content-Range")) is None:
             self._log.warning(
                 "Expected 'Content-Range' header in response to GET %s (with header '%s') is missing",
@@ -646,7 +648,7 @@ class DavDCacheRangeReader(DavRangeReader):
             )
             return None
 
-        expected_content_length = f"{end_range - start_range + 1}"
+        expected_content_length = f"{range_end - range_start + 1}"
         if expected_content_length != content_length:
             self._log.warning(
                 """Unexpected value of 'Content-Length' header in response to request GET %s """
