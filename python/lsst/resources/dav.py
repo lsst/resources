@@ -17,7 +17,6 @@ import contextlib
 import datetime
 import functools
 import io
-import logging
 import os
 import re
 import sys
@@ -517,7 +516,7 @@ class DavResourcePath(ResourcePath):
             streams will be disabled.
         """
         log.debug(
-            "transfer_from %s [%#x] src=%s transfer=%s overwrite=%s",
+            "transfer_from: Transferring %s [%#x] from src=%s transfer=%s overwrite=%s",
             self,
             id(self),
             src,
@@ -528,20 +527,8 @@ class DavResourcePath(ResourcePath):
         # Fail early to prevent delays if remote resources are requested.
         if transfer not in self.transferModes:
             raise ValueError(f"Transfer mode {transfer} not supported by URI scheme {self.scheme}")
-
-        # Existence checks cost time so do not call this unless we know
-        # that debugging is enabled.
-        destination_exists = None
-        if log.isEnabledFor(logging.DEBUG):
-            destination_exists = self.exists()
-            log.debug(
-                "Transferring %s [exists: %s] -> %s [exists: %s] (transfer=%s)",
-                src.geturl(),
-                src.exists(),
-                self,
-                destination_exists,
-                transfer,
-            )
+        elif transfer == "auto":
+            transfer = self.transferDefault
 
         # Short circuit immediately if the URIs are identical.
         if self == src:
@@ -552,15 +539,9 @@ class DavResourcePath(ResourcePath):
             )
             return
 
-        if not overwrite:
-            if destination_exists is None:
-                destination_exists = self.exists()
-
-            if destination_exists:
-                raise FileExistsError(f"Destination path {self} already exists.")
-
-        if transfer == "auto":
-            transfer = self.transferDefault
+        # If we were asked to not overwrite, check if the destination exists.
+        if not overwrite and self.exists():
+            raise FileExistsError(f"Destination path {self} already exists.")
 
         # We can use webDAV 'COPY' or 'MOVE' if both the current and source
         # resources are located in the same server.
