@@ -1257,6 +1257,45 @@ class SessionStoreTestCase(unittest.TestCase):
         for u in (f"{root_url_with_port}", f"{root_url_with_port}/path/to/file"):
             self.assertEqual(session, store.get(ResourcePath(u)))
 
+    def test_connection_pool_configuration(self):
+        """Ensure front-end and back-end HTTPAdapters use configured pool
+        sizes.
+        """
+        root_url = "https://example.org"
+        rpath = ResourcePath(f"{root_url}/path/to/file")
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": "3",
+                "LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "7",
+            },
+            clear=True,
+        ):
+            config = HttpResourcePathConfig()
+            store = SessionStore(
+                config=config,
+                num_pools=25,
+                max_persistent_connections=config.back_end_connections,
+            )
+            session = store.get(rpath)
+            front_adapter = session.get_adapter(f"{root_url}/path/to/file")
+            back_adapter = session.get_adapter("https://backend.example.org/data/file")
+            self.assertEqual(front_adapter._pool_maxsize, 3)
+            self.assertEqual(back_adapter._pool_maxsize, 7)
+
+    def test_session_wrapper_context_manager(self):
+        """Ensure using data_session or metadata_session as a context manager
+        does not close the underlying cached requests.Session.
+        """
+        rpath = ResourcePath("https://example.org/path/to/file")
+        with unittest.mock.patch.object(
+            rpath.data_session._session, "close", wraps=rpath.data_session._session.close
+        ) as mock_close:
+            with rpath.data_session as session:
+                self.assertIsNotNone(session)
+            mock_close.assert_not_called()
+        rpath._clear_sessions()
+
 
 class TestContentRange(unittest.TestCase):
     """Test parsing of Content-Range header."""

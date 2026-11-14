@@ -655,21 +655,18 @@ class SessionStore:
             root_uri,
             HTTPAdapter(
                 pool_connections=self._num_pools,
-                pool_maxsize=self._max_persistent_connections,
+                pool_maxsize=self._config.front_end_connections,
                 pool_block=False,
                 max_retries=retries,
             ),
         )
 
-        # Do not persist the connections to back end servers which may vary
-        # from request to request. Systematically persisting connections to
-        # those servers may exhaust their capabilities when there are thousands
-        # of simultaneous clients.
+        # Persist the configured number of connections to back end servers.
         session.mount(
             f"{rpath.scheme}://",
             HTTPAdapter(
                 pool_connections=self._num_pools,
-                pool_maxsize=0,
+                pool_maxsize=self._max_persistent_connections,
                 pool_block=False,
                 max_retries=retries,
             ),
@@ -986,7 +983,23 @@ class HttpResourcePath(ResourcePath):
 
         This is an internal method mainly intended for tests.
         """
+        HttpResourcePath._metadata_session_store.clear()
+        HttpResourcePath._data_session_store.clear()
         HttpResourcePath._config = HttpResourcePathConfig()
+        HttpResourcePath._metadata_session_store = SessionStore(
+            config=HttpResourcePath._config,
+            num_pools=5,
+            max_persistent_connections=HttpResourcePath._config.front_end_connections,
+            backoff_min=HttpResourcePath._config.backoff_min,
+            backoff_max=HttpResourcePath._config.backoff_max,
+        )
+        HttpResourcePath._data_session_store = SessionStore(
+            config=HttpResourcePath._config,
+            num_pools=25,
+            max_persistent_connections=HttpResourcePath._config.back_end_connections,
+            backoff_min=HttpResourcePath._config.backoff_min,
+            backoff_max=HttpResourcePath._config.backoff_max,
+        )
 
     def exists(self) -> bool:
         """Check that a remote HTTP resource exists."""
@@ -1197,23 +1210,21 @@ class HttpResourcePath(ResourcePath):
             The number of bytes to read. Negative or omitted indicates
             that all data should be read.
         """
-        # Use the data session as a context manager to ensure that the
-        # network connections to both the front end and back end servers are
-        # closed after downloading the data.
+        # Use the response as a context manager to ensure that streaming
+        # responses release their connection back to the pool once read.
         log.debug("Reading from remote resource: %s", self.geturl())
         stream = size > 0
         with self.data_session as session:
             with time_this(log, msg="GET %s", args=(self,)):
-                resp = session.get(self.geturl(), stream=stream, timeout=self._config.timeout)
-
-            if resp.status_code != requests.codes.ok:  # 200
-                raise FileNotFoundError(
-                    f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
-                )
-            if not stream:
-                return resp.content
-            else:
-                return next(resp.iter_content(chunk_size=size))
+                with session.get(self.geturl(), stream=stream, timeout=self._config.timeout) as resp:
+                    if resp.status_code != requests.codes.ok:  # 200
+                        raise FileNotFoundError(
+                            f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
+                        )
+                    if not stream:
+                        return resp.content
+                    else:
+                        return next(resp.iter_content(chunk_size=size))
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
         """Write the supplied bytes to the new resource.
@@ -1591,16 +1602,10 @@ class HttpResourcePath(ResourcePath):
             A URI to a local POSIX file corresponding to a local temporary
             downloaded copy of the resource.
         """
-        # Use the session as a context manager to ensure that connections
-        # to both the front end and back end servers are closed after the
-        # download operation is finished.
+        # Use the response as a context manager to ensure that the streaming
+        # connection is released back to the pool as soon as the download
+        # operation is finished.
         with self.data_session as session:
-            resp = session.get(self.geturl(), stream=True, timeout=self._config.timeout)
-            if resp.status_code != requests.codes.ok:
-                raise FileNotFoundError(
-                    f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
-                )
-
             if tmpdir is None:
                 temp_dir, buffer_size = self._config.tmpdir_buffersize
                 tmpdir = ResourcePath(temp_dir, forceDirectory=True)
@@ -1610,32 +1615,38 @@ class HttpResourcePath(ResourcePath):
             with ResourcePath.temporary_uri(
                 suffix=self.getExtension(), prefix=tmpdir, delete=True
             ) as tmp_uri:
-                expected_length = int(resp.headers.get("Content-Length", "-1"))
-                with time_this(
-                    log,
-                    msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
-                    args=(self, expected_length, tmp_uri, buffer_size),
-                    mem_usage=self._config.collect_memory_usage,
-                    mem_unit=u.mebibyte,
-                ):
-                    content_length = 0
-                    with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
-                        for chunk in resp.iter_content(chunk_size=buffer_size):
-                            tmpFile.write(chunk)
-                            content_length += len(chunk)
+                with session.get(self.geturl(), stream=True, timeout=self._config.timeout) as resp:
+                    if resp.status_code != requests.codes.ok:
+                        raise FileNotFoundError(
+                            f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
+                        )
 
-                # Check that the expected and actual content lengths match.
-                # Perform this check only when the contents of the file was not
-                # encoded by the server.
-                if (
-                    "Content-Encoding" not in resp.headers
-                    and expected_length >= 0
-                    and expected_length != content_length
-                ):
-                    raise ValueError(
-                        f"Size of downloaded file does not match value in Content-Length header for {self}: "
-                        f"expecting {expected_length} and got {content_length} bytes"
-                    )
+                    expected_length = int(resp.headers.get("Content-Length", "-1"))
+                    with time_this(
+                        log,
+                        msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
+                        args=(self, expected_length, tmp_uri, buffer_size),
+                        mem_usage=self._config.collect_memory_usage,
+                        mem_unit=u.mebibyte,
+                    ):
+                        content_length = 0
+                        with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
+                            for chunk in resp.iter_content(chunk_size=buffer_size):
+                                tmpFile.write(chunk)
+                                content_length += len(chunk)
+
+                    # Check that the expected and actual content lengths match.
+                    # Perform this check only when the contents of the file
+                    # was not encoded by the server.
+                    if (
+                        "Content-Encoding" not in resp.headers
+                        and expected_length >= 0
+                        and expected_length != content_length
+                    ):
+                        raise ValueError(
+                            "Size of downloaded file does not match value in Content-Length header "
+                            f"for {self}: expecting {expected_length} and got {content_length} bytes"
+                        )
 
                 yield tmp_uri
 
@@ -2343,7 +2354,6 @@ class _SessionWrapper(contextlib.AbstractContextManager):
         self._extra_headers = extra_headers
 
     def __enter__(self) -> _SessionWrapper:
-        self._session.__enter__()
         return self
 
     def __exit__(
@@ -2352,7 +2362,7 @@ class _SessionWrapper(contextlib.AbstractContextManager):
         exc_value: Any,
         traceback: Any,
     ) -> None:
-        return self._session.__exit__(exc_type, exc_value, traceback)
+        return None
 
     def get(
         self,
