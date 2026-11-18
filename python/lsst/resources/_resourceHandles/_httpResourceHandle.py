@@ -75,6 +75,7 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     ) -> None:
         super().__init__(mode, log, uri, newline=newline)
         self._url = uri.geturl()
+        self._backend_url = _dav_to_http(self._url)
         self._session = uri.data_session
 
         if timeout is None:
@@ -195,12 +196,21 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         headers = {"Range": f"bytes={self._current_position}-{end_pos}", "Accept-Encoding": "identity"}
 
         with time_this(
-            self._log, msg="Read from remote resource %s using headers %s", args=(self._url, headers)
+            self._log,
+            msg="Read from remote resource %s using headers %s",
+            args=(self._backend_url, headers),
         ):
             with self._session as session:
                 resp = session.get(
-                    _dav_to_http(self._url), stream=False, timeout=self._timeout, headers=headers
+                    self._backend_url, stream=False, timeout=self._timeout, headers=headers
                 )
+
+        if (
+            resp.status_code == requests.codes.partial
+            and resp.url
+            and getattr(self._uri, "_server", None) != "dcache"
+        ):
+            self._backend_url = resp.url
 
         if resp.status_code == requests.codes.range_not_satisfiable:
             # Must have run off the end of the file. A standard file handle

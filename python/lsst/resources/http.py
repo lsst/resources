@@ -406,7 +406,7 @@ class HttpResourcePathConfig:
     @property
     def ssl_context(self) -> ssl.SSLContext:
         """Return an SSL context equiped with the certificates of the trusted
-        authorities.
+        authorities and client credentials, if configured.
         """
         if self._ssl_context is None:
             self._ssl_context = ssl.create_default_context()
@@ -415,6 +415,10 @@ class HttpResourcePathConfig:
                     self._ssl_context.load_verify_locations(capath=self.ca_bundle)
                 elif os.path.isfile(self.ca_bundle):
                     self._ssl_context.load_verify_locations(cafile=self.ca_bundle)
+            if self.client_token is None:
+                client_cert, client_key = self.client_cert_key
+                if client_cert and client_key:
+                    self._ssl_context.load_cert_chain(certfile=client_cert, keyfile=client_key)
 
         return self._ssl_context
 
@@ -511,6 +515,29 @@ class BearerTokenAuth(AuthBase):
             self._refresh()
             r.headers["Authorization"] = f"Bearer {self._token}"
         return r
+
+
+class _TLSHTTPAdapter(HTTPAdapter):
+    """An HTTPAdapter that reuses a shared `ssl.SSLContext` across all
+    connection pools and avoids per-request certificate file stat calls.
+    """
+
+    def __init__(
+        self, *args: Any, config: HttpResourcePathConfig | None = None, **kwargs: Any
+    ) -> None:
+        self._lsst_config = config
+        super().__init__(*args, **kwargs)
+
+    def cert_verify(self, conn: Any, url: str, verify: bool | str, cert: Any) -> None:
+        if self._lsst_config is not None and url.lower().startswith("https") and verify:
+            conn.ssl_context = self._lsst_config.ssl_context
+            conn.cert_reqs = "CERT_REQUIRED"
+            conn.ca_certs = None
+            conn.ca_cert_dir = None
+            conn.cert_file = None
+            conn.key_file = None
+            return
+        super().cert_verify(conn, url, verify, cert)
 
 
 class SessionStore:
@@ -653,22 +680,24 @@ class SessionStore:
         # Persist the specified number of connections to the front end server.
         session.mount(
             root_uri,
-            HTTPAdapter(
+            _TLSHTTPAdapter(
                 pool_connections=self._num_pools,
                 pool_maxsize=self._config.front_end_connections,
                 pool_block=False,
                 max_retries=retries,
+                config=self._config,
             ),
         )
 
         # Persist the configured number of connections to back end servers.
         session.mount(
             f"{rpath.scheme}://",
-            HTTPAdapter(
+            _TLSHTTPAdapter(
                 pool_connections=self._num_pools,
                 pool_maxsize=self._max_persistent_connections,
                 pool_block=False,
                 max_retries=retries,
+                config=self._config,
             ),
         )
 
@@ -822,7 +851,7 @@ class HttpResourcePath(ResourcePath):
     # associated to TCP and TLS handshaking for each new request.
     _metadata_session_store = SessionStore(
         config=_config,
-        num_pools=5,
+        num_pools=200,
         max_persistent_connections=_config.front_end_connections,
         backoff_min=_config.backoff_min,
         backoff_max=_config.backoff_max,
@@ -837,7 +866,7 @@ class HttpResourcePath(ResourcePath):
     # request.
     _data_session_store = SessionStore(
         config=_config,
-        num_pools=25,
+        num_pools=200,
         max_persistent_connections=_config.back_end_connections,
         backoff_min=_config.backoff_min,
         backoff_max=_config.backoff_max,
@@ -988,14 +1017,14 @@ class HttpResourcePath(ResourcePath):
         HttpResourcePath._config = HttpResourcePathConfig()
         HttpResourcePath._metadata_session_store = SessionStore(
             config=HttpResourcePath._config,
-            num_pools=5,
+            num_pools=200,
             max_persistent_connections=HttpResourcePath._config.front_end_connections,
             backoff_min=HttpResourcePath._config.backoff_min,
             backoff_max=HttpResourcePath._config.backoff_max,
         )
         HttpResourcePath._data_session_store = SessionStore(
             config=HttpResourcePath._config,
-            num_pools=25,
+            num_pools=200,
             max_persistent_connections=HttpResourcePath._config.back_end_connections,
             backoff_min=HttpResourcePath._config.backoff_min,
             backoff_max=HttpResourcePath._config.backoff_max,
@@ -1630,7 +1659,7 @@ class HttpResourcePath(ResourcePath):
                         mem_unit=u.mebibyte,
                     ):
                         content_length = 0
-                        with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
+                        with open(tmp_uri.ospath, "wb", buffering=0) as tmpFile:
                             for chunk in resp.iter_content(chunk_size=buffer_size):
                                 tmpFile.write(chunk)
                                 content_length += len(chunk)
