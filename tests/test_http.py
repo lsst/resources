@@ -1297,8 +1297,8 @@ class SessionStoreTestCase(unittest.TestCase):
         rpath._clear_sessions()
 
     def test_tls_adapter_reuses_ssl_context(self):
-        """Ensure front-end and back-end HTTPAdapters share config.ssl_context
-        without re-loading certificates on every request.
+        """Ensure front-end and back-end HTTPAdapters share a cached SSLContext
+        and propagate it via HTTPSConnectionPool.conn_kw.
         """
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             config = HttpResourcePathConfig()
@@ -1306,15 +1306,17 @@ class SessionStoreTestCase(unittest.TestCase):
             session = store.get(self.rpath)
             front_adapter = session.get_adapter("https://example.org/path")
             back_adapter = session.get_adapter("https://backend.example.org/path")
-            conn = unittest.mock.MagicMock()
-            front_adapter.cert_verify(conn, "https://example.org/path", True, None)
-            self.assertIs(conn.ssl_context, config.ssl_context)
-            self.assertEqual(conn.cert_reqs, "CERT_REQUIRED")
-            self.assertIsNone(conn.ca_certs)
-            self.assertIsNone(conn.cert_file)
-            conn2 = unittest.mock.MagicMock()
-            back_adapter.cert_verify(conn2, "https://backend.example.org/path", True, None)
-            self.assertIs(conn2.ssl_context, config.ssl_context)
+            pool1 = front_adapter.get_connection("https://example.org/path")
+            front_adapter.cert_verify(pool1, "https://example.org/path", True, None)
+            ctx1 = pool1._new_conn().ssl_context
+            self.assertIsNotNone(ctx1)
+            self.assertEqual(pool1.cert_reqs, "CERT_REQUIRED")
+            self.assertIsNone(pool1.ca_certs)
+            self.assertIsNone(pool1.cert_file)
+            pool2 = back_adapter.get_connection("https://backend.example.org/path")
+            back_adapter.cert_verify(pool2, "https://backend.example.org/path", True, None)
+            ctx2 = pool2._new_conn().ssl_context
+            self.assertIs(ctx1, ctx2)
 
 
 class TestContentRange(unittest.TestCase):

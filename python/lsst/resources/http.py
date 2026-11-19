@@ -67,6 +67,7 @@ from astropy import units as u
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 from urllib3.util.retry import Retry
+from urllib3.util.ssl_ import create_urllib3_context
 
 from lsst.utils.timer import time_this
 
@@ -165,6 +166,7 @@ class HttpResourcePathConfig:
         self._client_key: str | None = ""
         self._tmpdir_buffersize: tuple[str, int] | None = None
         self._ssl_context: ssl.SSLContext | None = None
+        self._adapter_ssl_contexts: dict[tuple[Any, Any], ssl.SSLContext] = {}
 
     @property
     def front_end_connections(self) -> int:
@@ -526,18 +528,42 @@ class _TLSHTTPAdapter(HTTPAdapter):
         self, *args: Any, config: HttpResourcePathConfig | None = None, **kwargs: Any
     ) -> None:
         self._lsst_config = config
+        self._ssl_contexts: dict[tuple[Any, Any], ssl.SSLContext] = (
+            config._adapter_ssl_contexts if config is not None else {}
+        )
         super().__init__(*args, **kwargs)
 
     def cert_verify(self, conn: Any, url: str, verify: bool | str, cert: Any) -> None:
-        if self._lsst_config is not None and url.lower().startswith("https") and verify:
-            conn.ssl_context = self._lsst_config.ssl_context
-            conn.cert_reqs = "CERT_REQUIRED"
-            conn.ca_certs = None
-            conn.ca_cert_dir = None
-            conn.cert_file = None
-            conn.key_file = None
+        if not url.lower().startswith("https") or not verify:
+            conn.conn_kw.pop("ssl_context", None)
+            super().cert_verify(conn, url, verify, cert)
             return
-        super().cert_verify(conn, url, verify, cert)
+
+        cache_key = (verify, cert)
+        ssl_context = self._ssl_contexts.get(cache_key)
+        if ssl_context is None:
+            super().cert_verify(conn, url, verify, cert)
+            ssl_context = create_urllib3_context()
+            if conn.ca_certs or conn.ca_cert_dir:
+                ssl_context.load_verify_locations(
+                    cafile=conn.ca_certs,
+                    capath=conn.ca_cert_dir,
+                )
+            elif hasattr(ssl_context, "load_default_certs"):
+                ssl_context.load_default_certs()
+            if conn.cert_file:
+                ssl_context.load_cert_chain(
+                    certfile=conn.cert_file,
+                    keyfile=conn.key_file,
+                )
+            self._ssl_contexts[cache_key] = ssl_context
+
+        conn.conn_kw["ssl_context"] = ssl_context
+        conn.cert_reqs = "CERT_REQUIRED"
+        conn.ca_certs = None
+        conn.ca_cert_dir = None
+        conn.cert_file = None
+        conn.key_file = None
 
 
 class SessionStore:
