@@ -1870,11 +1870,16 @@ class HttpResourcePath(ResourcePath):
                         mem_usage=self._config.collect_memory_usage,
                         mem_unit=u.mebibyte,
                     ):
-                        content_length = 0
-                        with open(tmp_uri.ospath, "wb", buffering=0) as tmpFile:
-                            for chunk in resp.iter_content(chunk_size=buffer_size):
-                                tmpFile.write(chunk)
-                                content_length += len(chunk)
+                        with open(tmp_uri.ospath, "wb", buffering=64 * 1024) as tmpFile:
+                            if 0 <= expected_length <= buffer_size:
+                                content = resp.content
+                                tmpFile.write(content)
+                                content_length = len(content)
+                            else:
+                                content_length = 0
+                                for chunk in resp.iter_content(chunk_size=buffer_size):
+                                    tmpFile.write(chunk)
+                                    content_length += len(chunk)
                     _worker_diag.as_local_calls += 1
                     _worker_diag.as_local_get_ms += t_get_ms
                     _worker_diag.as_local_write_ms += (time.perf_counter() - t_wr0) * 1000.0
