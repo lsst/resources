@@ -21,12 +21,15 @@ import io
 import json
 import logging
 import math
+import multiprocessing
 import os
 import os.path
 import random
 import re
 import ssl
 import stat
+import sys
+import time
 from collections.abc import Generator, Iterator
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
@@ -519,21 +522,159 @@ class BearerTokenAuth(AuthBase):
         return r
 
 
+class _HttpWorkerDiag:
+    """Per-process HTTP diagnostic tracker for worker processes."""
+
+    def __init__(self) -> None:
+        self.pid: int = os.getpid()
+        self.proc_name: str = multiprocessing.current_process().name
+        self.start_time: float = time.perf_counter()
+        self.last_report_time: float = self.start_time
+        self.total_reqs: int = 0
+        self.fe_reqs: int = 0
+        self.be_reqs: int = 0
+        self.fe_new_conn: int = 0
+        self.fe_reuse_conn: int = 0
+        self.fe_new_ms: float = 0.0
+        self.fe_reuse_ms: float = 0.0
+        self.be_new_conn: int = 0
+        self.be_reuse_conn: int = 0
+        self.be_new_ms: float = 0.0
+        self.be_reuse_ms: float = 0.0
+        self.status_counts: dict[int, int] = {}
+        self.be_hosts: set[str] = set()
+        self.be_active_pools: int = 0
+        self.fe_qsize: int = 0
+        self.read_calls: int = 0
+        self.read_ms: float = 0.0
+        self.as_local_calls: int = 0
+        self.as_local_get_ms: float = 0.0
+        self.as_local_write_ms: float = 0.0
+        self.as_local_buf_size: int = 0
+        self.webdav_calls: dict[str, int] = {}
+        self.webdav_ms: float = 0.0
+
+    def is_enabled(self) -> bool:
+        env = os.environ.get("LSST_HTTP_DIAG")
+        if env is not None:
+            return env != "0"
+        return "pytest" not in sys.modules
+
+    def check_pid(self) -> None:
+        cur_pid = os.getpid()
+        if cur_pid != self.pid:
+            self.__init__()
+
+    def record_send(
+        self,
+        role: str,
+        method: str,
+        host: str,
+        port: int | None,
+        status_code: int,
+        new_conns: int,
+        pool_conns: int,
+        pool_reqs: int,
+        pool_qsize: int,
+        total_pools: int,
+        dt_ms: float,
+    ) -> None:
+        if not self.is_enabled():
+            return
+        self.check_pid()
+        self.total_reqs += 1
+        self.status_counts[status_code] = self.status_counts.get(status_code, 0) + 1
+        host_port = f"{host}:{port}" if port else host
+        if role == "fe":
+            self.fe_reqs += 1
+            self.fe_qsize = pool_qsize
+            if new_conns > 0:
+                self.fe_new_conn += new_conns
+                self.fe_new_ms += dt_ms
+            else:
+                self.fe_reuse_conn += 1
+                self.fe_reuse_ms += dt_ms
+        else:
+            self.be_reqs += 1
+            self.be_hosts.add(host_port)
+            self.be_active_pools = total_pools
+            if new_conns > 0:
+                self.be_new_conn += new_conns
+                self.be_new_ms += dt_ms
+            else:
+                self.be_reuse_conn += 1
+                self.be_reuse_ms += dt_ms
+
+        trace_limit = 8 if self.proc_name in ("scanner-000", "MainProcess") else 2
+        if self.total_reqs <= trace_limit:
+            print(
+                f"[HTTP-TRACE pid={self.pid} proc={self.proc_name}] "
+                f"req={self.total_reqs} role={role} {method} {host_port} "
+                f"status={status_code} new_conn={new_conns} "
+                f"pool_conns={pool_conns} pool_reqs={pool_reqs} "
+                f"qsize={pool_qsize} pools={total_pools} dt={dt_ms:.1f}ms",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        now = time.perf_counter()
+        if self.total_reqs % 400 == 0 or (now - self.last_report_time >= 60.0 and self.total_reqs >= 20):
+            self.last_report_time = now
+            self.emit_summary(now)
+
+    def emit_summary(self, now: float) -> None:
+        uptime = now - self.start_time
+        fe_new_avg = self.fe_new_ms / self.fe_new_conn if self.fe_new_conn else 0.0
+        fe_reuse_avg = self.fe_reuse_ms / self.fe_reuse_conn if self.fe_reuse_conn else 0.0
+        be_new_avg = self.be_new_ms / self.be_new_conn if self.be_new_conn else 0.0
+        be_reuse_avg = self.be_reuse_ms / self.be_reuse_conn if self.be_reuse_conn else 0.0
+        read_avg = self.read_ms / self.read_calls if self.read_calls else 0.0
+        al_get_avg = self.as_local_get_ms / self.as_local_calls if self.as_local_calls else 0.0
+        al_wr_avg = self.as_local_write_ms / self.as_local_calls if self.as_local_calls else 0.0
+        print(
+            f"[HTTP-SUMMARY pid={self.pid} proc={self.proc_name} up={uptime:.1f}s] "
+            f"reqs={self.total_reqs} status={self.status_counts} | "
+            f"FE(new={self.fe_new_conn}@{fe_new_avg:.1f}ms "
+            f"reuse={self.fe_reuse_conn}@{fe_reuse_avg:.1f}ms q={self.fe_qsize}) | "
+            f"BE(new={self.be_new_conn}@{be_new_avg:.1f}ms "
+            f"reuse={self.be_reuse_conn}@{be_reuse_avg:.1f}ms "
+            f"pools={self.be_active_pools} hosts={len(self.be_hosts)}) | "
+            f"read(n={self.read_calls} avg={read_avg:.1f}ms) "
+            f"as_local(n={self.as_local_calls} get={al_get_avg:.1f}ms "
+            f"write={al_wr_avg:.1f}ms buf={self.as_local_buf_size}) "
+            f"dav={self.webdav_calls}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+_worker_diag = _HttpWorkerDiag()
+
+
 class _TLSHTTPAdapter(HTTPAdapter):
     """An HTTPAdapter that reuses a shared `ssl.SSLContext` across all
     connection pools and avoids per-request certificate file stat calls.
     """
 
     def __init__(
-        self, *args: Any, config: HttpResourcePathConfig | None = None, **kwargs: Any
+        self,
+        *args: Any,
+        config: HttpResourcePathConfig | None = None,
+        role: str = "be",
+        **kwargs: Any,
     ) -> None:
         self._lsst_config = config
+        self._role = role
+        self._last_pool: Any = None
+        self._last_conns_before: int = 0
         self._ssl_contexts: dict[tuple[Any, Any], ssl.SSLContext] = (
             config._adapter_ssl_contexts if config is not None else {}
         )
         super().__init__(*args, **kwargs)
 
     def cert_verify(self, conn: Any, url: str, verify: bool | str, cert: Any) -> None:
+        self._last_pool = conn
+        self._last_conns_before = getattr(conn, "num_connections", 0)
         if not url.lower().startswith("https") or not verify:
             conn.conn_kw.pop("ssl_context", None)
             super().cert_verify(conn, url, verify, cert)
@@ -564,6 +705,42 @@ class _TLSHTTPAdapter(HTTPAdapter):
         conn.ca_cert_dir = None
         conn.cert_file = None
         conn.key_file = None
+
+    def send(self, request: Any, *args: Any, **kwargs: Any) -> requests.Response:
+        t0 = time.perf_counter()
+        resp = super().send(request, *args, **kwargs)
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        pool = self._last_pool
+        if pool is not None:
+            pool_conns = getattr(pool, "num_connections", 0)
+            pool_reqs = getattr(pool, "num_requests", 0)
+            new_conns = max(0, pool_conns - self._last_conns_before)
+            pool_q = getattr(pool, "pool", None)
+            qsize = pool_q.qsize() if pool_q is not None else -1
+            host = getattr(pool, "host", "")
+            port = getattr(pool, "port", None)
+        else:
+            pool_conns = 0
+            pool_reqs = 0
+            new_conns = 0
+            qsize = -1
+            host = ""
+            port = None
+        total_pools = len(self.poolmanager.pools) if hasattr(self, "poolmanager") else 0
+        _worker_diag.record_send(
+            role=self._role,
+            method=str(getattr(request, "method", "")),
+            host=host,
+            port=port,
+            status_code=resp.status_code,
+            new_conns=new_conns,
+            pool_conns=pool_conns,
+            pool_reqs=pool_reqs,
+            pool_qsize=qsize,
+            total_pools=total_pools,
+            dt_ms=dt_ms,
+        )
+        return resp
 
 
 class SessionStore:
@@ -712,6 +889,7 @@ class SessionStore:
                 pool_block=False,
                 max_retries=retries,
                 config=self._config,
+                role="fe",
             ),
         )
 
@@ -724,6 +902,7 @@ class SessionStore:
                 pool_block=False,
                 max_retries=retries,
                 config=self._config,
+                role="be",
             ),
         )
 
@@ -1269,6 +1448,7 @@ class HttpResourcePath(ResourcePath):
         # responses release their connection back to the pool once read.
         log.debug("Reading from remote resource: %s", self.geturl())
         stream = size > 0
+        t0 = time.perf_counter()
         with self.data_session as session:
             with time_this(log, msg="GET %s", args=(self,)):
                 with session.get(self.geturl(), stream=stream, timeout=self._config.timeout) as resp:
@@ -1277,9 +1457,12 @@ class HttpResourcePath(ResourcePath):
                             f"Unable to read resource {self}; status: {resp.status_code} {resp.reason}"
                         )
                     if not stream:
-                        return resp.content
+                        data = resp.content
                     else:
-                        return next(resp.iter_content(chunk_size=size))
+                        data = next(resp.iter_content(chunk_size=size))
+        _worker_diag.read_calls += 1
+        _worker_diag.read_ms += (time.perf_counter() - t0) * 1000.0
+        return data
 
     def write(self, data: bytes, overwrite: bool = True) -> None:
         """Write the supplied bytes to the new resource.
@@ -1670,13 +1853,16 @@ class HttpResourcePath(ResourcePath):
             with ResourcePath.temporary_uri(
                 suffix=self.getExtension(), prefix=tmpdir, delete=True
             ) as tmp_uri:
+                t_get0 = time.perf_counter()
                 with session.get(self.geturl(), stream=True, timeout=self._config.timeout) as resp:
+                    t_get_ms = (time.perf_counter() - t_get0) * 1000.0
                     if resp.status_code != requests.codes.ok:
                         raise FileNotFoundError(
                             f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
                         )
 
                     expected_length = int(resp.headers.get("Content-Length", "-1"))
+                    t_wr0 = time.perf_counter()
                     with time_this(
                         log,
                         msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
@@ -1689,6 +1875,10 @@ class HttpResourcePath(ResourcePath):
                             for chunk in resp.iter_content(chunk_size=buffer_size):
                                 tmpFile.write(chunk)
                                 content_length += len(chunk)
+                    _worker_diag.as_local_calls += 1
+                    _worker_diag.as_local_get_ms += t_get_ms
+                    _worker_diag.as_local_write_ms += (time.perf_counter() - t_wr0) * 1000.0
+                    _worker_diag.as_local_buf_size = buffer_size
 
                     # Check that the expected and actual content lengths match.
                     # Perform this check only when the contents of the file
@@ -1761,6 +1951,7 @@ class HttpResourcePath(ResourcePath):
         if timeout is None:
             timeout = self._config.timeout
 
+        _worker_diag.webdav_calls[method] = _worker_diag.webdav_calls.get(method, 0) + 1
         with time_this(
             log,
             msg="%s %s",
