@@ -22,6 +22,7 @@ from lsst.resources.utils import makeTestTempDir, removeTestTempDir
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
 BODY = bytes(range(64))
+RANGES = [(0, 15), (16, 31), (32, 47), (48, 63)]
 
 
 def _chunks(first: int, last: int, chunk_size: int = 3) -> Iterator[bytes]:
@@ -52,7 +53,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
             calls.append((first, last))
             yield from _chunks(first, last)
 
-        download_ranges(self.path, len(BODY), 4, fetch)
+        download_ranges(self.path, len(BODY), RANGES, fetch)
 
         with open(self.path, "rb") as fd:
             self.assertEqual(fd.read(), BODY)
@@ -64,7 +65,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
         reference = os.path.join(self.tmpdir, "reference.dat")
         with open(reference, "wb"):
             pass
-        download_ranges(self.path, len(BODY), 4, _chunks)
+        download_ranges(self.path, len(BODY), RANGES, _chunks)
         self.assertEqual(os.stat(self.path).st_mode, os.stat(reference).st_mode)
 
     def test_short_write_is_completed(self) -> None:
@@ -76,7 +77,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
             return real_pwrite(fd, bytes(data[:1]), offset)
 
         with unittest.mock.patch("os.pwrite", side_effect=short_pwrite):
-            download_ranges(self.path, len(BODY), 4, _chunks)
+            download_ranges(self.path, len(BODY), RANGES, _chunks)
         with open(self.path, "rb") as fd:
             self.assertEqual(fd.read(), BODY)
 
@@ -84,7 +85,22 @@ class ParallelDownloadTestCase(unittest.TestCase):
         # A write that makes no progress must not leave a zero-filled hole.
         with unittest.mock.patch("os.pwrite", return_value=0):
             with self.assertRaises(OSError):
-                download_ranges(self.path, len(BODY), 4, _chunks)
+                download_ranges(self.path, len(BODY), RANGES, _chunks)
+
+    def test_uneven_ranges(self) -> None:
+        # Ranges need not be equal: a small first range followed by the
+        # rest split into larger ones.
+        ranges = [(0, 3), (4, 23), (24, 43), (44, 63)]
+        calls: list[tuple[int, int]] = []
+
+        def fetch(first: int, last: int) -> Iterator[bytes]:
+            calls.append((first, last))
+            yield from _chunks(first, last)
+
+        download_ranges(self.path, len(BODY), ranges, fetch)
+        with open(self.path, "rb") as fd:
+            self.assertEqual(fd.read(), BODY)
+        self.assertEqual(sorted(calls), ranges)
 
     def test_short_range_raises(self) -> None:
         def fetch(first: int, last: int) -> Iterator[bytes]:
@@ -93,7 +109,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
             yield from _chunks(first, last)
 
         with self.assertRaises(ValueError):
-            download_ranges(self.path, len(BODY), 4, fetch)
+            download_ranges(self.path, len(BODY), RANGES, fetch)
 
     def test_long_range_raises(self) -> None:
         def fetch(first: int, last: int) -> Iterator[bytes]:
@@ -102,7 +118,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
                 yield b"x"
 
         with self.assertRaises(ValueError):
-            download_ranges(self.path, len(BODY), 4, fetch)
+            download_ranges(self.path, len(BODY), RANGES, fetch)
 
     def _slow_fetch(self, fail_first: int | None = None):
         """Return a fetcher that yields one byte at a time slowly, and
@@ -134,7 +150,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
         # download to the end, and no range is still running on return.
         fetch, state = self._slow_fetch(fail_first=16)
         with self.assertRaises(OSError):
-            download_ranges(self.path, len(BODY), 4, fetch)
+            download_ranges(self.path, len(BODY), RANGES, fetch)
         self.assertEqual(state["active"], 0)
         self.assertEqual(state["completed"], 0)
 
@@ -147,7 +163,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
             side_effect=KeyboardInterrupt,
         ):
             with self.assertRaises(KeyboardInterrupt):
-                download_ranges(self.path, len(BODY), 4, fetch)
+                download_ranges(self.path, len(BODY), RANGES, fetch)
         self.assertEqual(state["active"], 0)
         self.assertEqual(state["completed"], 0)
 
@@ -158,7 +174,7 @@ class ParallelDownloadTestCase(unittest.TestCase):
             yield from _chunks(first, last)
 
         with self.assertRaises(RangeNotHonoredError):
-            download_ranges(self.path, len(BODY), 4, fetch)
+            download_ranges(self.path, len(BODY), RANGES, fetch)
 
 
 if __name__ == "__main__":

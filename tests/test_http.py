@@ -59,15 +59,16 @@ from lsst.resources.utils import _get_num_workers, makeTestTempDir, removeTestTe
 TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
 
-def _range_server(body, *, probe=None, ranged=None):
+def _range_server(body, *, first=None, ranged=None):
     """Return a `responses` callback serving ``body`` with Range support.
 
     Parameters
     ----------
     body : `bytes`
         Content of the resource.
-    probe : `tuple`, optional
-        Reply to the one-byte ``bytes=0-0`` probe, instead of the default.
+    first : `tuple`, optional
+        Reply to the ranged request starting at byte 0, instead of the
+        default.
     ranged : `~collections.abc.Callable`, optional
         Called with ``(first, last)`` for every other ranged request. A
         returned tuple is used as the reply; `None` selects the default.
@@ -77,22 +78,22 @@ def _range_server(body, *, probe=None, ranged=None):
         byte_range = request.headers.get("Range")
         if byte_range is None:
             return (200, {"Accept-Ranges": "bytes"}, body)
-        if byte_range == "bytes=0-0" and probe is not None:
-            return probe
         start, end = re.fullmatch(r"bytes=(\d+)-(\d*)", byte_range).groups()
-        first = int(start)
-        last = int(end) if end else len(body) - 1
-        if byte_range != "bytes=0-0" and ranged is not None:
-            reply = ranged(first, last)
+        lo = int(start)
+        hi = int(end) if end else len(body) - 1
+        if lo == 0 and first is not None:
+            return first
+        if lo != 0 and ranged is not None:
+            reply = ranged(lo, hi)
             if reply is not None:
                 return reply
-        if first >= len(body):
+        if lo >= len(body):
             return (416, {"Accept-Ranges": "bytes", "Content-Range": f"bytes */{len(body)}"}, b"")
-        last = min(last, len(body) - 1)
+        hi = min(hi, len(body) - 1)
         return (
             206,
-            {"Accept-Ranges": "bytes", "Content-Range": f"bytes {first}-{last}/{len(body)}"},
-            body[first : last + 1],
+            {"Accept-Ranges": "bytes", "Content-Range": f"bytes {lo}-{hi}/{len(body)}"},
+            body[lo : hi + 1],
         )
 
     return serve
@@ -843,6 +844,9 @@ class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
 class HttpParallelDownloadTestCase(unittest.TestCase):
     """Test downloading a file to local storage with parallel range
     requests.
+
+    The threshold is patched to 16 bytes and the stream count to 4, so the
+    first range is 4 bytes (threshold / streams).
     """
 
     url = "http://s3.test/big.dat?AWSAccessKeyId=key&Signature=sig&Expires=1000"
@@ -880,65 +884,70 @@ class HttpParallelDownloadTestCase(unittest.TestCase):
     def _gets():
         return [call.request for call in responses.calls if call.request.method == "GET"]
 
-    def _range_gets(self):
-        """GET requests for ranges other than the one-byte probe."""
-        return [r for r in self._gets() if r.headers.get("Range") not in (None, "bytes=0-0")]
-
-    def _probes(self):
-        return [r for r in self._gets() if r.headers.get("Range") == "bytes=0-0"]
+    def _ranges(self):
+        """Range headers of all GET requests that had one."""
+        return [r.headers["Range"] for r in self._gets() if "Range" in r.headers]
 
     @responses.activate
     def test_parallel_ranges(self):
         self._serve()
         self.assertEqual(self._download(), self.body)
-        ranges = self._range_gets()
-        self.assertEqual(
-            {r.headers["Range"] for r in ranges},
-            {"bytes=0-15", "bytes=16-31", "bytes=32-47", "bytes=48-63"},
-        )
-        for r in ranges:
+        self.assertEqual(sorted(self._ranges()), ["bytes=0-3", "bytes=24-43", "bytes=4-23", "bytes=44-63"])
+        for r in self._gets():
             self.assertEqual(r.headers["Accept-Encoding"], "identity")
+        # The first range is the size probe; there is no separate request.
+        self.assertEqual(len(self._gets()), 4)
+        self.assertEqual([c for c in responses.calls if c.request.method == "HEAD"], [])
 
     @responses.activate
-    def test_below_threshold_single_stream(self):
-        self._serve(body=self.body[:8])
-        self.assertEqual(self._download(), self.body[:8])
-        self.assertEqual(self._range_gets(), [])
-        self.assertEqual(len([r for r in self._gets() if "Range" not in r.headers]), 1)
+    def test_below_threshold_two_ranges(self):
+        body = self.body[:10]
+        self._serve(body=body)
+        self.assertEqual(self._download(), body)
+        self.assertEqual(sorted(self._ranges()), ["bytes=0-3", "bytes=4-9"])
+
+    @responses.activate
+    def test_small_file_one_request(self):
+        body = self.body[:3]
+        self._serve(body=body)
+        self.assertEqual(self._download(), body)
+        self.assertEqual(self._ranges(), ["bytes=0-3"])
+        self.assertEqual(len(self._gets()), 1)
 
     @responses.activate
     def test_multithreaded_false(self):
         self._serve()
         self.assertEqual(self._download(multithreaded=False), self.body)
-        self.assertEqual(self._range_gets(), [])
-        self.assertEqual(self._probes(), [])
+        self.assertEqual(self._ranges(), [])
+        self.assertEqual(len(self._gets()), 1)
 
     @responses.activate
     def test_env_disabled(self):
         self._use_config({"LSST_HTTP_DOWNLOAD_STREAMS": "1"})
         self._serve()
         self.assertEqual(self._download(), self.body)
-        self.assertEqual(self._range_gets(), [])
-        self.assertEqual(self._probes(), [])
+        self.assertEqual(self._ranges(), [])
+        self.assertEqual(len(self._gets()), 1)
 
     @responses.activate
     def test_no_range_support(self):
-        self._serve(probe=(200, {"Content-Length": str(len(self.body))}, self.body))
+        # A server that ignores Range sends the whole file in reply to the
+        # first request, which is used as it is.
+        self._serve(first=(200, {"Content-Length": str(len(self.body))}, self.body))
         self.assertEqual(self._download(), self.body)
-        self.assertEqual(self._range_gets(), [])
+        self.assertEqual(len(self._gets()), 1)
 
     @responses.activate
     def test_range_ignored_falls_back(self):
         self._serve(ranged=lambda first, last: (200, {"Accept-Ranges": "bytes"}, self.body))
         self.assertEqual(self._download(), self.body)
-        self.assertTrue(self._range_gets())
         self.assertNotIn("Range", self._gets()[-1].headers)
 
     @responses.activate
     def test_short_range_raises(self):
         def ranged(first, last):
-            if first == 16:
-                return (206, {"Content-Range": "bytes 16-31/64"}, self.body[16:24])
+            if first == 24:
+                return (206, {"Content-Range": "bytes 24-43/64"}, self.body[24:30])
             return None
 
         self._serve(ranged=ranged)
@@ -948,8 +957,8 @@ class HttpParallelDownloadTestCase(unittest.TestCase):
     @responses.activate
     def test_mismatched_content_range_raises(self):
         def ranged(first, last):
-            if first == 16:
-                return (206, {"Content-Range": "bytes 0-15/64"}, self.body[0:16])
+            if first == 24:
+                return (206, {"Content-Range": "bytes 0-19/64"}, self.body[0:20])
             return None
 
         self._serve(ranged=ranged)
@@ -957,9 +966,22 @@ class HttpParallelDownloadTestCase(unittest.TestCase):
             self._download()
 
     @responses.activate
+    def test_first_range_mismatched_raises(self):
+        self._serve(first=(206, {"Content-Range": "bytes 1-4/64"}, self.body[1:5]))
+        with self.assertRaises(ValueError):
+            self._download()
+
+    @responses.activate
+    def test_unknown_total_falls_back(self):
+        self._serve(first=(206, {"Content-Range": "bytes 0-3/*"}, self.body[:4]))
+        self.assertEqual(self._download(), self.body)
+        self.assertEqual(len(self._gets()), 2)
+        self.assertNotIn("Range", self._gets()[-1].headers)
+
+    @responses.activate
     def test_connection_error_raises_and_cleans_up(self):
         def ranged(first, last):
-            if first == 32:
+            if first == 44:
                 raise requests.ConnectionError("connection reset")
             return None
 
@@ -969,45 +991,29 @@ class HttpParallelDownloadTestCase(unittest.TestCase):
         self.assertEqual(os.listdir(self.tmpdir), [])
 
     @responses.activate
-    def test_forbidden_probe(self):
+    def test_forbidden(self):
         responses.add(responses.OPTIONS, "http://s3.test/", status=200)
         responses.add(responses.GET, self.url, status=403)
         with self.assertRaises(FileNotFoundError):
             self._download()
-        self.assertEqual(self._range_gets(), [])
+        self.assertEqual(len(self._gets()), 1)
 
     @responses.activate
     def test_empty_file(self):
+        # A range request for an empty file is answered with 416.
         self._serve(body=b"")
         self.assertEqual(self._download(), b"")
-        self.assertEqual(self._range_gets(), [])
+        self.assertNotIn("Range", self._gets()[-1].headers)
 
     @responses.activate
-    def test_content_encoded_head(self):
-        url = "http://test.example/big.dat"
-        responses.add(responses.OPTIONS, "http://test.example/", status=200)
-        responses.add(
-            responses.HEAD,
-            url,
-            status=200,
-            headers={"Accept-Ranges": "bytes", "Content-Encoding": "gzip", "Content-Length": "64"},
-        )
-        responses.add_callback(responses.GET, url, callback=_range_server(self.body))
-        self.assertEqual(self._download(url=url), self.body)
-        self.assertEqual(self._range_gets(), [])
-
-    @responses.activate
-    def test_content_encoded_probe(self):
+    def test_content_encoded_first_range(self):
         # A stored object with Content-Encoding is served encoded even for
         # ranges, and encoded fragments cannot be decoded independently.
-        probe = (
-            206,
-            {"Accept-Ranges": "bytes", "Content-Encoding": "gzip", "Content-Range": "bytes 0-0/64"},
-            self.body[:1],
-        )
-        self._serve(probe=probe)
+        first = (206, {"Content-Encoding": "gzip", "Content-Range": "bytes 0-3/64"}, self.body[:4])
+        self._serve(first=first)
         self.assertEqual(self._download(), self.body)
-        self.assertEqual(self._range_gets(), [])
+        self.assertEqual(len(self._gets()), 2)
+        self.assertNotIn("Range", self._gets()[-1].headers)
 
     @responses.activate
     def test_content_encoded_range_falls_back(self):
@@ -1029,8 +1035,8 @@ class HttpParallelDownloadTestCase(unittest.TestCase):
         self._serve(ranged=ranged)
         responses.add_callback(responses.GET, backend, callback=_range_server(self.body))
         self.assertEqual(self._download(), self.body)
-        backend_ranges = [r for r in self._range_gets() if r.url == backend]
-        self.assertEqual(len(backend_ranges), 4)
+        backend_ranges = [r for r in self._gets() if r.url == backend and "Range" in r.headers]
+        self.assertEqual(len(backend_ranges), 3)
 
 
 class HttpResourcePathConfigTestCase(unittest.TestCase):

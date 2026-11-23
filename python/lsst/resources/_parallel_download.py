@@ -24,7 +24,7 @@ __all__ = ("FetchRange", "RangeNotHonoredError", "download_ranges", "split_range
 import concurrent.futures
 import os
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 FetchRange = Callable[[int, int], Iterable[bytes]]
 """Return the bytes of the inclusive range ``(first, last)``, in order."""
@@ -103,7 +103,7 @@ def _write_range(fd: int, first: int, last: int, fetch_range: FetchRange, stop: 
         raise ValueError(f"Byte range {first}-{last} returned {received} bytes, expected {expected}")
 
 
-def download_ranges(path: str, size: int, n_streams: int, fetch_range: FetchRange) -> None:
+def download_ranges(path: str, size: int, ranges: Sequence[tuple[int, int]], fetch_range: FetchRange) -> None:
     """Download ``size`` bytes into ``path`` using parallel range requests.
 
     Parameters
@@ -112,8 +112,9 @@ def download_ranges(path: str, size: int, n_streams: int, fetch_range: FetchRang
         Local file to write. Created if needed and truncated to ``size``.
     size : `int`
         Total size of the resource in bytes. Must be positive.
-    n_streams : `int`
-        Number of ranges, each fetched by its own thread.
+    ranges : `~collections.abc.Sequence` [ `tuple` [ `int`, `int` ] ]
+        Inclusive ``(first, last)`` byte ranges covering ``size`` bytes, each
+        fetched by its own thread. `split_ranges` makes equal ones.
     fetch_range : `FetchRange`
         Function returning the bytes of an inclusive range. Called
         concurrently from several threads.
@@ -133,7 +134,6 @@ def download_ranges(path: str, size: int, n_streams: int, fetch_range: FetchRang
     ranges stop at their next chunk. All threads have finished before this
     function returns or raises, so none is still writing to ``path``.
     """
-    ranges = split_ranges(size, n_streams)
     # Same permissions as open(path, "wb"); os.open defaults to 0o777.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o666)
     try:
