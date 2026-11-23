@@ -544,6 +544,8 @@ class _HttpWorkerDiag:
         self.as_local_calls: int = 0
         self.as_local_get_ms: float = 0.0
         self.as_local_write_ms: float = 0.0
+        self.as_local_net_ms: float = 0.0
+        self.as_local_disk_ms: float = 0.0
         self.as_local_buf_size: int = 0
         self.webdav_calls: dict[str, int] = {}
         self.webdav_ms: float = 0.0
@@ -625,6 +627,8 @@ class _HttpWorkerDiag:
         read_avg = self.read_ms / self.read_calls if self.read_calls else 0.0
         al_get_avg = self.as_local_get_ms / self.as_local_calls if self.as_local_calls else 0.0
         al_wr_avg = self.as_local_write_ms / self.as_local_calls if self.as_local_calls else 0.0
+        al_net_avg = self.as_local_net_ms / self.as_local_calls if self.as_local_calls else 0.0
+        al_disk_avg = self.as_local_disk_ms / self.as_local_calls if self.as_local_calls else 0.0
         print(
             f"[HTTP-SUMMARY pid={self.pid} proc={self.proc_name} up={uptime:.1f}s] "
             f"reqs={self.total_reqs} status={self.status_counts} | "
@@ -635,7 +639,8 @@ class _HttpWorkerDiag:
             f"pools={self.be_active_pools} hosts={len(self.be_hosts)}) | "
             f"read(n={self.read_calls} avg={read_avg:.1f}ms) "
             f"as_local(n={self.as_local_calls} get={al_get_avg:.1f}ms "
-            f"write={al_wr_avg:.1f}ms buf={self.as_local_buf_size}) "
+            f"write={al_wr_avg:.1f}ms [net={al_net_avg:.1f}ms disk={al_disk_avg:.1f}ms] "
+            f"buf={self.as_local_buf_size}) "
             f"dav={self.webdav_calls}",
             file=sys.stderr,
             flush=True,
@@ -1803,6 +1808,7 @@ class HttpResourcePath(ResourcePath):
             ) as tmp_uri:
                 expected_length = int(resp.headers.get("Content-Length", "-1"))
                 t_wr0 = time.perf_counter()
+                t_disk_ms = 0.0
                 with time_this(
                     log,
                     msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
@@ -1811,14 +1817,22 @@ class HttpResourcePath(ResourcePath):
                     mem_unit=u.mebibyte,
                 ):
                     content_length = 0
+                    t_d0 = time.perf_counter()
                     with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
+                        t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
                         for chunk in resp.iter_content(chunk_size=buffer_size):
+                            t_d0 = time.perf_counter()
                             tmpFile.write(chunk)
+                            t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
                             content_length += len(chunk)
+                        t_d0 = time.perf_counter()
+                    t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
                 t_wr_ms = (time.perf_counter() - t_wr0) * 1000.0
                 _worker_diag.as_local_calls += 1
                 _worker_diag.as_local_get_ms += t_get_ms
                 _worker_diag.as_local_write_ms += t_wr_ms
+                _worker_diag.as_local_net_ms += max(0.0, t_wr_ms - t_disk_ms)
+                _worker_diag.as_local_disk_ms += t_disk_ms
                 _worker_diag.as_local_buf_size = buffer_size
 
                 # Check that the expected and actual content lengths match.
