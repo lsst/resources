@@ -997,6 +997,29 @@ class HttpParallelDownloadTestCase(unittest.TestCase):
         self.assertEqual(self._range_gets(), [])
 
     @responses.activate
+    def test_content_encoded_probe(self):
+        # A stored object with Content-Encoding is served encoded even for
+        # ranges, and encoded fragments cannot be decoded independently.
+        probe = (
+            206,
+            {"Accept-Ranges": "bytes", "Content-Encoding": "gzip", "Content-Range": "bytes 0-0/64"},
+            self.body[:1],
+        )
+        self._serve(probe=probe)
+        self.assertEqual(self._download(), self.body)
+        self.assertEqual(self._range_gets(), [])
+
+    @responses.activate
+    def test_content_encoded_range_falls_back(self):
+        def ranged(first, last):
+            headers = {"Content-Encoding": "gzip", "Content-Range": f"bytes {first}-{last}/64"}
+            return (206, headers, self.body[first : last + 1])
+
+        self._serve(ranged=ranged)
+        self.assertEqual(self._download(), self.body)
+        self.assertNotIn("Range", self._gets()[-1].headers)
+
+    @responses.activate
     def test_redirected_ranges(self):
         backend = "http://backend.test/big.dat"
 
