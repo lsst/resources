@@ -74,6 +74,7 @@ from urllib3.util.ssl_ import create_urllib3_context
 
 from lsst.utils.timer import time_this
 
+from ._parallel_download import RangeNotHonoredError, download_ranges
 from ._resourceHandles import ResourceHandleProtocol
 from ._resourceHandles._httpResourceHandle import HttpReadResourceHandle, parse_content_range_header
 from ._resourcePath import ResourceInfo, ResourcePath
@@ -1899,70 +1900,139 @@ class HttpResourcePath(ResourcePath):
             A URI to a local POSIX file corresponding to a local temporary
             downloaded copy of the resource.
         """
-        # Use the response as a context manager to ensure that the streaming
-        # connection is released back to the pool as soon as the download
-        # operation is finished.
-        with self.data_session as session:
-            if tmpdir is None:
-                temp_dir, buffer_size = self._config.tmpdir_buffersize
-                tmpdir = ResourcePath(temp_dir, forceDirectory=True)
-            else:
-                buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
+        if tmpdir is None:
+            temp_dir, buffer_size = self._config.tmpdir_buffersize
+            tmpdir = ResourcePath(temp_dir, forceDirectory=True)
+        else:
+            buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
 
-            with ResourcePath.temporary_uri(
-                suffix=self.getExtension(), prefix=tmpdir, delete=True
-            ) as tmp_uri:
-                t_get0 = time.perf_counter()
-                with session.get(self.geturl(), stream=True, timeout=self._config.timeout) as resp:
-                    t_get_ms = (time.perf_counter() - t_get0) * 1000.0
-                    if resp.status_code != requests.codes.ok:
-                        raise FileNotFoundError(
-                            f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
-                        )
+        size = self._parallel_download_size() if multithreaded else None
 
-                    expected_length = int(resp.headers.get("Content-Length", "-1"))
-                    t_wr0 = time.perf_counter()
-                    t_disk_ms = 0.0
+        # Use the session as a context manager to ensure that connections
+        # to both the front end and back end servers are closed after the
+        # download operation is finished.
+        with (
+            self.data_session as session,
+            ResourcePath.temporary_uri(suffix=self.getExtension(), prefix=tmpdir, delete=True) as tmp_uri,
+        ):
+            if size is not None:
+                n_streams = self._config.download_streams
+                try:
                     with time_this(
                         log,
-                        msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
-                        args=(self, expected_length, tmp_uri, buffer_size),
+                        msg="GET %s [length=%d] to local file %s [streams=%d]",
+                        args=(self, size, tmp_uri, n_streams),
                         mem_usage=self._config.collect_memory_usage,
                         mem_unit=u.mebibyte,
                     ):
-                        content_length = 0
-                        t_d0 = time.perf_counter()
-                        with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
-                            t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
-                            for chunk in resp.iter_content(chunk_size=buffer_size):
-                                t_d0 = time.perf_counter()
-                                tmpFile.write(chunk)
-                                t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
-                                content_length += len(chunk)
-                            t_d0 = time.perf_counter()
-                        t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
-                    t_wr_ms = (time.perf_counter() - t_wr0) * 1000.0
-                    _worker_diag.as_local_calls += 1
-                    _worker_diag.as_local_get_ms += t_get_ms
-                    _worker_diag.as_local_write_ms += t_wr_ms
-                    _worker_diag.as_local_net_ms += max(0.0, t_wr_ms - t_disk_ms)
-                    _worker_diag.as_local_disk_ms += t_disk_ms
-                    _worker_diag.as_local_buf_size = buffer_size
-
-                    # Check that the expected and actual content lengths match.
-                    # Perform this check only when the contents of the file
-                    # was not encoded by the server.
-                    if (
-                        "Content-Encoding" not in resp.headers
-                        and expected_length >= 0
-                        and expected_length != content_length
-                    ):
-                        raise ValueError(
-                            "Size of downloaded file does not match value in Content-Length header "
-                            f"for {self}: expecting {expected_length} and got {content_length} bytes"
+                        download_ranges(
+                            tmp_uri.ospath,
+                            size,
+                            n_streams,
+                            functools.partial(self._fetch_range, session, buffer_size=buffer_size),
                         )
+                except RangeNotHonoredError:
+                    log.debug("Server ignored range requests for %s; using a single stream.", self)
+                    size = None
+            if size is None:
+                self._download_single_stream(session, tmp_uri, buffer_size)
+            yield tmp_uri
 
-                yield tmp_uri
+    def _parallel_download_size(self) -> int | None:
+        """Return the size of this resource if it should be downloaded with
+        parallel range requests, or `None` to use a single stream.
+        """
+        if self._config.download_streams <= 1:
+            return None
+        size = _ranged_download_size(self._head())
+        if size is None or size < self._config.PARALLEL_DOWNLOAD_THRESHOLD:
+            return None
+        return size
+
+    def _fetch_range(
+        self, session: _SessionWrapper, first: int, last: int, buffer_size: int
+    ) -> Iterator[bytes]:
+        """Yield the bytes of the inclusive range ``first``-``last``.
+
+        Parameters
+        ----------
+        session : `_SessionWrapper`
+            Session to send the request with. Shared between threads.
+        first : `int`
+            Offset of the first byte.
+        last : `int`
+            Offset of the last byte.
+        buffer_size : `int`
+            Size of the chunks to yield.
+
+        Yields
+        ------
+        chunk : `bytes`
+            Consecutive chunks of the range.
+        """
+        headers = {"Range": f"bytes={first}-{last}", "Accept-Encoding": "identity"}
+        with session.get(self.geturl(), headers=headers, stream=True, timeout=self._config.timeout) as resp:
+            if resp.status_code == requests.codes.ok:
+                raise RangeNotHonoredError(f"Server returned the whole of {self} for a range request")
+            if resp.status_code != requests.codes.partial_content:
+                raise FileNotFoundError(
+                    f"Unable to download bytes {first}-{last} of {self}; "
+                    f"status: {resp.status_code} {resp.reason}"
+                )
+            content_range_header = resp.headers.get("Content-Range")
+            content_range = parse_content_range_header(content_range_header) if content_range_header else None
+            if content_range is None or (content_range.range_start, content_range.range_end) != (first, last):
+                raise ValueError(
+                    f"Response for bytes {first}-{last} of {self} has Content-Range {content_range_header!r}"
+                )
+            yield from resp.iter_content(chunk_size=buffer_size)
+
+    def _download_single_stream(
+        self, session: _SessionWrapper, tmp_uri: ResourcePath, buffer_size: int
+    ) -> None:
+        """Download this resource into ``tmp_uri`` with a single GET request.
+
+        Parameters
+        ----------
+        session : `_SessionWrapper`
+            Session to send the request with.
+        tmp_uri : `ResourcePath`
+            Local file to write. Overwritten if it exists.
+        buffer_size : `int`
+            Size of the chunks to read and write.
+        """
+        resp = session.get(self.geturl(), stream=True, timeout=self._config.timeout)
+        if resp.status_code != requests.codes.ok:
+            raise FileNotFoundError(
+                f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
+            )
+
+        expected_length = int(resp.headers.get("Content-Length", "-1"))
+        with time_this(
+            log,
+            msg="GET %s [length=%d] to local file %s [chunk_size=%d, streams=1]",
+            args=(self, expected_length, tmp_uri, buffer_size),
+            mem_usage=self._config.collect_memory_usage,
+            mem_unit=u.mebibyte,
+        ):
+            content_length = 0
+            with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
+                for chunk in resp.iter_content(chunk_size=buffer_size):
+                    tmpFile.write(chunk)
+                    content_length += len(chunk)
+
+        # Check that the expected and actual content lengths match.
+        # Perform this check only when the contents of the file was not
+        # encoded by the server.
+        if (
+            "Content-Encoding" not in resp.headers
+            and expected_length >= 0
+            and expected_length != content_length
+        ):
+            raise ValueError(
+                f"Size of downloaded file does not match value in Content-Length header for {self}: "
+                f"expecting {expected_length} and got {content_length} bytes"
+            )
 
     def _send_webdav_request(
         self,
@@ -2424,6 +2494,36 @@ def _total_size_from_partial_content(resp: requests.Response) -> int | None:
     if (content_range_header := resp.headers.get("Content-Range")) is None:
         return None
     return parse_content_range_header(content_range_header).total
+
+
+def _ranged_download_size(resp: requests.Response) -> int | None:
+    """Return the size of a resource that can be downloaded in byte ranges.
+
+    Parameters
+    ----------
+    resp : `requests.Response`
+        Response to a HEAD request, or to the one-byte ranged GET used in
+        place of HEAD for presigned URLs.
+
+    Returns
+    -------
+    size : `int` or `None`
+        Total size of the resource in bytes, or `None` if the server does not
+        advertise byte-range support or the size is not known. The
+        'Content-Length' of a 200 response is used only when the response is
+        not content-encoded, since otherwise it does not describe the
+        resource itself.
+    """
+    if resp.headers.get("Accept-Ranges") != "bytes":
+        return None
+    if resp.status_code == requests.codes.partial_content:
+        return _total_size_from_partial_content(resp)
+    if resp.status_code == requests.codes.ok and "Content-Encoding" not in resp.headers:
+        try:
+            return int(resp.headers["Content-Length"])
+        except (KeyError, ValueError):
+            return None
+    return None
 
 
 def _dump_response(resp: requests.Response) -> None:
