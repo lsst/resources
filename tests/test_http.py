@@ -811,6 +811,28 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
         if self.tmpdir and self.tmpdir.isLocal:
             removeTestTempDir(self.tmpdir.ospath)
 
+    def test_download_streams(self):
+        # LSST_HTTP_DOWNLOAD_STREAMS sets the number of parallel range
+        # requests used to download a single file.
+        for env, expected in (
+            ({}, 8),
+            ({"LSST_HTTP_DOWNLOAD_STREAMS": "16"}, 16),
+            ({"LSST_HTTP_DOWNLOAD_STREAMS": "junk"}, 8),
+            ({"LSST_HTTP_DOWNLOAD_STREAMS": "0"}, 1),
+        ):
+            with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(HttpResourcePathConfig().download_streams, expected)
+
+    def test_data_session_connections(self):
+        # The data session pool must hold at least one connection per
+        # download stream.
+        env = {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "2", "LSST_HTTP_DOWNLOAD_STREAMS": "8"}
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(HttpResourcePathConfig().data_session_connections, 8)
+        env = {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "20", "LSST_HTTP_DOWNLOAD_STREAMS": "8"}
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(HttpResourcePathConfig().data_session_connections, 20)
+
     def test_send_expect_header(self):
         # Ensure environment variable LSST_HTTP_PUT_SEND_EXPECT_HEADER is
         # inspected to initialize the HttpResourcePathConfig class.
