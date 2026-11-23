@@ -894,10 +894,13 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
 
     def test_back_end_connections(self):
         # Ensure that when the number of back end connections is not specified
-        # the default comes from the number of workers.
+        # the default is DEFAULT_BACKEND_PERSISTENT_CONNECTIONS.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             config = HttpResourcePathConfig()
-            self.assertEqual(config.back_end_connections, _get_num_workers())
+            self.assertEqual(
+                config.back_end_connections,
+                config.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS,
+            )
 
         # Ensure that when the number of back end connections is specified
         # it is stored in the config.

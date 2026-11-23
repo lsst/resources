@@ -148,7 +148,7 @@ class HttpResourcePathConfig:
     # Default number of connections to persist with both the front end and
     # back end servers.
     DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS: int = 2
-    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS: int = 1
+    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS: int = 0
 
     # Accepted digest algorithms
     ACCEPTED_DIGESTS: list[str] = ["adler32", "md5", "sha-256", "sha-512"]
@@ -194,7 +194,7 @@ class HttpResourcePathConfig:
         if self._back_end_connections is not None:
             return self._back_end_connections
 
-        default_pool_size = max(_get_num_workers(), self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
+        default_pool_size = self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
 
         try:
             self._back_end_connections = int(
@@ -550,6 +550,8 @@ class _HttpWorkerDiag:
         self.as_local_calls: int = 0
         self.as_local_get_ms: float = 0.0
         self.as_local_write_ms: float = 0.0
+        self.as_local_net_ms: float = 0.0
+        self.as_local_disk_ms: float = 0.0
         self.as_local_buf_size: int = 0
         self.webdav_calls: dict[str, int] = {}
         self.webdav_ms: float = 0.0
@@ -631,6 +633,8 @@ class _HttpWorkerDiag:
         read_avg = self.read_ms / self.read_calls if self.read_calls else 0.0
         al_get_avg = self.as_local_get_ms / self.as_local_calls if self.as_local_calls else 0.0
         al_wr_avg = self.as_local_write_ms / self.as_local_calls if self.as_local_calls else 0.0
+        al_net_avg = self.as_local_net_ms / self.as_local_calls if self.as_local_calls else 0.0
+        al_disk_avg = self.as_local_disk_ms / self.as_local_calls if self.as_local_calls else 0.0
         print(
             f"[HTTP-SUMMARY pid={self.pid} proc={self.proc_name} up={uptime:.1f}s] "
             f"reqs={self.total_reqs} status={self.status_counts} | "
@@ -641,7 +645,8 @@ class _HttpWorkerDiag:
             f"pools={self.be_active_pools} hosts={len(self.be_hosts)}) | "
             f"read(n={self.read_calls} avg={read_avg:.1f}ms) "
             f"as_local(n={self.as_local_calls} get={al_get_avg:.1f}ms "
-            f"write={al_wr_avg:.1f}ms buf={self.as_local_buf_size}) "
+            f"write={al_wr_avg:.1f}ms [net={al_net_avg:.1f}ms disk={al_disk_avg:.1f}ms] "
+            f"buf={self.as_local_buf_size}) "
             f"dav={self.webdav_calls}",
             file=sys.stderr,
             flush=True,
@@ -705,6 +710,10 @@ class _TLSHTTPAdapter(HTTPAdapter):
         conn.ca_cert_dir = None
         conn.cert_file = None
         conn.key_file = None
+
+    def add_headers(self, request: Any, **kwargs: Any) -> None:
+        if self._role == "be" and self._pool_maxsize == 0:
+            request.headers["Connection"] = "close"
 
     def send(self, request: Any, *args: Any, **kwargs: Any) -> requests.Response:
         t0 = time.perf_counter()
@@ -1057,7 +1066,7 @@ class HttpResourcePath(ResourcePath):
     _metadata_session_store = SessionStore(
         config=_config,
         num_pools=200,
-        max_persistent_connections=_config.front_end_connections,
+        max_persistent_connections=_config.back_end_connections,
         backoff_min=_config.backoff_min,
         backoff_max=_config.backoff_max,
     )
@@ -1223,7 +1232,7 @@ class HttpResourcePath(ResourcePath):
         HttpResourcePath._metadata_session_store = SessionStore(
             config=HttpResourcePath._config,
             num_pools=200,
-            max_persistent_connections=HttpResourcePath._config.front_end_connections,
+            max_persistent_connections=HttpResourcePath._config.back_end_connections,
             backoff_min=HttpResourcePath._config.backoff_min,
             backoff_max=HttpResourcePath._config.backoff_max,
         )
@@ -1863,6 +1872,7 @@ class HttpResourcePath(ResourcePath):
 
                     expected_length = int(resp.headers.get("Content-Length", "-1"))
                     t_wr0 = time.perf_counter()
+                    t_disk_ms = 0.0
                     with time_this(
                         log,
                         msg="GET %s [length=%d] to local file %s [chunk_size=%d]",
@@ -1870,19 +1880,23 @@ class HttpResourcePath(ResourcePath):
                         mem_usage=self._config.collect_memory_usage,
                         mem_unit=u.mebibyte,
                     ):
-                        with open(tmp_uri.ospath, "wb", buffering=64 * 1024) as tmpFile:
-                            if 0 <= expected_length <= buffer_size:
-                                content = resp.content
-                                tmpFile.write(content)
-                                content_length = len(content)
-                            else:
-                                content_length = 0
-                                for chunk in resp.iter_content(chunk_size=buffer_size):
-                                    tmpFile.write(chunk)
-                                    content_length += len(chunk)
+                        content_length = 0
+                        t_d0 = time.perf_counter()
+                        with open(tmp_uri.ospath, "wb", buffering=buffer_size) as tmpFile:
+                            t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
+                            for chunk in resp.iter_content(chunk_size=buffer_size):
+                                t_d0 = time.perf_counter()
+                                tmpFile.write(chunk)
+                                t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
+                                content_length += len(chunk)
+                            t_d0 = time.perf_counter()
+                        t_disk_ms += (time.perf_counter() - t_d0) * 1000.0
+                    t_wr_ms = (time.perf_counter() - t_wr0) * 1000.0
                     _worker_diag.as_local_calls += 1
                     _worker_diag.as_local_get_ms += t_get_ms
-                    _worker_diag.as_local_write_ms += (time.perf_counter() - t_wr0) * 1000.0
+                    _worker_diag.as_local_write_ms += t_wr_ms
+                    _worker_diag.as_local_net_ms += max(0.0, t_wr_ms - t_disk_ms)
+                    _worker_diag.as_local_disk_ms += t_disk_ms
                     _worker_diag.as_local_buf_size = buffer_size
 
                     # Check that the expected and actual content lengths match.
