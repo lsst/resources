@@ -146,12 +146,19 @@ class HttpResourcePathConfig:
     DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS: int = 2
     DEFAULT_BACKEND_PERSISTENT_CONNECTIONS: int = 1
 
+    # Default number of parallel range requests used to download a single
+    # file, and the minimum file size (bytes) for which downloads are split.
+    # The threshold matches boto3's default multipart threshold.
+    DEFAULT_DOWNLOAD_STREAMS: int = 8
+    PARALLEL_DOWNLOAD_THRESHOLD: int = 8 * 1024 * 1024
+
     # Accepted digest algorithms
     ACCEPTED_DIGESTS: list[str] = ["adler32", "md5", "sha-256", "sha-512"]
 
     def __init__(self) -> None:
         self._front_end_connections: int | None = None
         self._back_end_connections: int | None = None
+        self._download_streams: int | None = None
         self._digest_algorithm: str | None = None
         self._send_expect_on_put: bool | None = None
         self._fsspec_is_enabled: bool | None = None
@@ -199,6 +206,32 @@ class HttpResourcePathConfig:
             self._back_end_connections = default_pool_size
 
         return self._back_end_connections
+
+    @property
+    def download_streams(self) -> int:
+        """Number of parallel range requests used to download a single file.
+
+        A value of 1 disables parallel downloads.
+        """
+        if self._download_streams is not None:
+            return self._download_streams
+
+        try:
+            streams = int(os.environ.get("LSST_HTTP_DOWNLOAD_STREAMS", self.DEFAULT_DOWNLOAD_STREAMS))
+        except ValueError:
+            streams = self.DEFAULT_DOWNLOAD_STREAMS
+
+        self._download_streams = max(streams, 1)
+        return self._download_streams
+
+    @property
+    def data_session_connections(self) -> int:
+        """Number of persistent connections for the data session pool.
+
+        At least one per download stream, so that parallel range requests
+        for a single file do not discard pooled connections.
+        """
+        return max(self.back_end_connections, self.download_streams)
 
     @property
     def digest_algorithm(self) -> str:
@@ -772,6 +805,18 @@ class HttpResourcePath(ResourcePath):
     - LSST_HTTP_ENABLE_FSSPEC: the presence of this environment variable
         activates the usage of `fsspec` compatible file system to read
         a HTTP URL. The value of the variable is not inspected.
+
+    - LSST_HTTP_DOWNLOAD_STREAMS: number of parallel byte-range requests
+        used to download a single file of at least
+        PARALLEL_DOWNLOAD_THRESHOLD bytes (8 MiB) to a local file.
+        Default value: DEFAULT_DOWNLOAD_STREAMS (8). A value of 1 disables
+        parallel downloads; passing ``multithreaded=False`` to `as_local`
+        or `transfer_from` disables them for that call.
+        This is independent of LSST_RESOURCES_NUM_WORKERS, which sets how
+        many files bulk operations handle at once. Bulk operations such as
+        `ResourcePath.mtransfer` already use one stream per file. Reduce
+        this value when many files are downloaded concurrently by code
+        outside this package, to limit the total number of connections.
     """
 
     @staticmethod
@@ -841,7 +886,7 @@ class HttpResourcePath(ResourcePath):
     _data_session_store = SessionStore(
         config=_config,
         num_pools=25,
-        max_persistent_connections=_config.back_end_connections,
+        max_persistent_connections=_config.data_session_connections,
         backoff_min=_config.backoff_min,
         backoff_max=_config.backoff_max,
     )
