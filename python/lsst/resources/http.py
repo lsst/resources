@@ -1711,6 +1711,9 @@ class HttpResourcePath(ResourcePath):
         with session.get(self.geturl(), headers=headers, stream=True, timeout=self._config.timeout) as resp:
             if resp.status_code == requests.codes.ok:
                 raise RangeNotHonoredError(f"Server returned the whole of {self} for a range request")
+            if _is_content_encoded(resp):
+                # Encoded fragments cannot be decoded independently.
+                raise RangeNotHonoredError(f"Server returned an encoded range of {self}")
             if resp.status_code != requests.codes.partial_content:
                 raise FileNotFoundError(
                     f"Unable to download bytes {first}-{last} of {self}; "
@@ -2232,6 +2235,13 @@ def _total_size_from_partial_content(resp: requests.Response) -> int | None:
     return parse_content_range_header(content_range_header).total
 
 
+def _is_content_encoded(resp: requests.Response) -> bool:
+    """Return `True` if the response body has a content encoding other than
+    identity.
+    """
+    return resp.headers.get("Content-Encoding", "identity").strip().lower() != "identity"
+
+
 def _ranged_download_size(resp: requests.Response) -> int | None:
     """Return the size of a resource that can be downloaded in byte ranges.
 
@@ -2245,16 +2255,15 @@ def _ranged_download_size(resp: requests.Response) -> int | None:
     -------
     size : `int` or `None`
         Total size of the resource in bytes, or `None` if the server does not
-        advertise byte-range support or the size is not known. The
-        'Content-Length' of a 200 response is used only when the response is
-        not content-encoded, since otherwise it does not describe the
-        resource itself.
+        advertise byte-range support, the size is not known, or the resource
+        is content-encoded. A content-encoded resource is served encoded even
+        in byte ranges, and the fragments cannot be decoded independently.
     """
-    if resp.headers.get("Accept-Ranges") != "bytes":
+    if resp.headers.get("Accept-Ranges") != "bytes" or _is_content_encoded(resp):
         return None
     if resp.status_code == requests.codes.partial_content:
         return _total_size_from_partial_content(resp)
-    if resp.status_code == requests.codes.ok and "Content-Encoding" not in resp.headers:
+    if resp.status_code == requests.codes.ok:
         try:
             return int(resp.headers["Content-Length"])
         except (KeyError, ValueError):
