@@ -23,10 +23,15 @@ __all__ = ("FetchRange", "RangeNotHonoredError", "download_ranges", "split_range
 
 import concurrent.futures
 import os
+import threading
 from collections.abc import Callable, Iterable
 
 FetchRange = Callable[[int, int], Iterable[bytes]]
 """Return the bytes of the inclusive range ``(first, last)``, in order."""
+
+
+class _StoppedError(Exception):
+    """Raised inside a worker that stopped because another range failed."""
 
 
 class RangeNotHonoredError(Exception):
@@ -60,14 +65,38 @@ def split_ranges(size: int, n: int) -> list[tuple[int, int]]:
     return ranges
 
 
-def _write_range(fd: int, first: int, last: int, fetch_range: FetchRange) -> None:
+def _pwrite_all(fd: int, data: bytes, offset: int) -> None:
+    """Write all of ``data`` to ``fd`` at ``offset``.
+
+    `os.pwrite` can write fewer bytes than requested (for example when the
+    disk fills), and the file has already been extended to its full size, so
+    any bytes not written would silently read back as zeros.
+    """
+    view = memoryview(data)
+    while view:
+        written = os.pwrite(fd, view, offset)
+        if written <= 0:
+            raise OSError(f"Unable to write to local file at offset {offset}")
+        view = view[written:]
+        offset += written
+
+
+def _write_range(fd: int, first: int, last: int, fetch_range: FetchRange, stop: threading.Event) -> None:
     """Write one fetched range into ``fd`` at its offset and check its
-    length.
+    length, stopping early once ``stop`` is set.
     """
     offset = first
-    for chunk in fetch_range(first, last):
-        os.pwrite(fd, chunk, offset)
-        offset += len(chunk)
+    chunks = iter(fetch_range(first, last))
+    try:
+        for chunk in chunks:
+            if stop.is_set():
+                raise _StoppedError()
+            _pwrite_all(fd, chunk, offset)
+            offset += len(chunk)
+    finally:
+        # Release the fetcher's resources (e.g. an open response) promptly.
+        if (close := getattr(chunks, "close", None)) is not None:
+            close()
     expected = last - first + 1
     received = offset - first
     if received != expected:
@@ -100,20 +129,32 @@ def download_ranges(path: str, size: int, n_streams: int, fetch_range: FetchRang
 
     Notes
     -----
-    If any range fails, the others are allowed to finish before the first
-    exception is re-raised, so no thread is still writing to ``path`` when
-    this function returns.
+    When a range fails, or the calling thread is interrupted, the other
+    ranges stop at their next chunk. All threads have finished before this
+    function returns or raises, so none is still writing to ``path``.
     """
     ranges = split_ranges(size, n_streams)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT)
+    # Same permissions as open(path, "wb"); os.open defaults to 0o777.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o666)
     try:
         os.ftruncate(fd, size)
         first_error: BaseException | None = None
+        stop = threading.Event()
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(ranges)) as executor:
-            futures = [executor.submit(_write_range, fd, first, last, fetch_range) for first, last in ranges]
-            for future in concurrent.futures.as_completed(futures):
-                if (error := future.exception()) is not None and first_error is None:
-                    first_error = error
+            futures = [
+                executor.submit(_write_range, fd, first, last, fetch_range, stop) for first, last in ranges
+            ]
+            try:
+                for future in concurrent.futures.as_completed(futures):
+                    error = future.exception()
+                    if error is not None and not isinstance(error, _StoppedError) and first_error is None:
+                        first_error = error
+                        stop.set()
+            except BaseException:
+                # Interrupted while waiting; stop the workers before the
+                # executor waits for them on exit.
+                stop.set()
+                raise
         if first_error is not None:
             raise first_error
     finally:
