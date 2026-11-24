@@ -902,7 +902,12 @@ class SessionStore:
             ),
         )
 
-        # Persist the configured number of connections to back end servers.
+        # By default (pool_maxsize=0), do not persist connections to back end
+        # servers which may vary from request to request. Systematically
+        # persisting connections to those servers may exhaust their
+        # capabilities when there are thousands of simultaneous clients,
+        # unless explicitly enabled via
+        # LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS.
         session.mount(
             f"{rpath.scheme}://",
             _TLSHTTPAdapter(
