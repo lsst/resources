@@ -232,12 +232,13 @@ class HttpResourcePathConfig:
 
     @property
     def data_session_connections(self) -> int:
-        """Number of persistent connections for the data session pool.
+        """Number of connections to the front end server to persist in the
+        data session.
 
         At least one per download stream, so that parallel range requests
         for a single file do not discard pooled connections.
         """
-        return max(self.back_end_connections, self.download_streams)
+        return max(self.front_end_connections, self.download_streams)
 
     @property
     def digest_algorithm(self) -> str:
@@ -799,6 +800,10 @@ class SessionStore:
     max_persistent_connections : `int`, optional
         Maximum number of connections per remote host to persist in each
         connection pool.
+    front_end_connections : `int` or `None`, optional
+        Maximum number of connections to the front end server, the host of
+        the root URI of each session, to persist. If `None`, the value of
+        ``config.front_end_connections`` is used.
     backoff_min : `float`, optional
         Minimum value of the interval to compute the exponential
         backoff factor when retrying requests (seconds).
@@ -812,6 +817,7 @@ class SessionStore:
         config: HttpResourcePathConfig,
         num_pools: int = 10,
         max_persistent_connections: int = 1,
+        front_end_connections: int | None = None,
         backoff_min: float = 1.0,
         backoff_max: float = 3.0,
     ) -> None:
@@ -829,6 +835,7 @@ class SessionStore:
         # See urllib3 Advanced Usage documentation:
         # https://urllib3.readthedocs.io/en/stable/advanced-usage.html
         self._max_persistent_connections: int = max_persistent_connections
+        self._front_end_connections: int | None = front_end_connections
 
         # Minimum and maximum values of the interval to compute the exponential
         # backoff factor when retrying requests (seconds).
@@ -928,7 +935,11 @@ class SessionStore:
             root_uri,
             _TLSHTTPAdapter(
                 pool_connections=self._num_pools,
-                pool_maxsize=self._config.front_end_connections,
+                pool_maxsize=(
+                    self._front_end_connections
+                    if self._front_end_connections is not None
+                    else self._config.front_end_connections
+                ),
                 pool_block=False,
                 max_retries=retries,
                 config=self._config,
@@ -1136,7 +1147,8 @@ class HttpResourcePath(ResourcePath):
     _data_session_store = SessionStore(
         config=_config,
         num_pools=200,
-        max_persistent_connections=_config.data_session_connections,
+        max_persistent_connections=_config.back_end_connections,
+        front_end_connections=_config.data_session_connections,
         backoff_min=_config.backoff_min,
         backoff_max=_config.backoff_max,
     )
@@ -1295,6 +1307,7 @@ class HttpResourcePath(ResourcePath):
             config=HttpResourcePath._config,
             num_pools=200,
             max_persistent_connections=HttpResourcePath._config.back_end_connections,
+            front_end_connections=HttpResourcePath._config.data_session_connections,
             backoff_min=HttpResourcePath._config.backoff_min,
             backoff_max=HttpResourcePath._config.backoff_max,
         )
@@ -1910,9 +1923,9 @@ class HttpResourcePath(ResourcePath):
         else:
             buffer_size = _calc_tmpdir_buffer_size(tmpdir.ospath)
 
-        # Use the session as a context manager to ensure that connections
-        # to both the front end and back end servers are closed after the
-        # download operation is finished.
+        # Every response is closed once its body has been read, which returns
+        # its connection to the data session pool for reuse by later
+        # downloads.
         with (
             self.data_session as session,
             ResourcePath.temporary_uri(suffix=self.getExtension(), prefix=tmpdir, delete=True) as tmp_uri,
@@ -2067,12 +2080,12 @@ class HttpResourcePath(ResourcePath):
         buffer_size : `int`
             Size of the chunks to read and write.
         """
-        resp = session.get(self.geturl(), stream=True, timeout=self._config.timeout)
-        if resp.status_code != requests.codes.ok:
-            raise FileNotFoundError(
-                f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
-            )
-        self._write_response(resp, tmp_uri, buffer_size)
+        with session.get(self.geturl(), stream=True, timeout=self._config.timeout) as resp:
+            if resp.status_code != requests.codes.ok:
+                raise FileNotFoundError(
+                    f"Unable to download resource {self}; status: {resp.status_code} {resp.reason}"
+                )
+            self._write_response(resp, tmp_uri, buffer_size)
 
     def _write_response(
         self, resp: requests.Response, tmp_uri: ResourcePath, buffer_size: int, n_streams: int = 1

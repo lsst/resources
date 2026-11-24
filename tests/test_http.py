@@ -1062,14 +1062,41 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
                 self.assertEqual(HttpResourcePathConfig().download_streams, expected)
 
     def test_data_session_connections(self):
-        # The data session pool must hold at least one connection per
-        # download stream.
-        env = {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "2", "LSST_HTTP_DOWNLOAD_STREAMS": "8"}
+        # The data session pool for the front end server must hold at least
+        # one connection per download stream.
+        env = {"LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": "2", "LSST_HTTP_DOWNLOAD_STREAMS": "8"}
         with unittest.mock.patch.dict(os.environ, env, clear=True):
             self.assertEqual(HttpResourcePathConfig().data_session_connections, 8)
-        env = {"LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "20", "LSST_HTTP_DOWNLOAD_STREAMS": "8"}
+        env = {"LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": "20", "LSST_HTTP_DOWNLOAD_STREAMS": "8"}
         with unittest.mock.patch.dict(os.environ, env, clear=True):
             self.assertEqual(HttpResourcePathConfig().data_session_connections, 20)
+
+    def test_data_session_pool_sizes(self):
+        # Parallel range requests all go to the front end server, so its pool
+        # in the data session must hold every stream, while the back end pool
+        # keeps its own configured size.
+        env = {
+            "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": "2",
+            "LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "0",
+            "LSST_HTTP_DOWNLOAD_STREAMS": "16",
+        }
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            HttpResourcePath._reload_config()
+            try:
+                path = ResourcePath("https://example.org/path/to/file")
+                session = HttpResourcePath._data_session_store.get(path)
+                front_adapter = session.get_adapter("https://example.org/path/to/file")
+                back_adapter = session.get_adapter("https://backend.example.org/data/file")
+                self.assertEqual(front_adapter._pool_maxsize, 16)
+                self.assertEqual(back_adapter._pool_maxsize, 0)
+
+                session = HttpResourcePath._metadata_session_store.get(path)
+                front_adapter = session.get_adapter("https://example.org/path/to/file")
+                self.assertEqual(front_adapter._pool_maxsize, 2)
+            finally:
+                HttpResourcePath._data_session_store.clear()
+                HttpResourcePath._metadata_session_store.clear()
+        HttpResourcePath._reload_config()
 
     def test_send_expect_header(self):
         # Ensure environment variable LSST_HTTP_PUT_SEND_EXPECT_HEADER is
