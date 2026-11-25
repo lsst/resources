@@ -1470,6 +1470,49 @@ class SessionStoreTestCase(unittest.TestCase):
                 back_adapter.cert_verify(None, "https://backend.example.org/path", True, None)
                 self.assertEqual(mock_load.call_count, 1)
 
+    @responses.activate
+    def test_http_worker_diag_logging(self):
+        """Ensure HTTP diagnostics are environment-gated by LSST_HTTP_DIAG and
+        log via lsst.resources.http at DEBUG level.
+        """
+        url = "http://diag.test/file.txt"
+        responses.add(responses.GET, url, body=b"hello", status=200)
+        rpath = ResourcePath(url)
+
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(lsst.resources.http._worker_diag.is_enabled())
+
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIAG": "1"}, clear=True):
+            self.assertTrue(lsst.resources.http._worker_diag.is_enabled())
+            lsst.resources.http._worker_diag._reset_counters()
+            with self.assertLogs("lsst.resources.http", level="DEBUG") as cm:
+                self.assertEqual(rpath.read(), b"hello")
+            self.assertTrue(any("[HTTP-TRACE " in msg for msg in cm.output))
+
+        # Verify that in a fresh unconfigured logger (as in a multiprocessing
+        # "spawn" worker process where butler CLI --log-level was not run),
+        # LSST_HTTP_DIAG=1 automatically enables DEBUG and attaches a handler.
+        http_logger = lsst.resources.http.log
+        saved_level = http_logger.level
+        saved_handlers = list(http_logger.handlers)
+        saved_propagate = http_logger.propagate
+        stream = io.StringIO()
+        try:
+            http_logger.handlers.clear()
+            http_logger.setLevel(0)
+            http_logger.propagate = False
+            with (
+                unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIAG": "1"}, clear=True),
+                unittest.mock.patch("sys.stderr", stream),
+            ):
+                lsst.resources.http._worker_diag._reset_counters()
+                self.assertEqual(rpath.read(), b"hello")
+            self.assertIn("[HTTP-TRACE ", stream.getvalue())
+        finally:
+            http_logger.handlers[:] = saved_handlers
+            http_logger.setLevel(saved_level)
+            http_logger.propagate = saved_propagate
+
 
 class TestContentRange(unittest.TestCase):
     """Test parsing of Content-Range header."""
