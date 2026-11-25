@@ -75,6 +75,9 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
     ) -> None:
         super().__init__(mode, log, uri, newline=newline)
         self._url = uri.geturl()
+        self._frontend_url = _dav_to_http(self._url)
+        self._backend_url = self._frontend_url
+        self._etag: str | None = None
         self._session = uri.data_session
 
         if timeout is None:
@@ -192,15 +195,59 @@ class HttpReadResourceHandle(BaseResourceHandle[bytes]):
         # the bytes can be uncompressed.
 
         end_pos = self._current_position + (size - 1) if size >= 0 else ""
-        headers = {"Range": f"bytes={self._current_position}-{end_pos}", "Accept-Encoding": "identity"}
+        base_headers = {"Range": f"bytes={self._current_position}-{end_pos}", "Accept-Encoding": "identity"}
+        headers = dict(base_headers)
+        using_cached_backend = self._backend_url != self._frontend_url
+        if using_cached_backend and self._etag is not None:
+            headers["If-Match"] = self._etag
 
+        resp: requests.Response | None = None
         with time_this(
-            self._log, msg="Read from remote resource %s using headers %s", args=(self._url, headers)
+            self._log,
+            msg="Read from remote resource %s using headers %s",
+            args=(self._backend_url, headers),
         ):
             with self._session as session:
-                resp = session.get(
-                    _dav_to_http(self._url), stream=False, timeout=self._timeout, headers=headers
-                )
+                try:
+                    resp = session.get(
+                        self._backend_url, stream=False, timeout=self._timeout, headers=headers
+                    )
+                except requests.RequestException:
+                    if not using_cached_backend:
+                        raise
+
+        if using_cached_backend and (
+            resp is None
+            or resp.status_code
+            in (
+                requests.codes.unauthorized,
+                requests.codes.forbidden,
+                requests.codes.not_found,
+                requests.codes.precondition_failed,
+            )
+            or 500 <= resp.status_code < 600
+        ):
+            self._backend_url = self._frontend_url
+            self._etag = None
+            with time_this(
+                self._log,
+                msg="Retrying read from remote resource %s using headers %s",
+                args=(self._backend_url, base_headers),
+            ):
+                with self._session as session:
+                    resp = session.get(
+                        self._backend_url, stream=False, timeout=self._timeout, headers=base_headers
+                    )
+
+        assert resp is not None
+        if (
+            resp.status_code == requests.codes.partial
+            and resp.url
+            and self._uri.server != "dcache"
+        ):
+            self._backend_url = resp.url
+            if resp.url != self._frontend_url:
+                self._etag = resp.headers.get("ETag")
 
         if resp.status_code == requests.codes.range_not_satisfiable:
             # Must have run off the end of the file. A standard file handle

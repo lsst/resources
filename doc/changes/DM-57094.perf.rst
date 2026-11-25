@@ -1,0 +1,2 @@
+``HttpResourcePath`` now persists its cached ``requests.Session`` across context manager invocations so that underlying TCP/TLS connections remain open in the session pool instead of being closed at the end of each ``with`` block.
+Streaming responses in ``HttpResourcePath.read()`` and ``_as_local()`` are now wrapped in context managers to promptly return connections to the pool, and ``HttpReadResourceHandle`` caches redirected back-end storage URLs across range reads for non-dCache servers with ``If-Match`` validation and automatic front-end fallback.
