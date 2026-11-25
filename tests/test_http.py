@@ -1023,10 +1023,13 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
 
     def test_back_end_connections(self):
         # Ensure that when the number of back end connections is not specified
-        # the default comes from the number of workers.
+        # the default is DEFAULT_BACKEND_PERSISTENT_CONNECTIONS.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             config = HttpResourcePathConfig()
-            self.assertEqual(config.back_end_connections, _get_num_workers())
+            self.assertEqual(
+                config.back_end_connections,
+                config.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS,
+            )
 
         # Ensure that when the number of back end connections is specified
         # it is stored in the config.
@@ -1385,6 +1388,53 @@ class SessionStoreTestCase(unittest.TestCase):
         # root URIs (including port numbers) are equal
         for u in (f"{root_url_with_port}", f"{root_url_with_port}/path/to/file"):
             self.assertEqual(session, store.get(ResourcePath(u)))
+
+    def test_connection_pool_configuration(self):
+        """Ensure front-end and back-end HTTPAdapters use configured pool
+        sizes and set Connection: close only when back-end persistence is 0.
+        """
+        root_url = "https://example.org"
+        rpath = ResourcePath(f"{root_url}/path/to/file")
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            store = SessionStore(
+                config=config,
+                num_pools=25,
+                max_persistent_connections=config.back_end_connections,
+            )
+            session = store.get(rpath)
+            front_adapter = session.get_adapter(f"{root_url}/path/to/file")
+            back_adapter = session.get_adapter("https://backend.example.org/data/file")
+            self.assertEqual(back_adapter.poolmanager.connection_pool_kw["maxsize"], 0)
+            fe_req = requests.Request("GET", f"{root_url}/path/to/file").prepare()
+            be_req = requests.Request("GET", "https://backend.example.org/data/file").prepare()
+            front_adapter.add_headers(fe_req)
+            back_adapter.add_headers(be_req)
+            self.assertNotIn("Connection", fe_req.headers)
+            self.assertEqual(be_req.headers.get("Connection"), "close")
+
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": "3",
+                "LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "7",
+            },
+            clear=True,
+        ):
+            config = HttpResourcePathConfig()
+            store = SessionStore(
+                config=config,
+                num_pools=25,
+                max_persistent_connections=config.back_end_connections,
+            )
+            session = store.get(rpath)
+            front_adapter = session.get_adapter(f"{root_url}/path/to/file")
+            back_adapter = session.get_adapter("https://backend.example.org/data/file")
+            self.assertEqual(front_adapter.poolmanager.connection_pool_kw["maxsize"], 3)
+            self.assertEqual(back_adapter.poolmanager.connection_pool_kw["maxsize"], 7)
+            be_req = requests.Request("GET", "https://backend.example.org/data/file").prepare()
+            back_adapter.add_headers(be_req)
+            self.assertNotIn("Connection", be_req.headers)
 
     def test_session_wrapper_context_manager(self):
         """Ensure using data_session or metadata_session as a context manager

@@ -145,7 +145,7 @@ class HttpResourcePathConfig:
     # Default number of connections to persist with both the front end and
     # back end servers.
     DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS: int = 2
-    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS: int = 1
+    DEFAULT_BACKEND_PERSISTENT_CONNECTIONS: int = 0
 
     # Accepted digest algorithms
     ACCEPTED_DIGESTS: list[str] = ["adler32", "md5", "sha-256", "sha-512"]
@@ -192,7 +192,7 @@ class HttpResourcePathConfig:
         if self._back_end_connections is not None:
             return self._back_end_connections
 
-        default_pool_size = max(_get_num_workers(), self.DEFAULT_FRONTEND_PERSISTENT_CONNECTIONS)
+        default_pool_size = self.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS
 
         try:
             self._back_end_connections = int(
@@ -521,12 +521,16 @@ class _TLSHTTPAdapter(HTTPAdapter):
     connection pools and avoids per-request certificate file stat calls.
     """
 
+    __attrs__ = [*HTTPAdapter.__attrs__, "_close_connection"]
+
     def __init__(
         self,
         *args: Any,
         config: HttpResourcePathConfig | None = None,
+        close_connection: bool = False,
         **kwargs: Any,
     ) -> None:
+        self._close_connection = close_connection
         if config is not None:
             if config._adapter_ssl_context is None:
                 config._adapter_ssl_context = create_urllib3_context()
@@ -588,6 +592,10 @@ class _TLSHTTPAdapter(HTTPAdapter):
                 ssl_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
 
             self._configured_tls.add(cache_key)
+
+    def add_headers(self, request: requests.PreparedRequest, **kwargs: Any) -> None:
+        if getattr(self, "_close_connection", False):
+            request.headers["Connection"] = "close"
 
 
 class SessionStore:
@@ -732,25 +740,28 @@ class SessionStore:
             root_uri,
             _TLSHTTPAdapter(
                 pool_connections=self._num_pools,
-                pool_maxsize=self._max_persistent_connections,
+                pool_maxsize=self._config.front_end_connections,
                 pool_block=False,
                 max_retries=retries,
                 config=self._config,
             ),
         )
 
-        # Do not persist the connections to back end servers which may vary
-        # from request to request. Systematically persisting connections to
-        # those servers may exhaust their capabilities when there are thousands
-        # of simultaneous clients.
+        # By default (pool_maxsize=0), do not persist connections to back end
+        # servers which may vary from request to request. Systematically
+        # persisting connections to those servers may exhaust their
+        # capabilities when there are thousands of simultaneous clients,
+        # unless explicitly enabled via
+        # LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS.
         session.mount(
             f"{rpath.scheme}://",
             _TLSHTTPAdapter(
                 pool_connections=self._num_pools,
-                pool_maxsize=0,
+                pool_maxsize=self._max_persistent_connections,
                 pool_block=False,
                 max_retries=retries,
                 config=self._config,
+                close_connection=(self._max_persistent_connections == 0),
             ),
         )
 
@@ -782,6 +793,17 @@ class SessionStore:
             "LSST_HTTP_AUTH_CLIENT_KEY) are initialized. Client authentication is disabled."
         )
         return session
+
+
+def _make_session_store(config: HttpResourcePathConfig) -> SessionStore:
+    """Create a `SessionStore` configured from `HttpResourcePathConfig`."""
+    return SessionStore(
+        config=config,
+        num_pools=200,
+        max_persistent_connections=config.back_end_connections,
+        backoff_min=config.backoff_min,
+        backoff_max=config.backoff_max,
+    )
 
 
 class ActivityCaveat(enum.Enum):
@@ -902,13 +924,7 @@ class HttpResourcePath(ResourcePath):
     # interactions are typically served by the front end servers. We want to
     # keep the connection to the front end servers open, to reduce the cost
     # associated to TCP and TLS handshaking for each new request.
-    _metadata_session_store = SessionStore(
-        config=_config,
-        num_pools=5,
-        max_persistent_connections=_config.front_end_connections,
-        backoff_min=_config.backoff_min,
-        backoff_max=_config.backoff_max,
-    )
+    _metadata_session_store = _make_session_store(_config)
 
     # The data session is used for interaction with the front end servers which
     # typically redirect to the back end servers for serving our PUT and GET
@@ -917,13 +933,7 @@ class HttpResourcePath(ResourcePath):
     # kind of request. Some servers close the connection when redirecting
     # the client to a back end server, for instance when serving a PUT
     # request.
-    _data_session_store = SessionStore(
-        config=_config,
-        num_pools=25,
-        max_persistent_connections=_config.back_end_connections,
-        backoff_min=_config.backoff_min,
-        backoff_max=_config.backoff_max,
-    )
+    _data_session_store = _make_session_store(_config)
 
     # Process ID which created the session stores above. We need to store this
     # to replace sessions created by a parent process and inherited by a
@@ -1065,7 +1075,11 @@ class HttpResourcePath(ResourcePath):
 
         This is an internal method mainly intended for tests.
         """
+        HttpResourcePath._metadata_session_store.clear()
+        HttpResourcePath._data_session_store.clear()
         HttpResourcePath._config = HttpResourcePathConfig()
+        HttpResourcePath._metadata_session_store = _make_session_store(HttpResourcePath._config)
+        HttpResourcePath._data_session_store = _make_session_store(HttpResourcePath._config)
 
     def exists(self) -> bool:
         """Check that a remote HTTP resource exists."""
