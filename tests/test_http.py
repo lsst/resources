@@ -243,6 +243,134 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
         ]
         self.assertEqual(len(probes), 1)
 
+    @responses.activate
+    def test_range_read_backend_caching_and_fallback(self):
+        """Range reads should cache non-dCache redirected back-end URLs with
+        If-Match when an ETag is provided, fall back to the front-end URL if
+        the cached back-end URL fails, and never cache redirects for dCache.
+        """
+        _get_dav_and_server_headers.cache_clear()
+        fe_root = "http://webdav.test/"
+        fe_url = "http://webdav.test/file.dat"
+        be_url_1 = "http://storage1.test/file.dat?token=1"
+        be_url_2 = "http://storage2.test/file.dat?token=2"
+        body = b"0123456789abcdef"
+
+        responses.add(
+            responses.OPTIONS,
+            fe_root,
+            status=200,
+            headers={"DAV": "1, 2", "Server": "XrootD/v5.7.1"},
+        )
+        responses.add(
+            responses.HEAD,
+            fe_url,
+            status=200,
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(len(body))},
+        )
+        # First range read redirects from FE to BE1 and returns an ETag.
+        responses.add(
+            responses.GET,
+            fe_url,
+            status=307,
+            headers={"Location": be_url_1},
+        )
+        responses.add(
+            responses.GET,
+            be_url_1,
+            status=206,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes 0-3/{len(body)}",
+                "ETag": '"etag-v1"',
+            },
+            body=body[0:4],
+        )
+        # Second range read goes directly to BE1 with If-Match.
+        responses.add(
+            responses.GET,
+            be_url_1,
+            status=206,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes 4-7/{len(body)}",
+                "ETag": '"etag-v1"',
+            },
+            body=body[4:8],
+            match=[responses.matchers.header_matcher({"If-Match": '"etag-v1"'})],
+        )
+        # Third range read against BE1 fails with 403 (e.g. expired token),
+        # triggering fallback to FE -> redirect to BE2.
+        responses.add(responses.GET, be_url_1, status=403)
+        responses.add(
+            responses.GET,
+            fe_url,
+            status=307,
+            headers={"Location": be_url_2},
+        )
+        responses.add(
+            responses.GET,
+            be_url_2,
+            status=206,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes 8-11/{len(body)}",
+            },
+            body=body[8:12],
+        )
+
+        rpath = ResourcePath(fe_url)
+        with rpath.open("rb") as handle:
+            self.assertEqual(handle.read(4), b"0123")
+            self.assertEqual(handle.read(4), b"4567")
+            self.assertEqual(handle.read(4), b"89ab")
+
+        get_urls = [call.request.url for call in responses.calls if call.request.method == "GET"]
+        self.assertEqual(
+            get_urls,
+            [fe_url, be_url_1, be_url_1, be_url_1, fe_url, be_url_2],
+        )
+
+        # Verify dCache servers do not cache the redirected back-end URL.
+        _get_dav_and_server_headers.cache_clear()
+        dcache_root = "http://dcache.test/"
+        dcache_url = "http://dcache.test/file.dat"
+        dcache_pool = "http://pool1.dcache.test/file.dat"
+        responses.add(
+            responses.OPTIONS,
+            dcache_root,
+            status=200,
+            headers={"DAV": "1, 2", "Server": "dCache/9.2.4"},
+        )
+        responses.add(
+            responses.HEAD,
+            dcache_url,
+            status=200,
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(len(body))},
+        )
+        for start, end in ((0, 4), (4, 8)):
+            responses.add(
+                responses.GET,
+                dcache_url,
+                status=307,
+                headers={"Location": dcache_pool},
+            )
+            responses.add(
+                responses.GET,
+                dcache_pool,
+                status=206,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": f"bytes {start}-{end - 1}/{len(body)}",
+                },
+                body=body[start:end],
+            )
+
+        dcache_path = ResourcePath(dcache_url)
+        with dcache_path.open("rb") as handle:
+            self.assertEqual(handle.read(4), b"0123")
+            self.assertEqual(handle.read(4), b"4567")
+
 
 class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
     """Test with a real webDAV server, as opposed to mocking responses."""
@@ -1256,6 +1384,19 @@ class SessionStoreTestCase(unittest.TestCase):
         # root URIs (including port numbers) are equal
         for u in (f"{root_url_with_port}", f"{root_url_with_port}/path/to/file"):
             self.assertEqual(session, store.get(ResourcePath(u)))
+
+    def test_session_wrapper_context_manager(self):
+        """Ensure using data_session or metadata_session as a context manager
+        does not close the underlying cached requests.Session.
+        """
+        rpath = ResourcePath("https://example.org/path/to/file")
+        with unittest.mock.patch.object(
+            rpath.data_session._session, "close", wraps=rpath.data_session._session.close
+        ) as mock_close:
+            with rpath.data_session as session:
+                self.assertIsNotNone(session)
+            mock_close.assert_not_called()
+        rpath._clear_sessions()
 
 
 class TestContentRange(unittest.TestCase):
