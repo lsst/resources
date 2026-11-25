@@ -67,6 +67,7 @@ from astropy import units as u
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 from urllib3.util.retry import Retry
+from urllib3.util.ssl_ import create_urllib3_context
 
 from lsst.utils.timer import time_this
 
@@ -165,6 +166,8 @@ class HttpResourcePathConfig:
         self._client_key: str | None = ""
         self._tmpdir_buffersize: tuple[str, int] | None = None
         self._ssl_context: ssl.SSLContext | None = None
+        self._adapter_ssl_context: ssl.SSLContext | None = None
+        self._adapter_tls_configured: set[tuple[Any, Any]] = set()
 
     @property
     def front_end_connections(self) -> int:
@@ -513,6 +516,80 @@ class BearerTokenAuth(AuthBase):
         return r
 
 
+class _TLSHTTPAdapter(HTTPAdapter):
+    """An HTTPAdapter that reuses a shared `ssl.SSLContext` across all
+    connection pools and avoids per-request certificate file stat calls.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        config: HttpResourcePathConfig | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if config is not None:
+            if config._adapter_ssl_context is None:
+                config._adapter_ssl_context = create_urllib3_context()
+            self._tls_context: ssl.SSLContext | None = config._adapter_ssl_context
+            self._configured_tls: set[tuple[Any, Any]] = config._adapter_tls_configured
+        else:
+            self._tls_context = create_urllib3_context()
+            self._configured_tls = set()
+        super().__init__(*args, **kwargs)
+
+    def _get_ssl_context(self) -> ssl.SSLContext:
+        ctx = getattr(self, "_tls_context", None)
+        if ctx is None:
+            ctx = create_urllib3_context()
+            self._tls_context = ctx
+            self._configured_tls = set()
+        return ctx
+
+    def init_poolmanager(
+        self, connections: int, maxsize: int, block: bool = False, **pool_kwargs: Any
+    ) -> None:
+        pool_kwargs.setdefault("ssl_context", self._get_ssl_context())
+        super().init_poolmanager(connections, maxsize, block=block, **pool_kwargs)
+
+    def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
+        proxy_kwargs.setdefault("ssl_context", self._get_ssl_context())
+        return super().proxy_manager_for(proxy, **proxy_kwargs)
+
+    def cert_verify(self, conn: Any, url: str, verify: bool | str, cert: Any) -> None:
+        if not url.lower().startswith("https") or not verify:
+            super().cert_verify(conn, url, verify, cert)
+            return
+
+        ssl_context = self._get_ssl_context()
+        cache_key = (verify, cert)
+        if cache_key not in self._configured_tls:
+            ca_bundle = verify if isinstance(verify, str) else requests.utils.DEFAULT_CA_BUNDLE_PATH
+            if ca_bundle:
+                if not os.path.exists(ca_bundle):
+                    raise OSError(
+                        f"Could not find a suitable TLS CA certificate bundle, invalid path: {ca_bundle}"
+                    )
+                if os.path.isdir(ca_bundle):
+                    ssl_context.load_verify_locations(capath=ca_bundle)
+                else:
+                    ssl_context.load_verify_locations(cafile=ca_bundle)
+            elif hasattr(ssl_context, "load_default_certs"):
+                ssl_context.load_default_certs()
+
+            if cert:
+                if isinstance(cert, str):
+                    cert_file, key_file = cert, None
+                else:
+                    cert_file, key_file = cert
+                if cert_file and not os.path.exists(cert_file):
+                    raise OSError(f"Could not find the TLS certificate file, invalid path: {cert_file}")
+                if key_file and not os.path.exists(key_file):
+                    raise OSError(f"Could not find the TLS key file, invalid path: {key_file}")
+                ssl_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+
+            self._configured_tls.add(cache_key)
+
+
 class SessionStore:
     """Cache a reusable HTTP client session per endpoint.
 
@@ -653,11 +730,12 @@ class SessionStore:
         # Persist the specified number of connections to the front end server.
         session.mount(
             root_uri,
-            HTTPAdapter(
+            _TLSHTTPAdapter(
                 pool_connections=self._num_pools,
                 pool_maxsize=self._max_persistent_connections,
                 pool_block=False,
                 max_retries=retries,
+                config=self._config,
             ),
         )
 
@@ -667,11 +745,12 @@ class SessionStore:
         # of simultaneous clients.
         session.mount(
             f"{rpath.scheme}://",
-            HTTPAdapter(
+            _TLSHTTPAdapter(
                 pool_connections=self._num_pools,
                 pool_maxsize=0,
                 pool_block=False,
                 max_retries=retries,
+                config=self._config,
             ),
         )
 

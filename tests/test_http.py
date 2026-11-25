@@ -17,6 +17,7 @@ import random
 import re
 import shutil
 import socket
+import ssl
 import stat
 import string
 import tempfile
@@ -1397,6 +1398,27 @@ class SessionStoreTestCase(unittest.TestCase):
                 self.assertIsNotNone(session)
             mock_close.assert_not_called()
         rpath._clear_sessions()
+
+    def test_tls_adapter_reuses_ssl_context(self):
+        """Ensure front-end and back-end HTTPAdapters share a cached SSLContext
+        via init_poolmanager and only load CA certificates once.
+        """
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            store = SessionStore(config=config, num_pools=200)
+            session = store.get(self.rpath)
+            front_adapter = session.get_adapter("https://example.org/path")
+            back_adapter = session.get_adapter("https://backend.example.org/path")
+            ctx1 = front_adapter.poolmanager.connection_pool_kw.get("ssl_context")
+            ctx2 = back_adapter.poolmanager.connection_pool_kw.get("ssl_context")
+            self.assertIsInstance(ctx1, ssl.SSLContext)
+            self.assertIs(ctx1, ctx2)
+            with unittest.mock.patch.object(
+                ctx1, "load_verify_locations", wraps=ctx1.load_verify_locations
+            ) as mock_load:
+                front_adapter.cert_verify(None, "https://example.org/path", True, None)
+                back_adapter.cert_verify(None, "https://backend.example.org/path", True, None)
+                self.assertEqual(mock_load.call_count, 1)
 
 
 class TestContentRange(unittest.TestCase):
