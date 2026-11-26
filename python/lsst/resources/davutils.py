@@ -1506,7 +1506,7 @@ class DavClient:
                 case _:
                     # This is an unexpected status code. Retry the request.
                     log.warning(
-                        """Unexpected response status %d %s to request HEAD %s """,
+                        """Unexpected response status %d %s to request HEAD %s """
                         """[attempt %d/%d]. Retrying...""",
                         resp.status,
                         resp.reason,
@@ -1602,7 +1602,7 @@ class DavClient:
                 case _:
                     # This is an unexpected status code. Retry the request.
                     log.warning(
-                        """Unexpected response status %d %s to request OPTIONS %s """,
+                        """Unexpected response status %d %s to request OPTIONS %s """
                         """[attempt %d/%d]. Retrying...""",
                         resp.status,
                         resp.reason,
@@ -1657,7 +1657,7 @@ class DavClient:
                 case _:
                     # This is an unexpected status code. Retry the request.
                     log.warning(
-                        """Unexpected response status %d %s to request PROPFIND %s """,
+                        """Unexpected response status %d %s to request PROPFIND %s """
                         """[attempt %d/%d]. Retrying...""",
                         resp.status,
                         resp.reason,
@@ -2218,7 +2218,7 @@ class DavClient:
                     # We could retrieve the size of the remote file but it
                     # does not match the size of input data. Retry this upload.
                     log.warning(
-                        """Size of data to upload (%d) and size of uploaded file %s (%d) differ """,
+                        """Size of data to upload (%d) and size of uploaded file %s (%d) differ """
                         """[attempt %d/%d]. Retrying upload...""",
                         data_size,
                         redact_url(url),
@@ -2238,7 +2238,7 @@ class DavClient:
                 # PUT failed. Retry if possible.
                 if attempt < retry_policy.max_attempts:
                     log.warning(
-                        """Exception \"%s\" raised uploading %d bytes to %s """,
+                        """Exception \"%s\" raised uploading %d bytes to %s """
                         """[attempt %d/%d]. Retrying upload...""",
                         str(exception),
                         data_size,
@@ -2303,7 +2303,7 @@ class DavClient:
                         # does not match the size of the local file. Retry
                         # this upload.
                         log.warning(
-                            """Size of local file %s (%d) and size of uploaded file %s (%d) differ """,
+                            """Size of local file %s (%d) and size of uploaded file %s (%d) differ """
                             """[attempt %d/%d]. Retrying upload...""",
                             filename,
                             local_file_size,
@@ -2324,7 +2324,7 @@ class DavClient:
                     # PUT failed. Retry if possible.
                     if attempt < retry_policy.max_attempts:
                         log.warning(
-                            """Exception \"%s\" raised uploading local file %s (%d bytes) to %s """,
+                            """Exception \"%s\" raised uploading local file %s (%d bytes) to %s """
                             """[attempt %d/%d]. Retrying upload...""",
                             str(exception),
                             filename,
@@ -2862,6 +2862,26 @@ class DavClientURLSigner(DavClient):
             If True and a file exists at `destination_url` it will be
             overwritten. Otherwise an exception is raised.
         """
+        # Ensure the source URL exists. The behavior of dCache and XRootD
+        # differ when the source URL of a "COPY" request does not exist.
+        #
+        # dCache returns an error like:
+        #
+        #    'failure: rejected GET: 404 Not Found'
+        #
+        # as a performance marker while XRootD returns "404 Not Found" as the
+        # response status. We need to check before we send the "COPY" request.
+        resp = self.head(source_url)
+        match resp.status:
+            case HTTPStatus.OK:
+                pass
+            case HTTPStatus.NOT_FOUND:
+                raise FileNotFoundError(f"No file found at {source_url}")
+            case _:
+                raise ValueError(
+                    f"Unexpected response to request HEAD {source_url}: {resp.status} {resp.reason}"
+                )
+
         # To implement COPY we use dCache's third-party copy mechanism
         # documented at:
         #
@@ -2895,15 +2915,19 @@ class DavClientURLSigner(DavClient):
                     return
                 case HTTPStatus.ACCEPTED:
                     pass
+                case HTTPStatus.NOT_FOUND:
+                    raise FileNotFoundError(f"No file found at {source_url}")
                 case _:
                     raise ValueError(
-                        f"Unable to copy resource {resp.geturl()}; status: {resp.status} {resp.reason}"
+                        f"""Unable to copy resource {source_url} to {destination_url} via COPY request: """
+                        f"""status {resp.status} {resp.reason}"""
                     )
 
             # Analyse the response to the COPY request that the server has
-            # not completed yet.
+            # not completed yet. XRootD servers may return "text/plain" while
+            # dCache typically returns "text/perf-marker-stream".
             content_type = resp.headers.get("Content-Type")
-            if content_type != "text/perf-marker-stream":
+            if content_type != "text/perf-marker-stream" and content_type != "text/plain":
                 raise ValueError(
                     f"""Unexpected Content-Type {content_type} in response to COPY request from """
                     f"""{source_url} to {destination_url}"""

@@ -665,7 +665,7 @@ class DavDCacheRangeReader(DavRangeReader):
         if body_length != int(content_length):
             self._log.warning(
                 """Value of 'Content-Length' header in response to request GET %s """
-                """(with header '%s') does not match the actual length of reponse body: """,
+                """(with header '%s') does not match the actual length of reponse body: """
                 """expecting '%d' but got '%s'""",
                 self.geturl(),
                 request_range_header,
