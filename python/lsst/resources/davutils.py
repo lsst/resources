@@ -1455,8 +1455,8 @@ class DavClient:
         -----
         This method is intended for subclasses to override when needed.
         """
-        # By default PUT requests are retried unless the caller specifies .
-        # otherwise This is intended to disable retries when the caller knows
+        # By default PUT requests are retried unless the caller specifies
+        # otherwise. This is intended to disable retries when the caller knows
         # the request is not idempotent.
         #
         # Note that we cannot set `retries` to False since that setting would
@@ -2207,16 +2207,58 @@ class DavClient:
         -----
         If a file already exists at `url` it will be rewritten.
         """
-        try:
-            headers = {"Content-Length": str(len(data))}
-            size = self.put(url, data=data, headers=headers)
-            self._file_size_cache.update_size(url, size)
-            return size
-        except Exception:
-            # PUT failed after retrying. Remove the uploaded file to avoid
-            # leaving empty or partially uploaded files on the server.
-            self.delete(url)
-            raise
+        data_size = len(data)
+        headers = {"Content-Length": str(data_size)}
+
+        retry_policy = self._make_retry_policy()
+        for attempt in retry_policy:
+            try:
+                remote_file_size = self.put(url, data=data, headers=headers)
+                if remote_file_size is not None and remote_file_size != data_size:
+                    # We could retrieve the size of the remote file but it
+                    # does not match the size of input data. Retry this upload.
+                    log.warning(
+                        """Size of data to upload (%d) and size of uploaded file %s (%d) differ """,
+                        """[attempt %d/%d]. Retrying upload...""",
+                        data_size,
+                        redact_url(url),
+                        remote_file_size,
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+                    continue
+
+                # Update the file size cache with the size of the file
+                # we just uploaded.
+                self._file_size_cache.update_size(url, remote_file_size)
+                return remote_file_size
+
+            except Exception as exception:
+                # PUT failed. Retry if possible.
+                if attempt < retry_policy.max_attempts:
+                    log.warning(
+                        """Exception \"%s\" raised uploading %d bytes to %s """,
+                        """[attempt %d/%d]. Retrying upload...""",
+                        str(exception),
+                        data_size,
+                        redact_url(url),
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    retry_policy.wait()
+                    continue
+                else:
+                    # Remove the uploaded file (if any) to avoid leaving
+                    # empty or incomplete files on the server.
+                    self.delete(url)
+                    raise exception
+
+        # We exhausted the maximum number of attempts.
+        raise ValueError(
+            f"""Could not successfully upload {data_size} bytes of data via PUT {redact_url(url)} """
+            f"""after {retry_policy.max_attempts} attempts"""
+        )
 
     def upload(self, url: str, filename: str) -> int | None:
         """Create or rewrite a remote file at `url` with the contents of
@@ -2247,17 +2289,63 @@ class DavClient:
 
     def _upload(self, url: str, filename: str) -> int | None:
         # The parent directory of the target file must exist.
-        headers = {"Content-Length": str(os.stat(filename).st_size)}
+        local_file_size = os.stat(filename).st_size
+        headers = {"Content-Length": str(local_file_size)}
+
+        retry_policy = self._make_retry_policy()
         with open(filename, "rb") as stream:
-            try:
-                size = self.put(url, data=stream, headers=headers)
-                self._file_size_cache.update_size(url, size)
-                return size
-            except Exception:
-                # PUT failed after retrying. Remove the uploaded file to avoid
-                # leaving empty or incomplete files on the server.
-                self.delete(url)
-                raise
+            for attempt in retry_policy:
+                try:
+                    stream.seek(0, os.SEEK_SET)
+                    remote_file_size = self.put(url, data=stream, headers=headers)
+                    if remote_file_size is not None and remote_file_size != local_file_size:
+                        # We could retrieve the size of the remote file but it
+                        # does not match the size of the local file. Retry
+                        # this upload.
+                        log.warning(
+                            """Size of local file %s (%d) and size of uploaded file %s (%d) differ """,
+                            """[attempt %d/%d]. Retrying upload...""",
+                            filename,
+                            local_file_size,
+                            redact_url(url),
+                            remote_file_size,
+                            attempt,
+                            retry_policy.max_attempts,
+                        )
+                        retry_policy.wait()
+                        continue
+
+                    # Update the file size cache with the size of the file
+                    # we just uploaded.
+                    self._file_size_cache.update_size(url, remote_file_size)
+                    return remote_file_size
+
+                except Exception as exception:
+                    # PUT failed. Retry if possible.
+                    if attempt < retry_policy.max_attempts:
+                        log.warning(
+                            """Exception \"%s\" raised uploading local file %s (%d bytes) to %s """,
+                            """[attempt %d/%d]. Retrying upload...""",
+                            str(exception),
+                            filename,
+                            local_file_size,
+                            redact_url(url),
+                            attempt,
+                            retry_policy.max_attempts,
+                        )
+                        retry_policy.wait()
+                        continue
+                    else:
+                        # Remove the uploaded file (if any) to avoid leaving
+                        # empty or incomplete files on the server.
+                        self.delete(url)
+                        raise exception
+
+            # We exhausted the maximum number of attempts.
+            raise ValueError(
+                f"""Could not successfully upload local file {filename} ({local_file_size} bytes) via PUT """
+                f"""{redact_url(url)} after {retry_policy.max_attempts} attempts"""
+            )
 
     def checksums(self, url: str) -> dict[str, str]:
         """Return the checksums of the contents of file located at `url`.
