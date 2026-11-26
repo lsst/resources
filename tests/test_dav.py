@@ -408,6 +408,12 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             source_file = ResourcePath(local_file)
             target_file.transfer_from(source_file, transfer="move", overwrite=False)
 
+        # Transfer an inexistent remote file must raise
+        with self.assertRaises(FileNotFoundError):
+            inexistent_file = self.tmpdir.join("does-not-exist")
+            target_file = self.tmpdir.join("target")
+            target_file.transfer_from(inexistent_file, transfer="copy", overwrite=True)
+
     def test_dav_handle(self):
         # Resource handle must succeed
         remote_file = self.tmpdir.join(self._get_file_name())

@@ -722,6 +722,15 @@ class GenericReadWriteTestCase(_GenericTestCase):
         self.assertIsInstance(info.checksums, dict)  # Checksums are backend dependent.
 
         for dir_uri in (uri.parent(), uri.root_uri()):
+            # Depending on how the XRootD server is configured, retrieving
+            # details of path "/" with a WebDAV PROPFIND request may be
+            # disallowed.
+            #
+            # Skip testing get_info() on WebDAV URIs with path "/".
+            # get_info() for `DavResourcePath` URIs is tested elsewhere.
+            if dir_uri.path == "/" and dir_uri.scheme in ("dav", "davs"):
+                continue
+
             # File URIs can return values for modification dates for
             # directories. S3 URIs can return checksums for directories.
             dirinfo = dir_uri.get_info()
