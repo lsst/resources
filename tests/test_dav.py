@@ -191,8 +191,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             # Verify the position.
             self.assertEqual(handle.tell(), len(sub_contents))
 
-            # Jump back to the beginning and test if reading the whole file
-            # prompts the internal buffer to be read.
+            # Jump back to the beginning and test if reading the whole file.
             handle.seek(0)
             self.assertEqual(handle.tell(), 0)
             result = handle.read().decode()
@@ -219,6 +218,24 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         with remote_file.open("w") as handle:
             self.assertIsInstance(handle, io.StringIO)
 
+        # Verify that a handle of an empty file works as expected
+        empty_file = self.tmpdir.join(self._get_file_name())
+        self.assertIsNone(empty_file.write(data=b"", overwrite=True))
+        with empty_file.open("rb") as handle:
+            self.assertIsInstance(handle, DavReadResourceHandle)
+            self.assertEqual(0, len(handle.read()))
+
+        # Verify that reading beyond the size of an empty file handle
+        # returns consistent results.
+        with empty_file.open("rb") as handle:
+            handle.seek(1234)
+            self.assertEqual(handle.read(), b"")
+
+        # Verify that seeking to a negative position raises
+        with self.assertRaises(ValueError):
+            with empty_file.open() as handle:
+                handle.seek(-1234)
+
     def test_dav_mkdir(self):
         # Check creation and deletion of an empty directory
         subdir = self.tmpdir.join(self._get_dir_name(), forceDirectory=True)
@@ -240,7 +257,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Attempting to create a directory at a path where a file exists
         # must raise
         file = self.tmpdir.join(self._get_file_name(), forceDirectory=False)
-        file.write(data=None, overwrite=True)
+        file.write(data=b"", overwrite=True)
         self.assertTrue(file.exists())
 
         existing_file = self.tmpdir.join(file.basename(), forceDirectory=True)
@@ -284,7 +301,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         with open(original_file, "rb") as file:
             remote_file = self.tmpdir.join(self._get_file_name())
-            self.assertIsNone(remote_file.write(data=file, overwrite=True))
+            self.assertIsNone(remote_file.write(data=file.read(), overwrite=True))
             self.assertTrue(remote_file.exists())
             remote_file_size = remote_file.size()
             self.assertEqual(remote_file_size, original_file_size)
@@ -391,6 +408,12 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             source_file = ResourcePath(local_file)
             target_file.transfer_from(source_file, transfer="move", overwrite=False)
 
+        # Transfer an inexistent remote file must raise
+        with self.assertRaises(FileNotFoundError):
+            inexistent_file = self.tmpdir.join("does-not-exist")
+            target_file = self.tmpdir.join("target")
+            target_file.transfer_from(inexistent_file, transfer="copy", overwrite=True)
+
     def test_dav_handle(self):
         # Resource handle must succeed
         remote_file = self.tmpdir.join(self._get_file_name())
@@ -410,7 +433,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         # Upload a multi-megabyte file and ensure a partial read succeeds
         data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE)
-        self.assertIsNone(remote_file.write(data, overwrite=True))
+        self.assertIsNone(remote_file.write(data.read(), overwrite=True))
         file_size: int = remote_file.size()
         file_offset: int = random.randint(self.MEGABYTE, file_size)
         bytes_to_read: int = random.randint(self.MEGABYTE // 2, self.MEGABYTE)
@@ -435,7 +458,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertTrue(handle.read(count) == buffer)
 
     def test_dav_repeated_write(self):
-        data = io.BytesIO(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE)
+        data = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * self.MEGABYTE
         remote_file = self.tmpdir.join(self._get_file_name())
 
         # Consecutive writes to the same file must succeed. It was noticed
@@ -453,7 +476,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         local_file, file_size = self._generate_file()
         with open(local_file, "rb") as f:
             remote_file = self.tmpdir.join(self._get_file_name())
-            self.assertIsNone(remote_file.write(f, overwrite=True))
+            self.assertIsNone(remote_file.write(f.read(), overwrite=True))
 
         self.assertTrue(remote_file.exists())
         self.assertEqual(remote_file.size(), file_size)
@@ -469,7 +492,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertTrue(subdir.exists())
         with open(local_file, "rb") as f:
             remote_file = subdir.join("file_to_remove")
-            remote_file.write(f, overwrite=True)
+            remote_file.write(f.read(), overwrite=True)
             self.assertTrue(remote_file.exists())
             self.assertEqual(remote_file.size(), file_size)
 
@@ -524,7 +547,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertTrue(fsys.isfile(path))
         self.assertFalse(fsys.isdir(path))
         self.assertEqual(fsys.size(path), remote_file.size())
-        self.assertEqual(remote_file._stat().last_modified, fsys.modified(path))
+        self.assertEqual(fsys.modified(path), remote_file.get_info().last_modified)
 
         info = fsys.info(path)
         self.assertTrue(info["name"], path)
@@ -594,7 +617,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
             remote_file = self.tmpdir.join("file.parquet")
             with open(local_file, "rb") as file:
-                remote_file.write(file, overwrite=True)
+                remote_file.write(file.read(), overwrite=True)
 
             self.assertTrue(remote_file.exists())
             self.assertEqual(remote_file.size(), local_file_size)
@@ -642,7 +665,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         # Upload the zip file to the server
         with open(zip_file_name, mode="rb") as file:
             remote_zip_file = self.tmpdir.join("example.zip")
-            self.assertIsNone(remote_zip_file.write(file, overwrite=True))
+            self.assertIsNone(remote_zip_file.write(file.read(), overwrite=True))
             self.assertEqual(os.stat(zip_file_name).st_size, remote_zip_file.size())
 
         # Read the zip file back and check its contents.
@@ -686,7 +709,7 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
             self.assertEqual(member_digest, local_file_digest)
 
     def test_dav_get_info(self):
-        # Missing resources now raise instead of returning a partial dict.
+        # Missing resources must raise
         subdir = self.tmpdir.join("inexistent", forceDirectory=True)
         with self.assertRaises(FileNotFoundError):
             subdir.get_info()
@@ -701,8 +724,8 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
         self.assertFalse(metadata.is_file)
         self.assertEqual(metadata.size, 0)
         self.assertEqual(len(metadata.checksums), 0)
+        self.assertIsInstance(metadata.last_modified, datetime.datetime)
         self.assertEqual(metadata.last_modified.tzinfo, datetime.UTC)
-        self.assertEqual(metadata.last_modified, subdir._stat().last_modified)
 
         # Retrieve and check metadata details about existing file
         local_file, local_file_size = self._generate_file()
@@ -713,15 +736,15 @@ class DavReadWriteTestCase(GenericReadWriteTestCase, unittest.TestCase):
 
         remote_file = self.tmpdir.join("example.data")
         with open(local_file, mode="rb") as file:
-            self.assertIsNone(remote_file.write(file, overwrite=True))
+            self.assertIsNone(remote_file.write(file.read(), overwrite=True))
             self.assertEqual(os.stat(local_file).st_size, remote_file.size())
 
         metadata = remote_file.get_info()
         self.assertIsInstance(metadata, ResourceInfo)
         self.assertTrue(metadata.is_file)
         self.assertEqual(metadata.size, local_file_size)
+        self.assertIsInstance(metadata.last_modified, datetime.datetime)
         self.assertEqual(metadata.last_modified.tzinfo, datetime.UTC)
-        self.assertEqual(metadata.last_modified, remote_file._stat().last_modified)
 
         checksums = metadata.checksums
         if "md5" in checksums:
