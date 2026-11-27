@@ -14,6 +14,7 @@ from __future__ import annotations
 __all__ = ("DavReadResourceHandle",)
 
 import http
+import http.client
 import io
 import logging
 import sys
@@ -530,8 +531,8 @@ class DavDCacheRangeReader(DavRangeReader):
                 mem_usage=self._client._config.collect_memory_usage,
                 mem_unit=u.mebibyte,
             ):
-                self._conn.request(method, self._request_uri, headers=headers)  # type: ignore[union-attr]
-                resp: http.client.HTTPResponse = self._conn.getresponse()  # type: ignore[union-attr]
+                self._conn.request(method, self._request_uri, headers=headers)  # type: ignore
+                resp: http.client.HTTPResponse = self._conn.getresponse()  # type: ignore
                 match resp.status:
                     case HTTPStatus.TEMPORARY_REDIRECT:
                         # We got redirected. Reset the current connection and
@@ -550,8 +551,7 @@ class DavDCacheRangeReader(DavRangeReader):
                         return resp
 
         raise ValueError(
-            f"Reached maximum number of redirects ({DavDCacheRangeReader.MAX_REDIRECTS}) for "
-            f"{self.geturl()}"
+            f"Reached maximum number of redirects ({DavDCacheRangeReader.MAX_REDIRECTS}) for {self.geturl()}"
         )
 
     @override
@@ -672,6 +672,7 @@ class DavDCacheRangeReader(DavRangeReader):
                 body_length,
                 content_length,
             )
+            return None
 
         self._log.debug("downloaded %d bytes from %s", body_length, self.geturl())
         return body
