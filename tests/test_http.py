@@ -17,6 +17,7 @@ import random
 import re
 import shutil
 import socket
+import ssl
 import stat
 import string
 import tempfile
@@ -242,6 +243,134 @@ class GenericHttpTestCase(GenericTestCase, unittest.TestCase):
             if call.request.method == "GET" and call.request.headers.get("Range") == "bytes=0-0"
         ]
         self.assertEqual(len(probes), 1)
+
+    @responses.activate
+    def test_range_read_backend_caching_and_fallback(self):
+        """Range reads should cache non-dCache redirected back-end URLs with
+        If-Match when an ETag is provided, fall back to the front-end URL if
+        the cached back-end URL fails, and never cache redirects for dCache.
+        """
+        _get_dav_and_server_headers.cache_clear()
+        fe_root = "http://webdav.test/"
+        fe_url = "http://webdav.test/file.dat"
+        be_url_1 = "http://storage1.test/file.dat?token=1"
+        be_url_2 = "http://storage2.test/file.dat?token=2"
+        body = b"0123456789abcdef"
+
+        responses.add(
+            responses.OPTIONS,
+            fe_root,
+            status=200,
+            headers={"DAV": "1, 2", "Server": "XrootD/v5.7.1"},
+        )
+        responses.add(
+            responses.HEAD,
+            fe_url,
+            status=200,
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(len(body))},
+        )
+        # First range read redirects from FE to BE1 and returns an ETag.
+        responses.add(
+            responses.GET,
+            fe_url,
+            status=307,
+            headers={"Location": be_url_1},
+        )
+        responses.add(
+            responses.GET,
+            be_url_1,
+            status=206,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes 0-3/{len(body)}",
+                "ETag": '"etag-v1"',
+            },
+            body=body[0:4],
+        )
+        # Second range read goes directly to BE1 with If-Match.
+        responses.add(
+            responses.GET,
+            be_url_1,
+            status=206,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes 4-7/{len(body)}",
+                "ETag": '"etag-v1"',
+            },
+            body=body[4:8],
+            match=[responses.matchers.header_matcher({"If-Match": '"etag-v1"'})],
+        )
+        # Third range read against BE1 fails with 403 (e.g. expired token),
+        # triggering fallback to FE -> redirect to BE2.
+        responses.add(responses.GET, be_url_1, status=403)
+        responses.add(
+            responses.GET,
+            fe_url,
+            status=307,
+            headers={"Location": be_url_2},
+        )
+        responses.add(
+            responses.GET,
+            be_url_2,
+            status=206,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes 8-11/{len(body)}",
+            },
+            body=body[8:12],
+        )
+
+        rpath = ResourcePath(fe_url)
+        with rpath.open("rb") as handle:
+            self.assertEqual(handle.read(4), b"0123")
+            self.assertEqual(handle.read(4), b"4567")
+            self.assertEqual(handle.read(4), b"89ab")
+
+        get_urls = [call.request.url for call in responses.calls if call.request.method == "GET"]
+        self.assertEqual(
+            get_urls,
+            [fe_url, be_url_1, be_url_1, be_url_1, fe_url, be_url_2],
+        )
+
+        # Verify dCache servers do not cache the redirected back-end URL.
+        _get_dav_and_server_headers.cache_clear()
+        dcache_root = "http://dcache.test/"
+        dcache_url = "http://dcache.test/file.dat"
+        dcache_pool = "http://pool1.dcache.test/file.dat"
+        responses.add(
+            responses.OPTIONS,
+            dcache_root,
+            status=200,
+            headers={"DAV": "1, 2", "Server": "dCache/9.2.4"},
+        )
+        responses.add(
+            responses.HEAD,
+            dcache_url,
+            status=200,
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(len(body))},
+        )
+        for start, end in ((0, 4), (4, 8)):
+            responses.add(
+                responses.GET,
+                dcache_url,
+                status=307,
+                headers={"Location": dcache_pool},
+            )
+            responses.add(
+                responses.GET,
+                dcache_pool,
+                status=206,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": f"bytes {start}-{end - 1}/{len(body)}",
+                },
+                body=body[start:end],
+            )
+
+        dcache_path = ResourcePath(dcache_url)
+        with dcache_path.open("rb") as handle:
+            self.assertEqual(handle.read(4), b"0123")
+            self.assertEqual(handle.read(4), b"4567")
 
 
 class HttpReadWriteWebdavTestCase(GenericReadWriteTestCase, unittest.TestCase):
@@ -894,10 +1023,13 @@ class HttpResourcePathConfigTestCase(unittest.TestCase):
 
     def test_back_end_connections(self):
         # Ensure that when the number of back end connections is not specified
-        # the default comes from the number of workers.
+        # the default is DEFAULT_BACKEND_PERSISTENT_CONNECTIONS.
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             config = HttpResourcePathConfig()
-            self.assertEqual(config.back_end_connections, _get_num_workers())
+            self.assertEqual(
+                config.back_end_connections,
+                config.DEFAULT_BACKEND_PERSISTENT_CONNECTIONS,
+            )
 
         # Ensure that when the number of back end connections is specified
         # it is stored in the config.
@@ -1256,6 +1388,130 @@ class SessionStoreTestCase(unittest.TestCase):
         # root URIs (including port numbers) are equal
         for u in (f"{root_url_with_port}", f"{root_url_with_port}/path/to/file"):
             self.assertEqual(session, store.get(ResourcePath(u)))
+
+    def test_connection_pool_configuration(self):
+        """Ensure front-end and back-end HTTPAdapters use configured pool
+        sizes and set Connection: close only when back-end persistence is 0.
+        """
+        root_url = "https://example.org"
+        rpath = ResourcePath(f"{root_url}/path/to/file")
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            store = SessionStore(
+                config=config,
+                num_pools=25,
+                max_persistent_connections=config.back_end_connections,
+            )
+            session = store.get(rpath)
+            front_adapter = session.get_adapter(f"{root_url}/path/to/file")
+            back_adapter = session.get_adapter("https://backend.example.org/data/file")
+            self.assertEqual(back_adapter.poolmanager.connection_pool_kw["maxsize"], 0)
+            fe_req = requests.Request("GET", f"{root_url}/path/to/file").prepare()
+            be_req = requests.Request("GET", "https://backend.example.org/data/file").prepare()
+            front_adapter.add_headers(fe_req)
+            back_adapter.add_headers(be_req)
+            self.assertNotIn("Connection", fe_req.headers)
+            self.assertEqual(be_req.headers.get("Connection"), "close")
+
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "LSST_HTTP_FRONTEND_PERSISTENT_CONNECTIONS": "3",
+                "LSST_HTTP_BACKEND_PERSISTENT_CONNECTIONS": "7",
+            },
+            clear=True,
+        ):
+            config = HttpResourcePathConfig()
+            store = SessionStore(
+                config=config,
+                num_pools=25,
+                max_persistent_connections=config.back_end_connections,
+            )
+            session = store.get(rpath)
+            front_adapter = session.get_adapter(f"{root_url}/path/to/file")
+            back_adapter = session.get_adapter("https://backend.example.org/data/file")
+            self.assertEqual(front_adapter.poolmanager.connection_pool_kw["maxsize"], 3)
+            self.assertEqual(back_adapter.poolmanager.connection_pool_kw["maxsize"], 7)
+            be_req = requests.Request("GET", "https://backend.example.org/data/file").prepare()
+            back_adapter.add_headers(be_req)
+            self.assertNotIn("Connection", be_req.headers)
+
+    def test_session_wrapper_context_manager(self):
+        """Ensure using data_session or metadata_session as a context manager
+        does not close the underlying cached requests.Session.
+        """
+        rpath = ResourcePath("https://example.org/path/to/file")
+        with unittest.mock.patch.object(
+            rpath.data_session._session, "close", wraps=rpath.data_session._session.close
+        ) as mock_close:
+            with rpath.data_session as session:
+                self.assertIsNotNone(session)
+            mock_close.assert_not_called()
+        rpath._clear_sessions()
+
+    def test_tls_adapter_reuses_ssl_context(self):
+        """Ensure front-end and back-end HTTPAdapters share a cached SSLContext
+        via init_poolmanager and only load CA certificates once.
+        """
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            config = HttpResourcePathConfig()
+            store = SessionStore(config=config, num_pools=200)
+            session = store.get(self.rpath)
+            front_adapter = session.get_adapter("https://example.org/path")
+            back_adapter = session.get_adapter("https://backend.example.org/path")
+            ctx1 = front_adapter.poolmanager.connection_pool_kw.get("ssl_context")
+            ctx2 = back_adapter.poolmanager.connection_pool_kw.get("ssl_context")
+            self.assertIsInstance(ctx1, ssl.SSLContext)
+            self.assertIs(ctx1, ctx2)
+            with unittest.mock.patch.object(
+                ctx1, "load_verify_locations", wraps=ctx1.load_verify_locations
+            ) as mock_load:
+                front_adapter.cert_verify(None, "https://example.org/path", True, None)
+                back_adapter.cert_verify(None, "https://backend.example.org/path", True, None)
+                self.assertEqual(mock_load.call_count, 1)
+
+    @responses.activate
+    def test_http_worker_diag_logging(self):
+        """Ensure HTTP diagnostics are environment-gated by LSST_HTTP_DIAG and
+        log via lsst.resources.http at DEBUG level.
+        """
+        url = "http://diag.test/file.txt"
+        responses.add(responses.GET, url, body=b"hello", status=200)
+        rpath = ResourcePath(url)
+
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(lsst.resources.http._worker_diag.is_enabled())
+
+        with unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIAG": "1"}, clear=True):
+            self.assertTrue(lsst.resources.http._worker_diag.is_enabled())
+            lsst.resources.http._worker_diag._reset_counters()
+            with self.assertLogs("lsst.resources.http", level="DEBUG") as cm:
+                self.assertEqual(rpath.read(), b"hello")
+            self.assertTrue(any("[HTTP-TRACE " in msg for msg in cm.output))
+
+        # Verify that in a fresh unconfigured logger (as in a multiprocessing
+        # "spawn" worker process where butler CLI --log-level was not run),
+        # LSST_HTTP_DIAG=1 automatically enables DEBUG and attaches a handler.
+        http_logger = lsst.resources.http.log
+        saved_level = http_logger.level
+        saved_handlers = list(http_logger.handlers)
+        saved_propagate = http_logger.propagate
+        stream = io.StringIO()
+        try:
+            http_logger.handlers.clear()
+            http_logger.setLevel(0)
+            http_logger.propagate = False
+            with (
+                unittest.mock.patch.dict(os.environ, {"LSST_HTTP_DIAG": "1"}, clear=True),
+                unittest.mock.patch("sys.stderr", stream),
+            ):
+                lsst.resources.http._worker_diag._reset_counters()
+                self.assertEqual(rpath.read(), b"hello")
+            self.assertIn("[HTTP-TRACE ", stream.getvalue())
+        finally:
+            http_logger.handlers[:] = saved_handlers
+            http_logger.setLevel(saved_level)
+            http_logger.propagate = saved_propagate
 
 
 class TestContentRange(unittest.TestCase):

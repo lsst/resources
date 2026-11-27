@@ -1,0 +1,1 @@
+Added optional per-worker HTTP connection pool and transfer timing diagnostics to ``HttpResourcePath``, enabled via the ``$LSST_HTTP_DIAG`` environment variable.
